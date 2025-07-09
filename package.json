@@ -1,0 +1,12 @@
+{
+  "name": "socialstorm-backend",
+  "version": "1.0.0",
+  "main": "server.cjs",
+  "type": "module",
+  "scripts": {
+    "start": "node server.cjs"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

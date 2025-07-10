@@ -22,6 +22,7 @@
       padding: 1rem 2rem; z-index: 1000; gap: 4rem;
       box-shadow: 0 2px 8px rgba(0,0,0,0.14);
       min-height: 112px;
+      transition: min-height 0.2s;
     }
     nav .logo { position: absolute; left: 2rem; cursor: pointer; display: flex; align-items: center; }
     nav .logo img {
@@ -33,17 +34,24 @@
       max-width: 340px;
       max-height: 200px;
       box-shadow: 0 2px 12px #00e0fe11;
-      /* no circle, no black box! */
     }
-    nav ul { display: flex; gap: 2rem; }
+    nav ul {
+      display: flex; gap: 2rem;
+      align-items: center;
+      transition: max-height 0.3s;
+    }
     nav ul li a {
       color: #fff; font-weight: 700; font-size: 1.09rem; letter-spacing: 0.03em;
       transition: color 0.2s;
+      display: block;
+      padding: 0.6em 0.3em;
+      border-radius: 5px;
     }
     nav ul li a:hover,
     nav ul li[aria-current="page"] a {
       color: #00e0fe;
       text-shadow: 0 0 8px #00e0fe55;
+      background: #011019;
     }
     nav .btn-primary {
       position: absolute; right: 2rem;
@@ -53,8 +61,95 @@
       box-shadow: 0 4px 14px #00e0fe44;
       transition: background 0.2s;
       letter-spacing: 0.01em;
+      z-index: 10;
     }
     nav .btn-primary:hover { background: #00b3c4; }
+    /* Hamburger styles */
+    .hamburger {
+      display: none;
+      position: absolute;
+      right: 2.1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 44px;
+      height: 44px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      z-index: 2002;
+      justify-content: center;
+      align-items: center;
+    }
+    .hamburger span, .hamburger span:before, .hamburger span:after {
+      display: block;
+      position: absolute;
+      width: 28px;
+      height: 4px;
+      background: #00e0fe;
+      border-radius: 3px;
+      transition: 0.25s;
+      left: 8px;
+    }
+    .hamburger span { top: 20px; }
+    .hamburger span:before { content: ""; top: -9px; }
+    .hamburger span:after { content: ""; top: 9px; }
+    .hamburger.open span { background: transparent; }
+    .hamburger.open span:before {
+      transform: rotate(45deg);
+      top: 0;
+    }
+    .hamburger.open span:after {
+      transform: rotate(-45deg);
+      top: 0;
+    }
+    /* Mobile nav */
+    @media (max-width: 900px) {
+      nav { min-height: 72px; gap: 1.5rem; padding: 0.8rem 1rem 0.7rem 1rem; }
+      nav .logo img { height: 72px; max-width: 150px; max-height: 72px; }
+      nav .btn-primary { display: none; }
+      .hamburger { display: flex; }
+      nav ul {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        width: 100vw;
+        background: #10141a;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0;
+        max-height: 0;
+        overflow: hidden;
+        padding: 0 0 0 0;
+        box-shadow: 0 14px 32px #00e0fe13;
+        z-index: 1500;
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+        transition: max-height 0.32s cubic-bezier(.5,0,.5,1);
+      }
+      nav ul.open {
+        max-height: 380px;
+        padding: 12px 0 6px 0;
+      }
+      nav ul li {
+        width: 100%;
+        border-bottom: 1px solid #16365340;
+        padding: 0;
+        margin: 0;
+      }
+      nav ul li:last-child { border-bottom: none; }
+      nav ul li a {
+        width: 100%;
+        padding: 1em 2.7em 1em 2.5em;
+        font-size: 1.14rem;
+        background: none;
+        color: #fff;
+      }
+      nav ul li a:active,
+      nav ul li[aria-current="page"] a {
+        background: #012c3f;
+        color: #00e0fe;
+      }
+    }
     main.page-content {
       flex: 1 0 auto;
       width: 100%;
@@ -204,7 +299,10 @@
     <div class="logo" onclick="location.href='index.html'">
       <img src="logo.png" alt="SocialStorm Logo" />
     </div>
-    <ul>
+    <button class="hamburger" id="navHamburger" aria-label="Open menu" aria-expanded="false">
+      <span></span>
+    </button>
+    <ul id="mainNavList">
       <li><a href="index.html">Home</a></li>
       <li><a href="video.html">Create Video</a></li>
       <li><a href="pricing.html" aria-current="page">Pricing</a></li>
@@ -213,7 +311,6 @@
     </ul>
     <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
   </nav>
-
   <main class="page-content">
     <h1>Simple, No-Bull Pricing</h1>
     <div class="pricing-cards">
@@ -273,12 +370,25 @@
       </div>
     </div>
   </main>
-
-  <div id="chatbot-bubble" title="Chat with Sparkie!">
-    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><rect x="7" y="11" width="10" height="2" rx="1"/><circle cx="9" cy="9" r="1.2"/><circle cx="15" cy="9" r="1.2"/></svg>
-  </div>
   <footer>
     &copy; 2025 SocialStorm AI. Built for creators who want to win.
   </footer>
+  <script>
+    // Hamburger nav
+    const hamburger = document.getElementById('navHamburger');
+    const navList = document.getElementById('mainNavList');
+    hamburger.addEventListener('click', function () {
+      const open = navList.classList.toggle('open');
+      hamburger.classList.toggle('open');
+      hamburger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.querySelectorAll('#mainNavList a').forEach(link => {
+      link.addEventListener('click', () => {
+        navList.classList.remove('open');
+        hamburger.classList.remove('open');
+        hamburger.setAttribute('aria-expanded', 'false');
+      });
+    });
+  </script>
 </body>
 </html>

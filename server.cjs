@@ -1,3 +1,4 @@
+// ==== DIRECTORY DEBUGGING (Safe to comment out in prod) ====
 console.log('Working directory:', __dirname);
 console.log('Files/folders here:', require('fs').readdirSync(__dirname));
 if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
@@ -5,7 +6,6 @@ if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
 } else {
   console.log('No frontend folder found!');
 }
-
 
 // ===== 1) ENVIRONMENT & DEPENDENCY SETUP =====
 require('dotenv').config();
@@ -42,7 +42,7 @@ app.use(express.static(path.join(__dirname, 'frontend')));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => res.status(200).send('OK'));
@@ -152,18 +152,15 @@ function splitScriptToScenes(script) {
 // === GOOGLE CLOUD TTS CLIENT ===
 let googleTTSClient;
 try {
-  // parse the JSON blob straight out of your env var
   const creds = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS);
   googleTTSClient = new textToSpeech.TextToSpeechClient({
     credentials: creds
   });
 } catch (e) {
   console.error('FATAL: Could not initialize Google TTS client from JSON:', e);
-  // if you want, you can fallback to a file-based key here
-  // googleTTSClient = new textToSpeech.TextToSpeechClient({ keyFilename: './service-account.json' });
 }
 
-// ======= NEW FIXED GOOGLE TTS SYNTHESIZER =======
+// ======= GOOGLE TTS SYNTHESIZER =======
 async function synthesizeWithGoogleTTS(text, voice = 'en-US-Neural2-D', outPath) {
   if (!googleTTSClient) throw new Error("Google TTS not initialized (no credentials file)");
   const request = {
@@ -224,7 +221,6 @@ const googleFreeVoices = [
   { id: "en-US-Wavenet-B", name: "Carter (Free)",   description: "Google TTS, Male, US",       provider: "google",     tier: "Free", gender: "male",   disabled: false }
 ];
 
-// ---- ELEVENLABS PRO VOICES ----
 const elevenProVoices = [
   { id: "ZthjuvLPty3kTMaNKVKb", name: "Mike (Pro)",   description: "ElevenLabs, Deep US Male",         provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
   { id: "6F5Zhi321D3Oq7v1oNT4", name: "Jackson (Pro)",description: "ElevenLabs, Movie Style Narration",     provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
@@ -244,7 +240,6 @@ const elevenProVoices = [
   { id: "GL7nH05mDrxcH1JPJK5T", name: "Aimee (ASMR Gentle)", description: "ASMR Gentle Whisper", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: true }
 ];
 
-// Combine all
 const mappedCustomVoices = [...googleFreeVoices, ...elevenProVoices].map(v => ({
   ...v,
   preview: getVoicePreviewFile(v.id, v.preview)

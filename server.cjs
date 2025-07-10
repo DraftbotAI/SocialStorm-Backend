@@ -35,6 +35,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
 const PORT = process.env.PORT || 3000;
 
+// ===== HEALTH CHECK ENDPOINT =====
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
 // ===== 3) CLOUD R2 CLIENT CONFIGURATION =====
 const { S3, Endpoint } = AWS;
 const s3 = new S3({
@@ -138,15 +141,17 @@ function splitScriptToScenes(script) {
 }
 
 // === GOOGLE CLOUD TTS CLIENT ===
-const googleCredentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS && path.isAbsolute(process.env.GOOGLE_APPLICATION_CREDENTIALS)
-  ? process.env.GOOGLE_APPLICATION_CREDENTIALS
-  : path.join(__dirname, process.env.GOOGLE_APPLICATION_CREDENTIALS || '');
-
-let googleTTSClient = null;
-if (fs.existsSync(googleCredentialsPath)) {
-  googleTTSClient = new textToSpeech.TextToSpeechClient({ keyFilename: googleCredentialsPath });
-} else {
-  console.error("FATAL: Google TTS credentials file missing at", googleCredentialsPath);
+let googleTTSClient;
+try {
+  // parse the JSON blob straight out of your env var
+  const creds = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+  googleTTSClient = new textToSpeech.TextToSpeechClient({
+    credentials: creds
+  });
+} catch (e) {
+  console.error('FATAL: Could not initialize Google TTS client from JSON:', e);
+  // if you want, you can fallback to a file-based key here
+  // googleTTSClient = new textToSpeech.TextToSpeechClient({ keyFilename: './service-account.json' });
 }
 
 // ======= NEW FIXED GOOGLE TTS SYNTHESIZER =======
@@ -833,4 +838,4 @@ app.get('*', (req, res) => {
 });
 
 // ===== LAUNCH SERVER =====
-app.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server listening on port ${PORT}`));

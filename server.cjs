@@ -42,7 +42,7 @@ app.use(express.static(path.join(__dirname, 'frontend')));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT 
 
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => res.status(200).send('OK'));
@@ -664,7 +664,7 @@ app.post('/api/generate-video', async (req, res) => {
               .inputFormat('lavfi')
               .input(outroLogo).inputOptions(['-loop', '1'])
               .complexFilter([
-                "[1:v]scale=800:800:force_original_aspect_ratio=decrease[brand];" +
+                "[1:v]scale=650:650:force_original_aspect_ratio=decrease[brand];" +
                 "[0:v][brand]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2"
               ])
               .input(outroAudioMixed)

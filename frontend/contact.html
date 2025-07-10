@@ -14,147 +14,129 @@
       display: flex;
       flex-direction: column;
     }
-    a { text-decoration: none; color: #00b3c4; transition: color 0.18s; }
-    a:hover { color: #0091a8; }
-    ul { list-style: none; margin: 0; padding: 0; }
     nav {
       position: sticky; top: 0; background: #10141a;
-      display: flex; justify-content: center; align-items: center;
-      padding: 1rem 2rem; z-index: 1000; gap: 4rem;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 2rem; z-index: 1000;
+      min-height: 96px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.14);
-      min-height: 112px;
-      transition: min-height 0.2s;
     }
-    nav .logo { position: absolute; left: 2rem; cursor: pointer; display: flex; align-items: center; }
-    nav .logo img {
-      height: 200px;
-      display: block;
-      background: transparent;
-      border-radius: 12px;
-      object-fit: contain;
-      max-width: 340px;
-      max-height: 200px;
-      box-shadow: 0 2px 12px #00e0fe11;
+    .nav-logo {
+      display: flex; align-items: center; cursor: pointer;
     }
-    nav ul {
-      display: flex; gap: 2rem;
-      align-items: center;
-      transition: max-height 0.3s;
+    .nav-logo img {
+      height: 200px; width: auto; max-width: 90vw;
+      display: block; filter: brightness(100);
+      transition: height 0.22s;
     }
-    nav ul li a {
+    .nav-links {
+      display: flex; gap: 2rem; align-items: center;
+    }
+    .nav-links li a {
       color: #fff; font-weight: 700; font-size: 1.09rem; letter-spacing: 0.03em;
       transition: color 0.2s;
       display: block;
       padding: 0.6em 0.3em;
       border-radius: 5px;
     }
-    nav ul li a:hover,
-    nav ul li[aria-current="page"] a {
+    .nav-links li a:hover,
+    .nav-links li[aria-current="page"] a {
       color: #00e0fe;
       text-shadow: 0 0 8px #00e0fe55;
       background: #011019;
     }
-    nav .btn-primary {
-      position: absolute; right: 2rem;
+    .btn-primary {
       background: #00e0fe; color: #111; font-weight: 900;
       padding: 0.65rem 1.5rem; border: none; border-radius: 8px;
       cursor: pointer; font-size: 1.13rem;
       box-shadow: 0 4px 14px #00e0fe44;
       transition: background 0.2s;
       letter-spacing: 0.01em;
-      z-index: 10;
+      margin-left: 1.5rem;
     }
-    nav .btn-primary:hover { background: #00b3c4; }
+    .btn-primary:hover { background: #00b3c4; }
     /* Hamburger styles */
     .hamburger {
       display: none;
-      position: absolute;
-      right: 2.1rem;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 44px;
-      height: 44px;
-      background: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      width: 46px;
+      height: 46px;
+      background: transparent;
       border: none;
       cursor: pointer;
       z-index: 2002;
-      justify-content: center;
-      align-items: center;
     }
-    .hamburger span, .hamburger span:before, .hamburger span:after {
+    .hamburger span {
       display: block;
-      position: absolute;
       width: 28px;
       height: 4px;
+      margin: 4px 0;
       background: #00e0fe;
-      border-radius: 3px;
-      transition: 0.25s;
-      left: 8px;
+      border-radius: 2px;
+      transition: all 0.22s;
     }
-    .hamburger span { top: 20px; }
-    .hamburger span:before { content: ""; top: -9px; }
-    .hamburger span:after { content: ""; top: 9px; }
-    .hamburger.open span { background: transparent; }
-    .hamburger.open span:before {
-      transform: rotate(45deg);
-      top: 0;
+    .hamburger.active span:nth-child(1) {
+      transform: translateY(8px) rotate(45deg);
     }
-    .hamburger.open span:after {
-      transform: rotate(-45deg);
-      top: 0;
+    .hamburger.active span:nth-child(2) {
+      opacity: 0;
     }
-    /* Mobile nav */
-    @media (max-width: 900px) {
-      nav { min-height: 72px; gap: 1.5rem; padding: 0.8rem 1rem 0.7rem 1rem; }
-      nav .logo img { height: 72px; max-width: 150px; max-height: 72px; }
-      nav .btn-primary { display: none; }
+    .hamburger.active span:nth-child(3) {
+      transform: translateY(-8px) rotate(-45deg);
+    }
+    .mobile-nav {
+      display: none;
+      flex-direction: column;
+      align-items: flex-end;
+      background: #10141a;
+      position: absolute;
+      top: 96px;
+      right: 0;
+      width: 100vw;
+      max-width: 100vw;
+      box-shadow: 0 8px 28px #0008;
+      border-radius: 0 0 18px 18px;
+      padding: 1.2rem 2.2rem 1.8rem 2.2rem;
+      z-index: 2001;
+      animation: slideDown 0.22s;
+    }
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-24px);}
+      to   { opacity: 1; transform: translateY(0);}
+    }
+    .mobile-nav li {
+      margin-bottom: 1.18rem;
+      text-align: right;
+    }
+    .mobile-nav li:last-child {
+      margin-bottom: 0;
+    }
+    .mobile-nav a, .mobile-nav .btn-primary {
+      font-size: 1.2rem;
+      color: #fff;
+      font-weight: 800;
+    }
+    .mobile-nav .btn-primary {
+      width: 100%;
+      margin-left: 0;
+      margin-top: 1.2rem;
+    }
+    @media (max-width: 850px) {
+      .nav-logo img { height: 140px; }
+      nav { min-height: 68px; }
+      .nav-links { gap: 1.1rem; }
+    }
+    @media (max-width: 700px) {
+      .nav-logo img { height: 84px; }
+      nav { min-height: 56px; padding: 0 1rem; }
+      .nav-links { display: none; }
+      .btn-primary { display: none; }
       .hamburger { display: flex; }
-      nav ul {
-        position: absolute;
-        top: 100%;
-        left: 0;
-        width: 100vw;
-        background: #10141a;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0;
-        max-height: 0;
-        overflow: hidden;
-        padding: 0 0 0 0;
-        box-shadow: 0 14px 32px #00e0fe13;
-        z-index: 1500;
-        border-bottom-left-radius: 12px;
-        border-bottom-right-radius: 12px;
-        transition: max-height 0.32s cubic-bezier(.5,0,.5,1);
-      }
-      nav ul.open {
-        max-height: 380px;
-        padding: 12px 0 6px 0;
-      }
-      nav ul li {
-        width: 100%;
-        border-bottom: 1px solid #16365340;
-        padding: 0;
-        margin: 0;
-      }
-      nav ul li:last-child { border-bottom: none; }
-      nav ul li a {
-        width: 100%;
-        padding: 1em 2.7em 1em 2.5em;
-        font-size: 1.14rem;
-        background: none;
-        color: #fff;
-      }
-      nav ul li a:active,
-      nav ul li[aria-current="page"] a {
-        background: #012c3f;
-        color: #00e0fe;
-      }
     }
-    /* Hide nav links on mobile unless open */
-    @media (max-width: 900px) {
-      nav ul { display: flex; }
-      nav .btn-primary { display: none; }
+    @media (max-width: 480px) {
+      .mobile-nav { padding: 1rem 1rem 1.5rem 1rem; }
     }
     main.page-content {
       max-width: 600px;
@@ -278,20 +260,32 @@
 </head>
 <body>
   <nav>
-    <div class="logo" onclick="location.href='index.html'">
+    <div class="nav-logo" onclick="location.href='index.html'">
       <img src="logo.png" alt="SocialStorm Logo" />
     </div>
-    <button class="hamburger" id="navHamburger" aria-label="Open menu" aria-expanded="false">
-      <span></span>
-    </button>
-    <ul id="mainNavList">
+    <ul class="nav-links">
       <li><a href="index.html">Home</a></li>
       <li><a href="video.html">Create Video</a></li>
+      <li><a href="thumbnail.html">Thumbnails</a></li>
       <li><a href="pricing.html">Pricing</a></li>
       <li><a href="about.html">About</a></li>
       <li><a href="contact.html" aria-current="page">Contact</a></li>
     </ul>
     <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
+    <button class="hamburger" id="hamburgerBtn" aria-label="Open menu">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <ul class="mobile-nav" id="mobileNav">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="video.html">Create Video</a></li>
+      <li><a href="thumbnail.html">Thumbnails</a></li>
+      <li><a href="pricing.html">Pricing</a></li>
+      <li><a href="about.html">About</a></li>
+      <li><a href="contact.html" aria-current="page">Contact</a></li>
+      <li><button class="btn-primary" onclick="location.href='video.html'">Get Started</button></li>
+    </ul>
   </nav>
 
   <main class="page-content">
@@ -333,23 +327,32 @@
     &copy; 2025 SocialStorm AI. Built for creators who want to win.
   </footer>
   <script>
-    // Hamburger nav
-    const hamburger = document.getElementById('navHamburger');
-    const navList = document.getElementById('mainNavList');
-
-    hamburger.addEventListener('click', function () {
-      const open = navList.classList.toggle('open');
-      hamburger.classList.toggle('open');
-      hamburger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    // Hamburger + Mobile Nav Logic
+    const hamburgerBtn = document.getElementById('hamburgerBtn');
+    const mobileNav = document.getElementById('mobileNav');
+    let mobileNavOpen = false;
+    hamburgerBtn.addEventListener('click', () => {
+      hamburgerBtn.classList.toggle('active');
+      mobileNavOpen = !mobileNavOpen;
+      mobileNav.style.display = mobileNavOpen ? 'flex' : 'none';
+      document.body.style.overflow = mobileNavOpen ? 'hidden' : '';
     });
-
-    // Close nav on click (for SPA feel)
-    document.querySelectorAll('#mainNavList a').forEach(link => {
-      link.addEventListener('click', () => {
-        navList.classList.remove('open');
-        hamburger.classList.remove('open');
-        hamburger.setAttribute('aria-expanded', 'false');
-      });
+    // Close mobile nav when clicking a link or outside
+    mobileNav.addEventListener('click', (e) => {
+      if (e.target.tagName === 'A' || e.target.tagName === 'BUTTON') {
+        hamburgerBtn.classList.remove('active');
+        mobileNav.style.display = 'none';
+        document.body.style.overflow = '';
+        mobileNavOpen = false;
+      }
+    });
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 700) {
+        hamburgerBtn.classList.remove('active');
+        mobileNav.style.display = 'none';
+        document.body.style.overflow = '';
+        mobileNavOpen = false;
+      }
     });
 
     // Contact form logic

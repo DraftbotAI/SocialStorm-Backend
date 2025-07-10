@@ -804,23 +804,65 @@ app.post('/api/sparkie', async (req, res) => {
   }
 });
 
-// ===== Serve videos from Cloudflare R2 (streaming) =====
+// ===== Serve videos from Cloudflare R2 (streaming, download, range support) =====
 app.get('/video/videos/:key', async (req, res) => {
   try {
     const key = `videos/${req.params.key}`;
-    const s3Stream = s3.getObject({
+    // HEAD request to get content-length for range requests
+    const headData = await s3.headObject({
       Bucket: process.env.R2_BUCKET,
       Key: key,
-    }).createReadStream();
+    }).promise();
 
-    res.setHeader('Content-Type', 'video/mp4');
+    const total = headData.ContentLength;
+    const range = req.headers.range;
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Access-Control-Allow-Origin', '*'); // CORS for video
 
-    s3Stream.on('error', (err) => {
-      console.error("R2 video stream error:", err);
-      res.status(404).end('Video not found');
-    });
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+      const chunkSize = (end - start) + 1;
 
-    s3Stream.pipe(res);
+      const stream = s3.getObject({
+        Bucket: process.env.R2_BUCKET,
+        Key: key,
+        Range: `bytes=${start}-${end}`
+      }).createReadStream();
+
+      res.writeHead(206, {
+        "Content-Range": `bytes ${start}-${end}/${total}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": chunkSize,
+        "Content-Type": "video/mp4",
+        "Access-Control-Expose-Headers": "Content-Disposition"
+      });
+
+      stream.on('error', (err) => {
+        console.error("R2 video stream error:", err);
+        res.status(404).end('Video not found');
+      });
+
+      stream.pipe(res);
+    } else {
+      const stream = s3.getObject({
+        Bucket: process.env.R2_BUCKET,
+        Key: key,
+      }).createReadStream();
+
+      res.setHeader('Content-Type', 'video/mp4');
+      // The below header helps trigger download reliably on mobile/tablet/desktop
+      res.setHeader('Content-Disposition', 'attachment; filename="socialstorm-video.mp4"');
+      res.setHeader('Content-Length', total);
+
+      stream.on('error', (err) => {
+        console.error("R2 video stream error:", err);
+        res.status(404).end('Video not found');
+      });
+
+      stream.pipe(res);
+    }
   } catch (err) {
     console.error("Video route error:", err);
     res.status(500).end('Internal error');

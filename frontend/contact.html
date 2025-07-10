@@ -16,13 +16,14 @@
     }
     a { text-decoration: none; color: #00b3c4; transition: color 0.18s; }
     a:hover { color: #0091a8; }
-    ul { list-style: none; }
+    ul { list-style: none; margin: 0; padding: 0; }
     nav {
       position: sticky; top: 0; background: #10141a;
       display: flex; justify-content: center; align-items: center;
       padding: 1rem 2rem; z-index: 1000; gap: 4rem;
       box-shadow: 0 2px 8px rgba(0,0,0,0.14);
       min-height: 112px;
+      transition: min-height 0.2s;
     }
     nav .logo { position: absolute; left: 2rem; cursor: pointer; display: flex; align-items: center; }
     nav .logo img {
@@ -35,15 +36,23 @@
       max-height: 200px;
       box-shadow: 0 2px 12px #00e0fe11;
     }
-    nav ul { display: flex; gap: 2rem; }
+    nav ul {
+      display: flex; gap: 2rem;
+      align-items: center;
+      transition: max-height 0.3s;
+    }
     nav ul li a {
       color: #fff; font-weight: 700; font-size: 1.09rem; letter-spacing: 0.03em;
       transition: color 0.2s;
+      display: block;
+      padding: 0.6em 0.3em;
+      border-radius: 5px;
     }
     nav ul li a:hover,
     nav ul li[aria-current="page"] a {
       color: #00e0fe;
       text-shadow: 0 0 8px #00e0fe55;
+      background: #011019;
     }
     nav .btn-primary {
       position: absolute; right: 2rem;
@@ -53,8 +62,100 @@
       box-shadow: 0 4px 14px #00e0fe44;
       transition: background 0.2s;
       letter-spacing: 0.01em;
+      z-index: 10;
     }
     nav .btn-primary:hover { background: #00b3c4; }
+    /* Hamburger styles */
+    .hamburger {
+      display: none;
+      position: absolute;
+      right: 2.1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 44px;
+      height: 44px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      z-index: 2002;
+      justify-content: center;
+      align-items: center;
+    }
+    .hamburger span, .hamburger span:before, .hamburger span:after {
+      display: block;
+      position: absolute;
+      width: 28px;
+      height: 4px;
+      background: #00e0fe;
+      border-radius: 3px;
+      transition: 0.25s;
+      left: 8px;
+    }
+    .hamburger span { top: 20px; }
+    .hamburger span:before { content: ""; top: -9px; }
+    .hamburger span:after { content: ""; top: 9px; }
+    .hamburger.open span { background: transparent; }
+    .hamburger.open span:before {
+      transform: rotate(45deg);
+      top: 0;
+    }
+    .hamburger.open span:after {
+      transform: rotate(-45deg);
+      top: 0;
+    }
+    /* Mobile nav */
+    @media (max-width: 900px) {
+      nav { min-height: 72px; gap: 1.5rem; padding: 0.8rem 1rem 0.7rem 1rem; }
+      nav .logo img { height: 72px; max-width: 150px; max-height: 72px; }
+      nav .btn-primary { display: none; }
+      .hamburger { display: flex; }
+      nav ul {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        width: 100vw;
+        background: #10141a;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0;
+        max-height: 0;
+        overflow: hidden;
+        padding: 0 0 0 0;
+        box-shadow: 0 14px 32px #00e0fe13;
+        z-index: 1500;
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+        transition: max-height 0.32s cubic-bezier(.5,0,.5,1);
+      }
+      nav ul.open {
+        max-height: 380px;
+        padding: 12px 0 6px 0;
+      }
+      nav ul li {
+        width: 100%;
+        border-bottom: 1px solid #16365340;
+        padding: 0;
+        margin: 0;
+      }
+      nav ul li:last-child { border-bottom: none; }
+      nav ul li a {
+        width: 100%;
+        padding: 1em 2.7em 1em 2.5em;
+        font-size: 1.14rem;
+        background: none;
+        color: #fff;
+      }
+      nav ul li a:active,
+      nav ul li[aria-current="page"] a {
+        background: #012c3f;
+        color: #00e0fe;
+      }
+    }
+    /* Hide nav links on mobile unless open */
+    @media (max-width: 900px) {
+      nav ul { display: flex; }
+      nav .btn-primary { display: none; }
+    }
     main.page-content {
       max-width: 600px;
       width: 98vw;
@@ -169,9 +270,6 @@
       user-select: none;
     }
     @media (max-width: 700px) {
-      nav ul { gap: 0.7rem; }
-      nav { gap: 1.5rem; min-height: 60px; }
-      nav .logo img { height: 72px; }
       main.page-content { padding: 1.1rem 0.3rem 1rem; }
       h1 { font-size: 1.33rem; }
       .contact-email { font-size: 1.02rem; }
@@ -183,7 +281,10 @@
     <div class="logo" onclick="location.href='index.html'">
       <img src="logo.png" alt="SocialStorm Logo" />
     </div>
-    <ul>
+    <button class="hamburger" id="navHamburger" aria-label="Open menu" aria-expanded="false">
+      <span></span>
+    </button>
+    <ul id="mainNavList">
       <li><a href="index.html">Home</a></li>
       <li><a href="video.html">Create Video</a></li>
       <li><a href="pricing.html">Pricing</a></li>
@@ -232,9 +333,28 @@
     &copy; 2025 SocialStorm AI. Built for creators who want to win.
   </footer>
   <script>
+    // Hamburger nav
+    const hamburger = document.getElementById('navHamburger');
+    const navList = document.getElementById('mainNavList');
+
+    hamburger.addEventListener('click', function () {
+      const open = navList.classList.toggle('open');
+      hamburger.classList.toggle('open');
+      hamburger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+
+    // Close nav on click (for SPA feel)
+    document.querySelectorAll('#mainNavList a').forEach(link => {
+      link.addEventListener('click', () => {
+        navList.classList.remove('open');
+        hamburger.classList.remove('open');
+        hamburger.setAttribute('aria-expanded', 'false');
+      });
+    });
+
+    // Contact form logic
     const form = document.getElementById('contactForm');
     const formMessage = document.getElementById('formMessage');
-
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
 

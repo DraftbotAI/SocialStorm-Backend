@@ -1,3 +1,12 @@
+console.log('Working directory:', __dirname);
+console.log('Files/folders here:', require('fs').readdirSync(__dirname));
+if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
+  console.log('Frontend folder contents:', require('fs').readdirSync(require('path').join(__dirname, 'frontend')));
+} else {
+  console.log('No frontend folder found!');
+}
+
+
 // ===== 1) ENVIRONMENT & DEPENDENCY SETUP =====
 require('dotenv').config();
 const express        = require('express');

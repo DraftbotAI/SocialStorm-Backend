@@ -46,7 +46,7 @@ app.use(express.static(path.join(__dirname, 'frontend')));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
-const PORT = process.env.PORT 
+const PORT = process.env.PORT;
 
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => res.status(200).send('OK'));
@@ -1035,13 +1035,16 @@ app.get('/video/videos/:key', async (req, res) => {
 // Handle pretty URLs for .html pages (e.g., /pricing → /pricing.html)
 app.get('/:page', (req, res, next) => {
   const page = req.params.page;
+  // Prevent conflict with API and video routes
+  if (page.startsWith('api') || page === 'video') {
+    return next();
+  }
   const htmlPath = path.join(__dirname, 'frontend', `${page}.html`);
   if (fs.existsSync(htmlPath) && !fs.lstatSync(htmlPath).isDirectory()) {
     return res.sendFile(htmlPath);
   }
   next();
 });
-
 
 // ===== 404 HTML fallback for SPA (not API) =====
 app.get('*', (req, res) => {

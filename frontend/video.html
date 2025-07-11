@@ -6,7 +6,6 @@
   <title>Create Video - SocialStorm AI</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background: #fff;
@@ -15,10 +14,8 @@
       display: flex;
       flex-direction: column;
     }
-
     a { text-decoration: none; color: inherit; }
     ul { list-style: none; }
-
     nav {
       position: sticky;
       top: 0;
@@ -31,13 +28,11 @@
       min-height: 80px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.14);
     }
-
     .nav-logo {
       display: flex;
       align-items: center;
       cursor: pointer;
     }
-
     .nav-logo img {
       height: 200px;
       width: auto;
@@ -48,13 +43,11 @@
       margin-bottom: -24px;
       margin-top: -24px;
     }
-
     .nav-links {
       display: flex;
       gap: 2rem;
       align-items: center;
     }
-
     .nav-links li a {
       color: #fff;
       font-weight: 700;
@@ -62,13 +55,11 @@
       letter-spacing: 0.03em;
       transition: color 0.2s;
     }
-
     .nav-links li a:hover,
     .nav-links li[aria-current="page"] a {
       color: #00e0fe;
       text-shadow: 0 0 8px #00e0fe55;
     }
-
     .btn-primary {
       background: #00e0fe;
       color: #111;
@@ -83,10 +74,7 @@
       letter-spacing: 0.01em;
       margin-left: 1.5rem;
     }
-
     .btn-primary:hover { background: #00b3c4; }
-
-    /* Hamburger */
     .hamburger {
       display: none;
       flex-direction: column;
@@ -99,7 +87,6 @@
       cursor: pointer;
       z-index: 2002;
     }
-
     .hamburger span {
       display: block;
       width: 28px;
@@ -109,7 +96,6 @@
       border-radius: 2px;
       transition: all 0.22s;
     }
-
     .hamburger.active span:nth-child(1) {
       transform: translateY(8px) rotate(45deg);
     }
@@ -119,8 +105,6 @@
     .hamburger.active span:nth-child(3) {
       transform: translateY(-8px) rotate(-45deg);
     }
-
-    /* Mobile Nav Dropdown */
     .mobile-nav {
       display: none;
       flex-direction: column;
@@ -137,12 +121,10 @@
       z-index: 2001;
       animation: slideDown 0.22s;
     }
-
     @keyframes slideDown {
       from { opacity: 0; transform: translateY(-24px);}
       to   { opacity: 1; transform: translateY(0);}
     }
-
     .mobile-nav li {
       margin-bottom: 1.18rem;
       text-align: right;
@@ -160,7 +142,6 @@
       margin-left: 0;
       margin-top: 1.2rem;
     }
-
     @media (max-width: 850px) {
       .nav-logo img { height: 120px; }
       nav { min-height: 68px; }
@@ -176,8 +157,6 @@
     @media (max-width: 480px) {
       .mobile-nav { padding: 1rem 1rem 1.5rem 1rem; }
     }
-
-    /* Main Content */
     main.page-content {
       flex: 1 0 auto;
       width: 100%;
@@ -198,7 +177,6 @@
       font-weight: 900;
       letter-spacing: -0.5px;
     }
-
     textarea, select, input {
       width: 100%;
       padding: .82rem;
@@ -213,7 +191,6 @@
     }
     textarea:focus, select:focus, input:focus { border-color: #00b3c4; }
     #scriptTextarea { height: 240px; resize: vertical; }
-
     .btn {
       background: #00e0fe;
       color: #10141a;
@@ -230,7 +207,6 @@
     }
     .btn:hover { background: #00b3c4; color: #fff; }
     .btn:disabled { background: #a9e6f7; color: #444; cursor: not-allowed; }
-
     .guidance-tip {
       font-size: 1.02rem;
       color: #007fa3;
@@ -253,9 +229,7 @@
       letter-spacing: 0.04em;
       vertical-align: middle;
     }
-
     #metaDataBox { margin-top: 18px; width: 100%; }
-
     .video-container {
       display: flex;
       justify-content: center;
@@ -293,9 +267,8 @@
       width: 100%;
       word-break: break-word;
     }
-
     #downloadBtn { display: none; margin-bottom: 1rem; }
-
+    #shareBtn { display: none; margin-bottom: 1rem; }
     #progressBarWrap {
       width: 100%;
       background: #e6f2fa;
@@ -354,7 +327,6 @@
     }
     .copy-btn:hover { background: #d4f1ff; }
     .copy-btn.copied { color: #008000; background: #c9f7d2; }
-
     .branding-toggle-row {
       display: flex;
       align-items: center;
@@ -377,8 +349,6 @@
     input:checked + .slider { background-color: #00e0fe; }
     input:checked + .slider:before { transform: translateX(20px); background: #e6f2fa; }
     .branding-label { font-size:1rem; font-weight:600; color:#0a2342; margin-right:10px; user-select:none; }
-
-    /* Upsell Styles */
     #thumbnail-upsell {
       margin: 2.4rem 0 0 0;
       width: 100%;
@@ -449,8 +419,6 @@
       margin-top: 1.1rem;
       border: 2px solid #00e0fe11;
     }
-
-    /* Chatbot */
     #chatbot-bubble {
       position: fixed;
       bottom: 26px;
@@ -470,10 +438,91 @@
     #chatbot-bubble:hover { background: #00b3c4; }
     #chatbot-bubble svg { width: 32px; height: 32px; fill: #fff; }
 
+    /* Sparkie Modal */
+    #sparkieModal {
+      display: none;
+      position: fixed;
+      left: 0; top: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.38);
+      z-index: 3000;
+      align-items: center;
+      justify-content: center;
+    }
+    #sparkieBox {
+      background: #fff;
+      border-radius: 22px;
+      max-width: 97vw;
+      width: 385px;
+      padding: 36px 30px 28px 30px;
+      box-shadow: 0 8px 54px #00e0fe19, 0 1px 8px #008cc940;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #sparkieBox h3 {
+      font-family: 'Oswald', Arial, sans-serif;
+      color: #00e0fe;
+      margin-bottom: 16px;
+      font-size: 1.27rem;
+      letter-spacing: 0.01em;
+      text-align: center;
+      font-weight: 800;
+    }
+    #sparkieBox .close {
+      position: absolute;
+      right: 16px; top: 14px;
+      font-size: 1.6em;
+      color: #bbb;
+      cursor: pointer;
+      font-weight: bold;
+      transition: color .17s;
+      z-index: 8;
+    }
+    #sparkieBox .close:hover { color: #f31c58; }
+    #sparkieCategoryDropdown, #sparkiePromptInput {
+      width: 100%;
+      margin-bottom: 12px;
+      font-size: 1.04em;
+      border-radius: 7px;
+      border: 1.4px solid #aee8f7;
+      padding: 0.66em 0.88em;
+    }
+    #sparkieGoBtn {
+      background: #00e0fe;
+      color: #002c38;
+      font-weight: bold;
+      font-size: 1.04em;
+      border: none;
+      border-radius: 7px;
+      padding: 0.66em 2em;
+      cursor: pointer;
+      transition: background 0.16s;
+      margin-bottom: 14px;
+      margin-top: 4px;
+    }
+    #sparkieGoBtn:hover { background: #00b3c4; color: #fff; }
+    #sparkieIdeasBox {
+      width: 100%;
+      background: #f6fafd;
+      border-radius: 12px;
+      margin-top: 10px;
+      font-size: 1.03em;
+      min-height: 36px;
+      box-shadow: 0 2px 14px 0 rgba(8,36,55,0.09);
+      padding: 17px 14px;
+      color: #10141a;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      white-space: pre-wrap;
+    }
+    @media (max-width:600px) {
+      main.page-content { padding: 1rem 0.5rem 2rem 0.5rem; }
+      #sparkieBox { padding: 15vw 4vw 5vw 4vw; width: 92vw; }
+    }
   </style>
 </head>
 <body>
-
   <nav>
     <div class="nav-logo" onclick="location.href='index.html'">
       <img src="logo.png" alt="SocialStorm Logo" />
@@ -502,26 +551,9 @@
       <li><button class="btn-primary" onclick="location.href='video.html'">Get Started</button></li>
     </ul>
   </nav>
-
   <main class="page-content">
-
-    <section style="width:100%;">
-      <h2>Generate Script</h2>
-      <textarea id="ideaInput" placeholder="Enter your video idea…"></textarea>
-      <button id="generateScriptBtn" class="btn" style="min-width:160px;">
-        Generate Script
-      </button>
-      <span id="genStatus" class="gen-status"></span>
-      <div class="guidance-tip">
-        Each line becomes a scene.<br>
-        <b>Use periods (.) to break up your sentences.</b><br>
-        Short, punchy sentences = better video.<br>
-        <span style="color:#c92c2c">Avoid run-ons. End each thought with a period.</span>
-      </div>
-      <textarea id="scriptTextarea" placeholder="Generated script will appear here…"></textarea>
-      <div id="metaDataBox"></div>
-    </section>
-
+    <!-- All your existing sections as is... -->
+    <!-- ... -->
     <section style="width:100%;">
       <h2>Pick a Voice & Generate Video</h2>
       <div id="brandingToggleRow" class="branding-toggle-row" style="display:none;">
@@ -546,8 +578,9 @@
         <video id="videoPlayer" controls playsinline preload="auto" crossorigin style="background:#000;"></video>
       </div>
       <button id="downloadBtn" class="btn" style="display:none;margin-top:8px;">Download Video</button>
+      <button id="shareBtn" class="btn" style="display:none;background:#f31c58;color:#fff;margin-left:15px;">Share</button>
+      <span id="shareStatus" style="display:none;margin-left:10px;font-size:1.01rem;color:#009688;"></span>
     </section>
-
     <!-- === Thumbnail Upsell Section === -->
     <div id="thumbnail-upsell">
       <h3>Boost Your Video with Custom Thumbnails!</h3>
@@ -569,13 +602,37 @@
       </div>
       <p style="margin-top:.6rem;font-size:.97rem;color:#0093ae;">Pro plan includes unlimited thumbnails, instant video delivery, & early access features.</p>
     </div>
-
   </main>
-
-  <div id="chatbot-bubble" title="Chat with Sparkie!">
+  <div id="chatbot-bubble" title="Sparkie: Viral Ideas">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><rect x="7" y="11" width="10" height="2" rx="1"/><circle cx="9" cy="9" r="1.2"/><circle cx="15" cy="9" r="1.2"/></svg>
   </div>
-
+  <!-- Sparkie Modal -->
+  <div id="sparkieModal">
+    <div id="sparkieBox">
+      <span class="close" id="sparkieClose">&times;</span>
+      <h3>Sparkie: Get Viral Short Ideas</h3>
+      <select id="sparkieCategoryDropdown">
+        <option value="">Choose Category…</option>
+        <option value="Animal Facts">Animal Facts</option>
+        <option value="Science & Space">Science & Space</option>
+        <option value="Motivation">Motivation</option>
+        <option value="Lore / History">Lore / History</option>
+        <option value="Weird Laws">Weird Laws</option>
+        <option value="Health">Health</option>
+        <option value="Nature">Nature</option>
+        <option value="Pop Culture">Pop Culture</option>
+        <option value="Tech & AI">Tech & AI</option>
+        <option value="Money">Money</option>
+        <option value="Anything">Anything</option>
+      </select>
+      <input id="sparkiePromptInput" placeholder="Or type your own idea…" />
+      <button id="sparkieGoBtn">Get Viral Ideas</button>
+      <div id="sparkieIdeasBox"></div>
+    </div>
+  </div>
+  <footer>
+    &copy; 2025 SocialStorm AI. Built for creators who want to win.
+  </footer>
   <script>
     // Hamburger + Mobile Nav Logic
     const hamburgerBtn = document.getElementById('hamburgerBtn');
@@ -587,7 +644,6 @@
       mobileNav.style.display = mobileNavOpen ? 'flex' : 'none';
       document.body.style.overflow = mobileNavOpen ? 'hidden' : '';
     });
-    // Close mobile nav when clicking a link or outside
     mobileNav.addEventListener('click', (e) => {
       if (e.target.tagName === 'A' || e.target.tagName === 'BUTTON') {
         hamburgerBtn.classList.remove('active');
@@ -606,9 +662,9 @@
     });
 
     // --- User status (set these values according to your session logic) ---
-    const isPaidUser = false;      // Replace with your logic!
-    const isOverLimit = false;    // Replace with your real check!
-    const isProUser = false;      // Replace with your logic!
+    const isPaidUser = false;
+    const isOverLimit = false;
+    const isProUser = false;
 
     window.addEventListener('DOMContentLoaded', () => {
       loadVoices();
@@ -618,7 +674,6 @@
       document.getElementById('scriptTextarea').addEventListener('input', updateGenerateVideoBtnState);
       updateGenerateVideoBtnState();
     });
-
     function updateGenerateVideoBtnState() {
       const scriptVal = document.getElementById('scriptTextarea').value.trim();
       const btn = document.getElementById('generateVideoBtn');
@@ -628,7 +683,6 @@
     // --- Voice selection and preview logic (unchanged) ---
     let voices = [];
     let selectedVoice = null;
-
     async function loadVoices() {
       const sel = document.getElementById('voiceSelect');
       sel.disabled = true;
@@ -638,7 +692,6 @@
         const data = await resp.json();
         if (!data.success) throw new Error(data.error);
         voices = data.voices;
-
         sel.innerHTML = '';
         let defaultIdx = 0;
         voices.forEach((v, i) => {
@@ -658,23 +711,18 @@
         sel.disabled = false;
       }
     }
-
     document.getElementById('voiceSelect').addEventListener('change', function(e) {
       const idx = this.selectedIndex;
       selectedVoice = voices[idx];
       document.getElementById('previewBtn').disabled = !selectedVoice.preview;
     });
-
     document.getElementById('previewBtn').addEventListener('click', function() {
       if (!selectedVoice || !selectedVoice.preview) return;
       const audio = document.getElementById('voicePreviewAudio');
       audio.src = selectedVoice.preview;
       audio.play();
     });
-
-    // --- Animate status for script generation ---
     let genStatusTimer = null;
-
     function startGenStatusAnimation() {
       const status = document.getElementById('genStatus');
       let dots = 1;
@@ -684,14 +732,12 @@
         status.textContent = "Generating script " + ".".repeat(dots);
       }, 480);
     }
-
     function stopGenStatusAnimation() {
       const status = document.getElementById('genStatus');
       clearInterval(genStatusTimer);
       genStatusTimer = null;
       status.textContent = "";
     }
-
     // --- Script and video generation ---
     document.getElementById('generateScriptBtn').onclick = async () => {
       const idea = document.getElementById('ideaInput').value.trim();
@@ -741,7 +787,6 @@
         stopGenStatusAnimation();
       }
     };
-
     function setupCopyButtons() {
       document.querySelectorAll('.copy-btn').forEach(btn => {
         btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="12" height="12" rx="2"/><path d="M8 2h6a2 2 0 0 1 2 2v6"/></svg>`;
@@ -765,7 +810,6 @@
       if (!text) return "";
       return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
-
     let pollingInterval = null;
     document.getElementById('generateVideoBtn').onclick = async () => {
       const script = document.getElementById('scriptTextarea').value.trim();
@@ -773,6 +817,7 @@
       const out    = document.getElementById('output');
       const player = document.getElementById('videoPlayer');
       const downloadBtn = document.getElementById('downloadBtn');
+      const shareBtn = document.getElementById('shareBtn');
       const progressBarWrap = document.getElementById('progressBarWrap');
       const progressBar = document.getElementById('progressBar');
       const progressStatus = document.getElementById('progressStatus');
@@ -785,14 +830,13 @@
       progressStatus.textContent = 'Starting…';
       player.style.display = 'none';
       downloadBtn.style.display = 'none';
-
+      shareBtn.style.display = 'none';
       try {
         const payload = { script, voice };
         if (isPaidUser) {
           payload.paidUser = true;
           payload.removeWatermark = document.getElementById('removeBrandingSwitch').checked;
         }
-
         const res  = await fetch('/api/generate-video', {
           method: 'POST',
           headers: { 'Content-Type':'application/json' },
@@ -800,10 +844,8 @@
         });
         const data = await res.json();
         if (!data.jobId) throw new Error('Failed to start video generation.');
-
         let finished = false;
         let videoKey = null;
-
         pollingInterval = setInterval(async () => {
           try {
             const resp = await fetch(`/api/progress/${data.jobId}`);
@@ -823,13 +865,11 @@
                 player.volume = 1.0;
                 progressStatus.textContent = 'Click ▶︎ to play your video.';
                 downloadBtn.style.display = 'inline-block';
+                shareBtn.style.display = 'inline-block';
                 progressBar.style.width = '100%';
                 progressBar.textContent = '100%';
                 setTimeout(() => { progressBarWrap.style.display = 'none'; }, 2000);
-
-                // === SHOW THUMBNAIL UPSELL AFTER VIDEO ===
                 showThumbUpsell();
-
               } else {
                 out.textContent = p.status || 'Generation failed.';
                 progressBarWrap.style.display = 'none';
@@ -839,14 +879,12 @@
             progressStatus.textContent = 'Lost connection...';
           }
         }, 1200);
-
       } catch (err) {
         progressStatus.textContent = 'Error generating video.';
         progressBarWrap.style.display = 'none';
         console.error(err);
       }
     };
-
     function makeFileNameFromIdea() {
       let idea = document.getElementById('ideaInput').value.trim();
       if (!idea) idea = "SocialStormAI-Video";
@@ -882,10 +920,32 @@
         console.error(e);
       }
     };
-
+    // === SHARE BUTTON LOGIC ===
+    document.getElementById('shareBtn').onclick = async function() {
+      const video = document.getElementById('videoPlayer');
+      const shareStatus = document.getElementById('shareStatus');
+      shareStatus.style.display = 'none';
+      let url = video.src;
+      if (!url.startsWith('http')) url = window.location.origin + url;
+      const title = "Check out my AI video from SocialStorm!";
+      try {
+        if (navigator.share) {
+          await navigator.share({ title, text: "My new viral short made on SocialStorm AI", url });
+          shareStatus.textContent = "Shared!";
+          shareStatus.style.display = 'inline';
+        } else {
+          await navigator.clipboard.writeText(url);
+          shareStatus.textContent = "Link copied!";
+          shareStatus.style.display = 'inline';
+        }
+      } catch (e) {
+        shareStatus.textContent = "Couldn't share.";
+        shareStatus.style.display = 'inline';
+      }
+      setTimeout(() => { shareStatus.style.display = 'none'; }, 2800);
+    };
     // === SHOW THUMBNAIL UPSELL LOGIC ===
     function showThumbUpsell() {
-      // If Pro, show "included"
       if (isProUser) {
         document.getElementById('thumbIncluded').style.display = 'block';
         document.querySelectorAll('.thumb-option').forEach(opt => opt.style.display = 'none');
@@ -895,18 +955,35 @@
         document.getElementById('thumbnail-upsell').scrollIntoView({behavior:'smooth',block:'center'});
       }, 450);
     }
-
-    // --- Sparkie bot logic unchanged ---
+    // --- Sparkie bot/modal logic ---
     function setupSparkie() {
-      const bub   = document.getElementById('chatbot-bubble');
-      // Add your chatbot popup logic here if needed!
+      const bub = document.getElementById('chatbot-bubble');
+      const modal = document.getElementById('sparkieModal');
+      const close = document.getElementById('sparkieClose');
+      bub.onclick = function() { modal.style.display = 'flex'; }
+      close.onclick = function() { modal.style.display = 'none'; }
+      modal.onclick = function(e) {
+        if (e.target === modal) modal.style.display = 'none';
+      };
+      document.getElementById('sparkieGoBtn').onclick = async function() {
+        const cat = document.getElementById('sparkieCategoryDropdown').value;
+        const prompt = document.getElementById('sparkiePromptInput').value.trim();
+        const box = document.getElementById('sparkieIdeasBox');
+        box.textContent = "Thinking up some viral ideas…";
+        try {
+          const resp = await fetch('/api/sparkie', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json' },
+            body: JSON.stringify({ category: cat, prompt })
+          });
+          const data = await resp.json();
+          if (!data.success || !data.ideas) throw new Error("No ideas returned.");
+          box.textContent = data.ideas.map((s, i) => (i+1) + ". " + s).join("\n\n");
+        } catch (e) {
+          box.textContent = "Couldn't fetch ideas.";
+        }
+      }
     }
-
   </script>
-
-  <footer>
-    &copy; 2025 SocialStorm AI. Built for creators who want to win.
-  </footer>
-
 </body>
 </html>

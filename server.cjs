@@ -1,3 +1,5 @@
+// server.cjs - Full Complete Version with Fixes & Improvements
+
 const { createCanvas, loadImage, registerFont } = require('canvas');
 const JSZip = require('jszip');
 
@@ -45,7 +47,7 @@ app.use(express.static(path.join(__dirname, 'frontend')));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3000;
 
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => res.status(200).send('OK'));
@@ -151,7 +153,6 @@ function splitScriptToScenes(script) {
     .filter(Boolean)
     .filter(line => line.length > 1);
 }
-
 // === GOOGLE CLOUD TTS CLIENT ===
 let googleTTSClient;
 try {
@@ -199,6 +200,7 @@ function promiseTimeout(promise, ms, msg="Timed out") {
     new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))
   ]);
 }
+
 // ===== VOICES =====
 function getVoicePreviewFile(id, fallback = null) {
   const previewDir = '/voice-previews/';
@@ -305,7 +307,6 @@ Give only 7, no numbering or list format, just line by line.
     }
   }
 });
-
 // ===== /api/generate-script endpoint (IMPROVED FOR VOICE NARRATION) =====
 app.post('/api/generate-script', async (req, res) => {
   const { idea } = req.body;
@@ -362,6 +363,7 @@ SCRIPT:
     if (!res.headersSent) return res.status(500).json({ success: false, error: err.message });
   }
 });
+
 // ===== /api/generate-video endpoint =====
 app.post('/api/generate-video', async (req, res) => {
   const jobId = uuidv4();
@@ -817,7 +819,6 @@ app.get('/api/progress/:jobId', (req, res) => {
   }
   res.json(job);
 });
-
 // ===== GENERATE VOICE PREVIEWS ENDPOINT =====
 app.post('/api/generate-voice-previews', async (req, res) => {
   const sampleText = "This is a sample of my voice.";
@@ -843,26 +844,139 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       return res.status(400).json({ success: false, error: "Topic required." });
     }
     const viralCaptions = [
-      // ... [CAPTIONS LIST TRUNCATED FOR SPACE, use full in actual file]
+      "You Won’t Believe This!", "STOP Scrolling!", "10 Secrets You Never Knew", "The Truth Revealed", "Mind-Blowing Fact",
+      "Watch Till The End!", "What Happens Next?", "Game Changer", "Here’s Why", "Insane Results!",
+      "Hidden Gems", "Try This!", "Experts Hate This", "Why No One Talks About This", "Too Good To Be True?", "I Tried It…", "Before & After", "WARNING!", "Unbelievable!", "It Actually Works!",
+      "Don’t Miss Out", "Life Hack", "This Changed Everything", "100% Real", "Everyone Needs This", "Best Advice Ever", "Must See", "The #1 Mistake", "Breakthrough", "How To Succeed", "Top 3 Reasons",
+      "Save This!", "No One Tells You This", "FACTS!", "Huge Discovery", "Zero to Hero", "Watch Me Do This", "Don’t Try This", "The Only Way", "Level Up", "Haters Will Say It’s Fake", "Get Rich Quick",
+      "This is Why", "Don’t Ignore This", "Easy Money", "Simple Trick", "It’s Finally Here", "So Satisfying", "Every Beginner Makes This", "Shocking Truth", "I Was Today Years Old", "This Is Wild",
+      "Stay Tuned", "Breaking News", "This Will Blow Your Mind", "Just Released", "Ultimate Guide", "Let Me Explain", "How I Did It", "Insider Secret", "Only the OGs Know", "Little Known Fact",
+      "You’re Doing It Wrong", "Anyone Can Do This", "Can You Believe It?", "Beginner To Pro", "Watch This First!", "Before You Try", "Do This Now", "If You Know, You Know", "No One’s Ready For This",
+      "Will This Work?", "Best On The Internet", "Nobody Tells You", "Viral Trick", "Rare Footage", "You’ve Never Seen This", "For The First Time", "Save Your Time", "Don’t Make This Mistake", "I Regret Nothing",
+      "Instant Results", "This Changed My Life", "Still Works In 2025", "Are You Ready?", "We Tested It", "Why Didn’t I Know?", "Little Known Hack", "Big Reveal", "You Asked For It", "This One’s For You",
+      "All The Proof", "Watch Me Try", "Only The Brave", "Don’t Blink", "This Actually Happened", "What If?", "I Wish I Knew", "Mind Blown!", "Best Thing Ever", "Instant Upgrade"
     ];
 
-    // Load Google Fonts into Canvas (font register block)
+    // Load Google Fonts into Canvas
     try {
       registerFont(path.join(__dirname, 'fonts', 'BebasNeue-Regular.ttf'), { family: 'Bebas Neue' });
       registerFont(path.join(__dirname, 'fonts', 'Anton-Regular.ttf'), { family: 'Anton' });
       registerFont(path.join(__dirname, 'fonts', 'Oswald-Regular.ttf'), { family: 'Oswald' });
       registerFont(path.join(__dirname, 'fonts', 'Impact.ttf'), { family: 'Impact' });
-    } catch (err) { /* ignore font load error on prod */ }
+    } catch (err) {
+      // Ignore font load error on prod
+    }
 
-    // ... [THUMBNAIL GENERATION LOGIC, unchanged]
+    const fontStyles = [
+      { family: "Bebas Neue", weight: "bold", size: 58, color: "#ffef08", shadow: "#000000", outline: "#000000" }, // Bright yellow with black outline
+      { family: "Impact", weight: "bold", size: 52, color: "#ffef08", shadow: "#000000", outline: "#000000" },
+      { family: "Anton", weight: "bold", size: 50, color: "#ffef08", shadow: "#000000", outline: "#000000" },
+      { family: "Oswald", weight: "bold", size: 46, color: "#ffef08", shadow: "#000000", outline: "#000000" },
+      { family: "Impact", weight: "bold", size: 60, color: "#ffef08", shadow: "#000000", outline: "#000000" },
+      { family: "Bebas Neue", weight: "bold", size: 54, color: "#ffef08", shadow: "#000000", outline: "#000000" },
+      { family: "Oswald", weight: "bold", size: 55, color: "#ffef08", shadow: "#000000", outline: "#000000" },
+      { family: "Anton", weight: "bold", size: 52, color: "#ffef08", shadow: "#000000", outline: "#000000" }
+    ];
 
-    // Package as zip file, send previews and zip as base64
-    // ...
+    let imageUrls = [];
+    try {
+      for (let i = 0; i < 10; i++) {
+        let url;
+        try {
+          let obj = await pickClipFor(topic, caption || topic, undefined, topic);
+          url = obj?.url;
+        } catch (e) { url = undefined; }
+        if (!url) {
+          url = `https://source.unsplash.com/800x450/?${encodeURIComponent(topic)},colorful&sig=${Math.floor(Math.random()*1000000)}`;
+        }
+        imageUrls.push(url);
+      }
+    } catch (err) {
+      imageUrls = Array(10).fill().map((_,i) => `https://source.unsplash.com/800x450/?${encodeURIComponent(topic)},colorful&sig=${i+1}`);
+    }
+
+    let images = [];
+    for (let i = 0; i < 10; i++) {
+      const style = fontStyles[i % fontStyles.length];
+      const bgUrl = imageUrls[i];
+      const text = caption && caption.length > 2 ? caption : viralCaptions[Math.floor(Math.random() * viralCaptions.length)];
+      const canvas = createCanvas(800, 450);
+      const ctx = canvas.getContext('2d');
+
+      try {
+        const bg = await loadImage(bgUrl);
+        ctx.drawImage(bg, 0, 0, 800, 450);
+      } catch (err) {
+        ctx.fillStyle = "#222";
+        ctx.fillRect(0,0,800,450);
+      }
+
+      ctx.save();
+      ctx.font = `${style.weight} ${style.size}px "${style.family}"`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      // Shadow
+      ctx.shadowColor = style.shadow;
+      ctx.shadowBlur = 10;
+
+      // Outline - draw multiple stroke lines for thick outline
+      ctx.lineWidth = 7;
+      ctx.strokeStyle = style.outline;
+
+      // Multiline text wrapping
+      let lines = [];
+      let maxWidth = 730;
+      let words = text.split(' ');
+      let line = '';
+      for (let w of words) {
+        let test = line.length ? line + ' ' + w : w;
+        let m = ctx.measureText(test);
+        if (m.width > maxWidth && line) {
+          lines.push(line);
+          line = w;
+        } else {
+          line = test;
+        }
+      }
+      if (line) lines.push(line);
+      let startY = 225 - (lines.length - 1) * style.size * 0.65;
+
+      for (let li = 0; li < lines.length; li++) {
+        ctx.strokeText(lines[li], 400, startY + li * style.size * 1.01);
+        ctx.fillStyle = style.color;
+        ctx.fillText(lines[li], 400, startY + li * style.size * 1.01);
+      }
+      ctx.restore();
+
+      // Watermark
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.font = 'bold 34px "Oswald"';
+      ctx.rotate(-0.18);
+      ctx.fillStyle = '#00e0fe';
+      ctx.textAlign = 'center';
+      ctx.fillText('SOCIALSTORM AI', 400, 400);
+      ctx.restore();
+
+      const buf = canvas.toBuffer('image/png');
+      images.push(buf);
+    }
+
+    const zip = new JSZip();
+    images.forEach((img, i) => {
+      zip.file(`thumbnail${i+1}.png`, img);
+    });
+    const zipBuf = await zip.generateAsync({ type: "nodebuffer" });
+
+    const previews = images.map(img => "data:image/png;base64," + img.toString('base64'));
+
     res.json({
       success: true,
       previews,
       zip: "data:application/zip;base64," + zipBuf.toString('base64')
     });
+
   } catch (err) {
     console.error("Thumbnail generation error:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -873,7 +987,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 app.get('/video/videos/:key', async (req, res) => {
   try {
     const key = `videos/${req.params.key}`;
-    // HEAD request to get content-length for range requests
     const headData = await s3.headObject({
       Bucket: process.env.R2_BUCKET,
       Key: key,
@@ -882,7 +995,7 @@ app.get('/video/videos/:key', async (req, res) => {
     const total = headData.ContentLength;
     const range = req.headers.range;
     res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Access-Control-Allow-Origin', '*'); // CORS for video
+    res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
@@ -917,7 +1030,6 @@ app.get('/video/videos/:key', async (req, res) => {
       }).createReadStream();
 
       res.setHeader('Content-Type', 'video/mp4');
-      // The below header helps trigger download reliably on mobile/tablet/desktop
       res.setHeader('Content-Disposition', 'attachment; filename="socialstorm-video.mp4"');
       res.setHeader('Content-Length', total);
 
@@ -933,10 +1045,10 @@ app.get('/video/videos/:key', async (req, res) => {
     res.status(500).end('Internal error');
   }
 });
+
 // Handle pretty URLs for .html pages (e.g., /pricing → /pricing.html)
 app.get('/:page', (req, res, next) => {
   const page = req.params.page;
-  // Prevent conflict with API and video routes
   if (page.startsWith('api') || page === 'video') {
     return next();
   }

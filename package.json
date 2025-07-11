@@ -6,7 +6,7 @@
     "start": "node server.cjs"
   },
   "dependencies": {
-    "@google-cloud/text-to-speech": "^6.1.0",
+    "@google-cloud/text-to-speech": "^6.2.0",
     "archiver": "^7.0.1",
     "aws-sdk": "^2.1692.0",
     "axios": "^1.10.0",
@@ -19,7 +19,7 @@
     "fs": "^0.0.1-security",
     "jszip": "^3.10.1",
     "node-fetch": "^3.3.2",
-    "openai": "^5.8.3",
+    "openai": "^5.9.0",
     "path": "^0.12.7",
     "string-similarity": "^4.0.4",
     "util": "^0.12.5",

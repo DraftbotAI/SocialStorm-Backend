@@ -250,17 +250,15 @@ const mappedCustomVoices = [...googleFreeVoices, ...elevenProVoices].map(v => ({
 // ===== /api/voices endpoint =====
 app.get('/api/voices', (req, res) => {
   res.json({ success: true, voices: mappedCustomVoices });
-}));
+});
 
 // ===== SPARKIE (IMPROVED) ENDPOINT =====
 app.post('/api/sparkie', async (req, res) => {
-  // Accepts: { category, prompt }
   const { category, prompt } = req.body;
   if (!category && !prompt) return res.status(400).json({ success: false, error: 'Prompt or category required' });
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // New Sparkie: category + more detailed and narratable ideas for SocialStormAI
     const sparkiePrompt = `
 You are Sparkie, a YouTube Shorts script idea generator for an AI video tool.
 
@@ -290,7 +288,6 @@ Give only 7, no numbering or list format, just line by line.
       max_tokens: 380
     });
 
-    // Clean: remove numbering, emojis, and excess whitespace
     let ideas = c.choices[0].message.content
       .replace(/^[\d\-\.\*]+\s*/gm, '')
       .replace(/\p{Extended_Pictographic}/gu, '')
@@ -306,11 +303,62 @@ Give only 7, no numbering or list format, just line by line.
   }
 });
 
-// ... next parts coming with all the fixes, including video loop fix and thumbnail generator improvements ...
 // ===== /api/generate-script endpoint (IMPROVED FOR VOICE NARRATION) =====
-// (already covered in Part 1)
+app.post('/api/generate-script', async (req, res) => {
+  const { idea } = req.body;
+  if (!idea) return res.status(400).json({ success: false, error: 'Idea required' });
+  try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+    const scriptPrompt = `
+Generate a YouTube Shorts script for this topic, with each line being a powerful, voice-friendly hook, fact, or micro-story. 
+The FIRST line must be a highly engaging, curiosity-driven intro statement designed to make someone stop scrolling. 
+NO emojis, NO hashtags, NO numbered lists, NO TikTok text, NO bullet points—just crisp, natural narration. 
+Each line must be a standalone, interesting, or surprising statement relevant to the theme. 
+All lines should be short, direct, and easy for a text-to-speech voice to read out loud. 
+Never repeat the same words or phrases.
 
+THEME: ${idea}
+
+SCRIPT:
+`.trim();
+
+    const out = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'system', content: scriptPrompt }],
+      temperature: 0.94,
+      max_tokens: 400,
+    });
+
+    let script = out.choices[0].message.content
+      .replace(/^[\d\-\.\*]+\s*/gm, '')
+      .replace(/\p{Extended_Pictographic}/gu, '')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 2)
+      .join('\n');
+
+    script = stripEmojis(script);
+
+    const { viralTitle, viralDesc, viralTags } = await generateViralMetadata({
+      script, topic: idea, oldTitle: '', oldDesc: ''
+    });
+
+    return res.json({
+      success: true,
+      script,
+      title: viralTitle,
+      description: viralDesc,
+      hashtags: viralTags,
+      tags: viralTags,
+      oldTitle: '',
+      oldDesc: ''
+    });
+  } catch (err) {
+    console.error('SCRIPT ERR:', err);
+    if (!res.headersSent) return res.status(500).json({ success: false, error: err.message });
+  }
+});
 // ===== /api/generate-video endpoint =====
 app.post('/api/generate-video', async (req, res) => {
   const jobId = uuidv4();
@@ -353,6 +401,7 @@ app.post('/api/generate-video', async (req, res) => {
       ];
 
       let mediaFailCount = 0;
+
       for (let i = 0; i < steps.length; i++) {
         try {
           currentStep++;
@@ -368,7 +417,6 @@ app.post('/api/generate-video', async (req, res) => {
           const clipBase = path.join(workDir, `media-${idx}`);
           const sceneFile = path.join(workDir, `scene-${idx}.mp4`);
 
-          // Generate audio (Google TTS or ElevenLabs)
           const googleVoiceIds = googleFreeVoices.map(v => v.id);
           if (googleVoiceIds.includes(voice)) {
             const wav = await synthesizeWithGoogleTTS(text, voice, audioFile);
@@ -392,7 +440,7 @@ app.post('/api/generate-video', async (req, res) => {
                   .run();
               });
             } catch (err) {
-              console.error("TTS/Eleven error for scene", i + 1, err);
+              console.error("TTS/Eleven error for scene", i+1, err);
               progress[jobId] = { percent: 100, status: `Failed: ElevenLabs error for voice "${voice}": ${err.message}` };
               cleanupJob(jobId, 10 * 1000);
               finished = true;
@@ -401,7 +449,6 @@ app.post('/api/generate-video', async (req, res) => {
             }
           }
 
-          // Get audio duration reliably, fallback to 3.5s
           let audioDur = 3.5;
           try {
             audioDur = await new Promise((resolve, reject) =>
@@ -411,7 +458,6 @@ app.post('/api/generate-video', async (req, res) => {
             audioDur = 3.5;
           }
 
-          // Clip fetch loop with uniqueness check and fallback queries
           let mediaObj = null;
           let attempts = 0;
           let found = false;
@@ -459,15 +505,12 @@ app.post('/api/generate-video', async (req, res) => {
             }
           }
 
-          // If still no media, use fallback black screen with audio
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
             if (mediaFailCount > 3) {
-              throw new Error(`Failed to get media for scene ${i + 1} after many attempts.`);
+              throw new Error(`Failed to get media for scene ${i+1} after many attempts.`);
             }
             const colorClip = path.join(workDir, `fallback-black-${idx}.mp4`);
-
-            // Use audioDur + 1.5 as safe duration
             let safeDuration = Number(audioDur) && !isNaN(audioDur) ? audioDur + 1.5 : 3.5;
             await new Promise((resolve, reject) => {
               ffmpeg()
@@ -500,11 +543,9 @@ app.post('/api/generate-video', async (req, res) => {
             continue;
           }
 
-          // Download clip for scene
           const ext = path.extname(new URL(mediaObj.url).pathname);
           await downloadToFile(mediaObj.url, clipBase + ext);
 
-          // Prepare silent audio lead and tail for smoothing audio transitions
           const leadFile = path.join(workDir, `lead-${idx}.wav`);
           const tailFile = path.join(workDir, `tail-${idx}.wav`);
 
@@ -528,7 +569,6 @@ app.post('/api/generate-video', async (req, res) => {
               .on('error', reject);
           });
 
-          // Concatenate lead + speech + tail into final scene audio
           const sceneAudioWav = path.join(workDir, `scene-audio-${idx}.wav`);
           const audListFile = path.join(workDir, `audlist-${idx}.txt`);
           fs.writeFileSync(
@@ -546,7 +586,6 @@ app.post('/api/generate-video', async (req, res) => {
               .on('error', reject);
           });
 
-          // Convert final scene audio to AAC M4A format
           const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
           await new Promise((resolve, reject) => {
             ffmpeg()
@@ -557,16 +596,14 @@ app.post('/api/generate-video', async (req, res) => {
               .on('error', reject);
           });
 
-          // Set scene length to audioDur + 1.5 seconds (buffer)
           const sceneLen = audioDur + 1.5;
 
-          // Create final video scene by looping clip and merging with audio, scale and crop for 720x1280 vertical
           await new Promise((resolve, reject) => {
             ffmpeg()
               .input(clipBase + ext)
-              .inputOptions(['-stream_loop', '-1'])  // loop video input infinitely
+              // Removed stream_loop -1 to prevent looping of video clips
               .input(sceneAudio)
-              .inputOptions([`-t ${sceneLen}`])      // limit total output duration precisely
+              .inputOptions([`-t ${sceneLen}`])
               .outputOptions([
                 '-map 0:v:0',
                 '-map 1:a:0',
@@ -586,7 +623,7 @@ app.post('/api/generate-video', async (req, res) => {
           scenes.push(sceneFile);
 
         } catch (err) {
-          console.error("Scene", i + 1, "error:", err);
+          console.error("Scene", i+1, "error:", err);
           progress[jobId] = { percent: 100, status: "Failed: " + err.message };
           cleanupJob(jobId, 10 * 1000);
           finished = true;
@@ -768,7 +805,32 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
+// ===== PROGRESS POLLING ENDPOINT =====
+app.get('/api/progress/:jobId', (req, res) => {
+  const jobId = req.params.jobId;
+  const job = progress[jobId];
+  if (!job) {
+    return res.json({ percent: 100, status: 'Failed: Job not found or expired.' });
+  }
+  res.json(job);
+});
 
+// ===== GENERATE VOICE PREVIEWS ENDPOINT =====
+app.post('/api/generate-voice-previews', async (req, res) => {
+  const sampleText = "This is a sample of my voice.";
+  try {
+    for (const v of googleFreeVoices) {
+      const filePath = path.join(__dirname, 'frontend', 'voice-previews', `sample_${v.id}.mp3`);
+      if (!fs.existsSync(filePath)) {
+        await synthesizeWithGoogleTTS(sampleText, v.id, filePath);
+        console.log("Generated preview for", v.name);
+      }
+    }
+    res.json({ success: true, message: "Google voice previews generated." });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // ======= /api/generate-thumbnails =======
 app.post('/api/generate-thumbnails', async (req, res) => {
@@ -777,137 +839,68 @@ app.post('/api/generate-thumbnails', async (req, res) => {
     if (!topic || topic.length < 2) {
       return res.status(400).json({ success: false, error: "Topic required." });
     }
-    const viralCaptions = [
-      "You Won’t Believe This!", "STOP Scrolling!", "10 Secrets You Never Knew", "The Truth Revealed", "Mind-Blowing Fact",
-      "Watch Till The End!", "What Happens Next?", "Game Changer", "Here’s Why", "Insane Results!",
-      "Hidden Gems", "Try This!", "Experts Hate This", "Why No One Talks About This", "Too Good To Be True?", "I Tried It…", "Before & After", "WARNING!", "Unbelievable!", "It Actually Works!",
-      "Don’t Miss Out", "Life Hack", "This Changed Everything", "100% Real", "Everyone Needs This", "Best Advice Ever", "Must See", "The #1 Mistake", "Breakthrough", "How To Succeed", "Top 3 Reasons",
-      "Save This!", "No One Tells You This", "FACTS!", "Huge Discovery", "Zero to Hero", "Watch Me Do This", "Don’t Try This", "The Only Way", "Level Up", "Haters Will Say It’s Fake", "Get Rich Quick",
-      "This is Why", "Don’t Ignore This", "Easy Money", "Simple Trick", "It’s Finally Here", "So Satisfying", "Every Beginner Makes This", "Shocking Truth", "I Was Today Years Old", "This Is Wild",
-      "Stay Tuned", "Breaking News", "This Will Blow Your Mind", "Just Released", "Ultimate Guide", "Let Me Explain", "How I Did It", "Insider Secret", "Only the OGs Know", "Little Known Fact",
-      "You’re Doing It Wrong", "Anyone Can Do This", "Can You Believe It?", "Beginner To Pro", "Watch This First!", "Before You Try", "Do This Now", "If You Know, You Know", "No One’s Ready For This",
-      "Will This Work?", "Best On The Internet", "Nobody Tells You", "Viral Trick", "Rare Footage", "You’ve Never Seen This", "For The First Time", "Save Your Time", "Don’t Make This Mistake", "I Regret Nothing",
-      "Instant Results", "This Changed My Life", "Still Works In 2025", "Are You Ready?", "We Tested It", "Why Didn’t I Know?", "Little Known Hack", "Big Reveal", "You Asked For It", "This One’s For You",
-      "All The Proof", "Watch Me Try", "Only The Brave", "Don’t Blink", "This Actually Happened", "What If?", "I Wish I Knew", "Mind Blown!", "Best Thing Ever", "Instant Upgrade"
-    ];
 
-    // Load some Google Fonts into Canvas
+    // Load fonts for thumbnail text rendering
     try {
       registerFont(path.join(__dirname, 'fonts', 'BebasNeue-Regular.ttf'), { family: 'Bebas Neue' });
       registerFont(path.join(__dirname, 'fonts', 'Anton-Regular.ttf'), { family: 'Anton' });
       registerFont(path.join(__dirname, 'fonts', 'Oswald-Regular.ttf'), { family: 'Oswald' });
       registerFont(path.join(__dirname, 'fonts', 'Impact.ttf'), { family: 'Impact' });
     } catch (err) {
-      // On Railway, font loading will silently fail; fallback to default fonts
+      console.error("Font load error:", err);
     }
 
-    // Pull 10 colorful Pexels images for the topic
-    let imageUrls = [];
-    try {
-      for (let i = 0; i < 10; i++) {
-        let url;
-        try {
-          let obj = await pickClipFor(topic, caption || topic, undefined, topic);
-          url = obj?.url;
-        } catch (e) {
-          url = undefined;
-        }
-        if (!url) {
-          url = `https://source.unsplash.com/800x450/?${encodeURIComponent(topic)},colorful&sig=${Math.floor(Math.random() * 1000000)}`;
-        }
-        imageUrls.push(url);
-      }
-    } catch (err) {
-      imageUrls = Array(10).fill().map((_, i) => `https://source.unsplash.com/800x450/?${encodeURIComponent(topic)},colorful&sig=${i + 1}`);
-    }
+    const canvasWidth = 1280;
+    const canvasHeight = 720;
+    const previews = [];
+    const zip = new JSZip();
 
-    // Generate all 10 thumbnails
-    let images = [];
-    for (let i = 0; i < 10; i++) {
-      const style = {
-        family: 'Impact',
-        weight: 'bold',
-        size: 52,
-        color: '#FFD600',       // Bold yellow
-        shadow: '#000000',      // Black shadow for contrast
-        outline: '#000000'      // Black outline
-      };
-      const bgUrl = imageUrls[i];
-      const text = caption && caption.length > 2 ? caption : viralCaptions[Math.floor(Math.random() * viralCaptions.length)];
-      const canvas = createCanvas(800, 450);
+    // Use provided caption or fallback viral caption array
+    const captions = caption ? [caption] : [
+      "You Won't Believe This!",
+      "Top Secrets Revealed",
+      "Watch Before It's Gone",
+      "How To Change Your Life",
+      "Shocking Truths Uncovered",
+      "Must See Facts",
+      "The Ultimate Guide",
+      "Hidden Details Exposed",
+      "Unlock The Mystery",
+      "This Changed Everything"
+    ];
+
+    for (let i = 0; i < captions.length; i++) {
+      const text = captions[i];
+      const canvas = createCanvas(canvasWidth, canvasHeight);
       const ctx = canvas.getContext('2d');
 
-      // Draw background image or fallback to black
-      try {
-        const bg = await loadImage(bgUrl);
-        ctx.drawImage(bg, 0, 0, 800, 450);
-      } catch (err) {
-        ctx.fillStyle = '#222';
-        ctx.fillRect(0, 0, 800, 450);
-      }
+      // Background color or transparent if you want
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-      // Draw text (centered, multiple lines if needed) with black outline and shadow
-      ctx.save();
-      ctx.font = `${style.weight} ${style.size}px "${style.family}"`;
+      // Text styling: bold yellow with black outline
+      ctx.font = 'bold 100px "Impact", "Anton", "Bebas Neue", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffd700'; // gold/yellow
+      ctx.lineWidth = 10;
+      ctx.strokeStyle = 'black';
 
-      ctx.lineWidth = 6;
-      ctx.strokeStyle = style.outline;
+      // Outline then fill text
+      ctx.strokeText(text, canvasWidth / 2, canvasHeight / 2);
+      ctx.fillText(text, canvasWidth / 2, canvasHeight / 2);
 
-      // Shadow
-      ctx.shadowColor = style.shadow;
-      ctx.shadowBlur = 7;
+      const buffer = canvas.toBuffer('image/png');
+      const fileName = `thumbnail-${i + 1}.png`;
+      zip.file(fileName, buffer);
 
-      // Multiline wrapping
-      let lines = [];
-      let maxWidth = 730;
-      let words = text.split(' ');
-      let line = '';
-      for (let w of words) {
-        let test = line.length ? line + ' ' + w : w;
-        let m = ctx.measureText(test);
-        if (m.width > maxWidth && line) {
-          lines.push(line);
-          line = w;
-        } else {
-          line = test;
-        }
-      }
-      if (line) lines.push(line);
-      let startY = 225 - (lines.length - 1) * style.size * 0.65;
-
-      // Render lines with stroke and fill
-      for (let li = 0; li < lines.length; li++) {
-        ctx.strokeText(lines[li], 400, startY + li * style.size * 1.05);
-        ctx.fillStyle = style.color;
-        ctx.fillText(lines[li], 400, startY + li * style.size * 1.05);
-      }
-      ctx.restore();
-
-      // Watermark for preview
-      ctx.save();
-      ctx.globalAlpha = 0.3;
-      ctx.font = 'bold 34px "Oswald"';
-      ctx.rotate(-0.18);
-      ctx.fillStyle = '#00e0fe';
-      ctx.textAlign = 'center';
-      ctx.fillText('SOCIALSTORM AI', 400, 400);
-      ctx.restore();
-
-      const buf = canvas.toBuffer('image/png');
-      images.push(buf);
+      previews.push({
+        fileName,
+        dataUrl: 'data:image/png;base64,' + buffer.toString('base64')
+      });
     }
 
-    // Package as zip file
-    const zip = new JSZip();
-    images.forEach((img, i) => {
-      zip.file(`thumbnail${i + 1}.png`, img);
-    });
-    const zipBuf = await zip.generateAsync({ type: "nodebuffer" });
-
-    // Encode each image as base64 for inline preview
-    const previews = images.map(img => "data:image/png;base64," + img.toString('base64'));
+    const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
 
     res.json({
       success: true,
@@ -919,11 +912,11 @@ app.post('/api/generate-thumbnails', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 // ===== Serve videos from Cloudflare R2 (streaming, download, range support) =====
 app.get('/video/videos/:key', async (req, res) => {
   try {
     const key = `videos/${req.params.key}`;
-    // HEAD request to get content-length for range requests
     const headData = await s3.headObject({
       Bucket: process.env.R2_BUCKET,
       Key: key,
@@ -932,7 +925,7 @@ app.get('/video/videos/:key', async (req, res) => {
     const total = headData.ContentLength;
     const range = req.headers.range;
     res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Access-Control-Allow-Origin', '*'); // CORS for video
+    res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
@@ -967,7 +960,6 @@ app.get('/video/videos/:key', async (req, res) => {
       }).createReadStream();
 
       res.setHeader('Content-Type', 'video/mp4');
-      // The below header helps trigger download reliably on mobile/tablet/desktop
       res.setHeader('Content-Disposition', 'attachment; filename="socialstorm-video.mp4"');
       res.setHeader('Content-Length', total);
 
@@ -987,7 +979,6 @@ app.get('/video/videos/:key', async (req, res) => {
 // Handle pretty URLs for .html pages (e.g., /pricing → /pricing.html)
 app.get('/:page', (req, res, next) => {
   const page = req.params.page;
-  // Prevent conflict with API and video routes
   if (page.startsWith('api') || page === 'video') {
     return next();
   }
@@ -1012,52 +1003,5 @@ app.get('*', (req, res) => {
   }
 });
 
-// ===== 2) EXPRESS APP INITIALIZATION =====
-const app = express();
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  next();
-});
-app.use(express.static(path.join(__dirname, 'frontend')));
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
-
 // ===== LAUNCH SERVER =====
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server listening on port ${PORT}`));
-// ===== UTILITY & HELPER FUNCTIONS =====
-
-// Promise timeout helper to reject if a promise takes too long
-function promiseTimeout(promise, ms, msg = "Timed out") {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))
-  ]);
-}
-
-// Additional helper functions you may have (e.g., sanitizeQuery, stripEmojis) 
-// are included in earlier parts.
-
-// ===== END OF SERVER FILE =====
-
-// No further code needed here; all logic, routes, and helpers are covered above.
-
-// You now have the full, production-ready server.cjs with fixes for:
-// - Looping issues (audio/video durations handled carefully)
-// - Thumbnail generator with fonts and bold outlines
-// - Cloudflare R2 video streaming with range support
-// - Robust error handling and progress tracking
-// - Proper static serving, SPA fallback, and pretty URL support
-
-// Launch the server with:
-//    node server.cjs
-
-// Make sure your environment variables (.env) are set correctly for:
-// - OPENAI_API_KEY
-// - ELEVENLABS_API_KEY
-// - GOOGLE_APPLICATION_CREDENTIALS (as JSON string)
-// - R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY, R2_BUCKET
-// - PORT (optional)
-
-// If you want me to package this entire file as a downloadable single file ready to deploy, just ask.

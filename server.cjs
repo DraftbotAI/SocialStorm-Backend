@@ -1,7 +1,6 @@
 const { createCanvas, loadImage, registerFont } = require('canvas');
 const JSZip = require('jszip');
 
-
 // ==== DIRECTORY DEBUGGING (Safe to comment out in prod) ====
 console.log('Working directory:', __dirname);
 console.log('Files/folders here:', require('fs').readdirSync(__dirname));
@@ -253,8 +252,61 @@ const mappedCustomVoices = [...googleFreeVoices, ...elevenProVoices].map(v => ({
 app.get('/api/voices', (req, res) => {
   res.json({ success: true, voices: mappedCustomVoices });
 });
+// ===== SPARKIE (IMPROVED) ENDPOINT =====
+app.post('/api/sparkie', async (req, res) => {
+  // Accepts: { category, prompt }
+  const { category, prompt } = req.body;
+  if (!category && !prompt) return res.status(400).json({ success: false, error: 'Prompt or category required' });
+  try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ===== /api/generate-script endpoint =====
+    // New Sparkie: category + more detailed and narratable ideas for SocialStormAI
+    const sparkiePrompt = `
+You are Sparkie, a YouTube Shorts script idea generator for an AI video tool.
+
+Generate 7 of the most VIRAL, engaging, curiosity-driven short video ideas for the following topic and category, formatted for VOICE NARRATION. 
+NO emojis, hashtags, or TikTok-style lists. 
+Each idea is a detailed, voice-narratable sentence—a perfect first line for a viral YouTube Short.
+
+CATEGORY: ${category || 'General'}
+TOPIC: ${prompt || category}
+
+EXAMPLES:
+- "There's a hidden science behind why we dream every night."
+- "Most people have never heard this ancient story that changed the world."
+- "If you’ve ever wondered why some people never seem to age, here’s the truth."
+- "Here’s the little-known secret behind the pyramids’ incredible design."
+- "What happens when two of nature’s deadliest animals finally meet?"
+
+Give only 7, no numbering or list format, just line by line.
+`.trim();
+
+    const c = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: sparkiePrompt }
+      ],
+      temperature: 0.94,
+      max_tokens: 380
+    });
+
+    // Clean: remove numbering, emojis, and excess whitespace
+    let ideas = c.choices[0].message.content
+      .replace(/^[\d\-\.\*]+\s*/gm, '')
+      .replace(/\p{Extended_Pictographic}/gu, '')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 8);
+
+    return res.json({ success: true, ideas });
+  } catch (e) {
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
+});
+
+// ===== /api/generate-script endpoint (IMPROVED FOR VOICE NARRATION) =====
 app.post('/api/generate-script', async (req, res) => {
   const { idea } = req.body;
   if (!idea) return res.status(400).json({ success: false, error: 'Idea required' });
@@ -262,13 +314,12 @@ app.post('/api/generate-script', async (req, res) => {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     const scriptPrompt = `
-Generate a YouTube Shorts script for this topic, with each line being a punchy, voice-friendly fact or statement.
-- No emojis, no lists, no numbers, no bullet points, just natural, crisp lines.
-- Lines must be short and easy for text-to-speech voices to read.
-- Do NOT use any numbered list, bullet list, or anything that sounds like a list unless user requests it.
-- No repeating words/phrases, no "as you know", no generic filler.
-- Each line must be interesting and unique.
-Format (no headers, just the raw script, one short line per line):
+Generate a YouTube Shorts script for this topic, with each line being a powerful, voice-friendly hook, fact, or micro-story. 
+The FIRST line must be a highly engaging, curiosity-driven intro statement designed to make someone stop scrolling. 
+NO emojis, NO hashtags, NO numbered lists, NO TikTok text, NO bullet points—just crisp, natural narration. 
+Each line must be a standalone, interesting, or surprising statement relevant to the theme. 
+All lines should be short, direct, and easy for a text-to-speech voice to read out loud. 
+Never repeat the same words or phrases.
 
 THEME: ${idea}
 
@@ -278,7 +329,7 @@ SCRIPT:
     const out = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'system', content: scriptPrompt }],
-      temperature: 0.92,
+      temperature: 0.94,
       max_tokens: 400,
     });
 
@@ -594,7 +645,6 @@ app.post('/api/generate-video', async (req, res) => {
           const outroVoiceId = voice;
           const outroWorkDir = workDir;
           const thunderSfx = path.join(__dirname, 'frontend', 'assets', 'thunder.mp3');
-
           if (fs.existsSync(outroLogo) && fs.existsSync(thunderSfx)) {
             const outroAudioMp3 = path.join(outroWorkDir, 'outro-audio.mp3');
             const outroAudioWav = path.join(outroWorkDir, 'outro-audio.wav');
@@ -786,28 +836,6 @@ app.post('/api/generate-voice-previews', async (req, res) => {
   }
 });
 
-// ===== SPARKIE (IDEA GENERATOR) ENDPOINT =====
-app.post('/api/sparkie', async (req, res) => {
-  const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ success: false, error: 'Prompt required' });
-  try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const c = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: 'You are Sparkie, a creative brainstorming assistant.' },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.9
-    });
-    return res.json({ success: true, ideas: c.choices[0].message.content.trim() });
-  } catch (e) {
-    if (!res.headersSent) {
-      return res.status(500).json({ success: false, error: e.message });
-    }
-  }
-});
-
 // ======= /api/generate-thumbnails =======
 app.post('/api/generate-thumbnails', async (req, res) => {
   try {
@@ -965,8 +993,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
-
 // ===== Serve videos from Cloudflare R2 (streaming, download, range support) =====
 app.get('/video/videos/:key', async (req, res) => {
   try {

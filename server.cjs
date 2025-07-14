@@ -966,6 +966,8 @@ app.post('/api/generate-voice-previews', async (req, res) => {
 // =============================
 // SECTION 17: /api/generate-thumbnails ENDPOINT
 // =============================
+// ===== 17. /api/generate-thumbnails ENDPOINT =====
+
 app.post('/api/generate-thumbnails', async (req, res) => {
   try {
     const { topic, caption } = req.body;
@@ -973,7 +975,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       return res.status(400).json({ success: false, error: "Topic required." });
     }
 
-    // Load fonts for thumbnail text rendering
+    // --- 1. Load Fonts ---
     try {
       registerFont(path.join(__dirname, 'fonts', 'BebasNeue-Regular.ttf'), { family: 'Bebas Neue' });
       registerFont(path.join(__dirname, 'fonts', 'Anton-Regular.ttf'), { family: 'Anton' });
@@ -988,7 +990,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
     const previews = [];
     const zip = new JSZip();
 
-    // Use provided caption or fallback viral caption array
+    // --- 2. Viral Caption Selection ---
     const captions = caption ? [caption] : [
       "You Won't Believe This!",
       "Top Secrets Revealed",
@@ -1002,27 +1004,112 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       "This Changed Everything"
     ];
 
+    // --- 3. Get the Best Pexels Image for the Topic ---
+    let pexelsImageUrl = null;
+    try {
+      const resp = await axios.get('https://api.pexels.com/v1/search', {
+        headers: { Authorization: process.env.PEXELS_API_KEY },
+        params: { query: topic, per_page: 16 },
+        timeout: 8000
+      });
+      // Filter by color vibrance/saturation if you want, or just take the brightest
+      const imgs = (resp.data && resp.data.photos) ? resp.data.photos : [];
+      if (imgs.length > 0) {
+        // Sort by "avg_color" (brightness/saturation), fallback: pick random/colorful one
+        imgs.sort((a, b) => {
+          // Prefer images with a non-gray avg_color and large size
+          const scoreA = (a.width * a.height) +
+            (a.avg_color ? colorScore(a.avg_color) * 50000 : 0);
+          const scoreB = (b.width * b.height) +
+            (b.avg_color ? colorScore(b.avg_color) * 50000 : 0);
+          return scoreB - scoreA;
+        });
+        pexelsImageUrl = imgs[0].src && imgs[0].src.large2x
+          ? imgs[0].src.large2x
+          : imgs[0].src.large;
+      }
+    } catch (err) {
+      console.error("Pexels API error:", err.message);
+      pexelsImageUrl = null;
+    }
+
+    // Helper: Get a "brightness/vividness" score from a hex color
+    function colorScore(hex) {
+      if (!hex || typeof hex !== 'string') return 0;
+      let r = 0, g = 0, b = 0;
+      if (hex.startsWith('#')) {
+        if (hex.length === 7) {
+          r = parseInt(hex.substr(1, 2), 16);
+          g = parseInt(hex.substr(3, 2), 16);
+          b = parseInt(hex.substr(5, 2), 16);
+        }
+      }
+      // Score: prefer high saturation & brightness, low gray
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const brightness = (r + g + b) / 3;
+      const vividness = (max - min);
+      return brightness * 0.7 + vividness * 1.2;
+    }
+
+    // --- 4. Generate Thumbnails for Each Caption ---
     for (let i = 0; i < captions.length; i++) {
       const text = captions[i];
       const canvas = createCanvas(canvasWidth, canvasHeight);
       const ctx = canvas.getContext('2d');
 
-      // Background color or transparent if you want
-      ctx.fillStyle = '#111';
+      // Draw background: Pexels image, or fallback color
+      if (pexelsImageUrl) {
+        try {
+          const img = await loadImage(pexelsImageUrl);
+          // Fill to cover (object-fit: cover)
+          const ratio = Math.max(canvasWidth / img.width, canvasHeight / img.height);
+          const newW = img.width * ratio;
+          const newH = img.height * ratio;
+          ctx.drawImage(
+            img,
+            (canvasWidth - newW) / 2,
+            (canvasHeight - newH) / 2,
+            newW, newH
+          );
+        } catch (err) {
+          ctx.fillStyle = '#222';
+          ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        }
+      } else {
+        ctx.fillStyle = '#222';
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      }
+
+      // Add slight dark overlay for text contrast
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-      // Text styling: bold yellow with black outline
+      // --- Draw the Caption Text ---
       ctx.font = 'bold 100px "Impact", "Anton", "Bebas Neue", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#ffd700'; // gold/yellow
-      ctx.lineWidth = 10;
-      ctx.strokeStyle = 'black';
+      ctx.lineJoin = "round";
 
-      // Outline then fill text
+      // Draw thick outline, then fill
+      ctx.lineWidth = 13;
+      ctx.strokeStyle = '#000';
       ctx.strokeText(text, canvasWidth / 2, canvasHeight / 2);
+      ctx.fillStyle = '#ffd700';
       ctx.fillText(text, canvasWidth / 2, canvasHeight / 2);
 
+      // Add a white stroke outside (pop effect)
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#fff';
+      ctx.strokeText(text, canvasWidth / 2, canvasHeight / 2);
+
+      // Watermark
+      ctx.font = 'bold 48px "Bebas Neue", "Anton", sans-serif';
+      ctx.globalAlpha = 0.34;
+      ctx.fillStyle = "#00e0fe";
+      ctx.fillText("SocialStorm AI", canvasWidth - 270, canvasHeight - 54);
+      ctx.globalAlpha = 1.0;
+
+      // Save as PNG and add to ZIP
       const buffer = canvas.toBuffer('image/png');
       const fileName = `thumbnail-${i + 1}.png`;
       zip.file(fileName, buffer);
@@ -1046,7 +1133,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
   }
 });
 
-
+// ===== END 17. /api/generate-thumbnails ENDPOINT =====
 
 
 

@@ -1190,7 +1190,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 });
 
 // ===== END 17. /api/generate-thumbnails ENDPOINT =====
-// ===== 17. /api/generate-thumbnails ENDPOINT =====
+// ===== 17. /api/generate-thumbnails ENDPOINT ===== 
 
 app.post('/api/generate-thumbnails', async (req, res) => {
   try {
@@ -1200,7 +1200,8 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       return res.status(400).json({ success: false, error: "Topic required." });
     }
 
-    // 1. REGISTER ALL FONTS (from your folder)
+    // 1. REGISTER ONLY EXISTING FONTS (from your folder)
+    const fs = require('fs');
     const fontDir = path.join(__dirname, 'fonts');
     const fonts = [
       { file: 'Anton-Regular.ttf', family: 'Anton' },
@@ -1233,30 +1234,66 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       { file: 'Rubik-VariableFont_wght.ttf', family: 'Rubik VF' },
       { file: 'Ultra-Regular.ttf', family: 'Ultra' }
     ];
+    const fontFamilies = [];
     fonts.forEach(f => {
-      try {
-        registerFont(path.join(fontDir, f.file), { family: f.family });
-      } catch (err) {
-        // Skip missing font
+      const fullPath = path.join(fontDir, f.file);
+      if (fs.existsSync(fullPath)) {
+        try {
+          registerFont(fullPath, { family: f.family });
+          fontFamilies.push(f.family);
+        } catch (err) {
+          // If font fails to register, just skip
+        }
       }
     });
-
-    // All "viral" font families to choose from
-    const fontFamilies = fonts.map(f => f.family);
 
     const canvasWidth = 1280;
     const canvasHeight = 720;
     const previews = [];
     const zip = new JSZip();
 
-    // 2. VIRAL CAPTIONS (truncated for brevity)
+    // 2. VIRAL CAPTIONS
     const captions = caption ? [caption] : [
       "You Won't Believe This!", "Top Secrets Revealed", "Watch Before It's Gone",
       "How To Change Your Life", "Shocking Truths Uncovered", "Must See Facts",
       "The Ultimate Guide", "Hidden Details Exposed", "Unlock The Mystery",
-      "This Changed Everything",
-      // ... (keep your 100+ from before)
-      "So Easy Anyone Can Do It"
+      "This Changed Everything", "Before and After", "They Don’t Want You To Know",
+      "What Happens Next Will Shock You", "I Tried This So You Don’t Have To",
+      "The Truth Behind", "Things Nobody Tells You", "How To Start",
+      "Why Nobody Talks About This", "Insider Secrets Revealed", "Don’t Make These Mistakes",
+      "The #1 Reason You Fail", "Do This Every Morning", "The Biggest Lie You’ve Been Told",
+      "Why You’re Doing It Wrong", "Only 1% Know This Trick", "5 Things You Need To Know",
+      "What No One Told Me", "I Wish I Knew This Sooner", "This Is Why You Struggle",
+      "The Easiest Way To Win", "Experts Don’t Want You To See This", "Stop Doing This Now",
+      "Most People Don’t Realize", "I Was Today Years Old When I Learned",
+      "Little Known Life Hacks", "The Real Reason Why", "How I Did It",
+      "Everything You Know Is Wrong", "The Fastest Way To Get Results", "Why You Need To Try This",
+      "People Can’t Believe This Works", "10 Hacks That Actually Work", "Don’t Fall For This",
+      "My Secret Method", "You’re Missing Out If You Don’t Know This", "Never Seen Before",
+      "Mind Blowing Facts", "The Most Underrated Trick", "Quick & Easy Solution",
+      "Game Changing Tips", "Why I Stopped", "I Tested Viral Tips", "The Ultimate Checklist",
+      "I Used This & Here’s What Happened", "The Hard Truth", "Why Nobody Succeeds",
+      "This Will Save You Time", "Top 3 Mistakes Beginners Make", "The Smart Way To",
+      "I Can’t Believe It’s This Simple", "This Is The Real Secret", "The Lazy Way That Works",
+      "Hidden Features", "Do This & See What Happens", "Crazy But It Works",
+      "Why Didn’t I Know This?", "Everyone Should Try This", "You’re Using This Wrong",
+      "Most People Do This Wrong", "How To Fix It Fast", "Stop Wasting Time",
+      "The Best Way To Get Results", "Simple But Effective", "The Truth Exposed",
+      "Are You Making These Mistakes?", "You Need To Stop", "How To Get Ahead",
+      "Change Your Life Today", "Don’t Miss Out On This", "This Trick Will Blow Your Mind",
+      "Unbelievable Results", "Nobody Told Me This", "Why It Works", "The Best-Kept Secret",
+      "Don’t Try This At Home", "10x Your Results", "Secrets They Don’t Teach In School",
+      "I Did This For 7 Days", "The Only Guide You Need", "The Results Are Crazy",
+      "How I Went From Zero To Hero", "Warning: Don’t Ignore This", "Little Changes, Big Results",
+      "I Was Wrong About This", "The Most Common Mistake", "Everything Changed When I Did This",
+      "Watch This Before You Start", "I Tried Every Method", "The Most Powerful Trick",
+      "What They’re Not Telling You", "Save Money With This Hack", "Why Everyone Is Doing This",
+      "My Honest Review", "Fastest Way To Succeed", "This Is All You Need", "Unlock The Secret",
+      "What Really Happens", "Proven By Science", "Crazy Results In 24 Hours", "What I Wish I Knew",
+      "This Will Surprise You", "The Truth They Hide From You", "What I Learned The Hard Way",
+      "How You Can Too", "Copy This To Succeed", "Insane Results With This Trick", "Is It Worth It?",
+      "Most People Miss This Step", "So Easy Anyone Can Do It"
+      // ...keep going!
     ];
 
     // 3. Get a GREAT Pexels Image
@@ -1333,7 +1370,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
       // --- Pick a random viral font
-      const fontFamily = fontFamilies[Math.floor(Math.random() * fontFamilies.length)];
+      const fontFamily = fontFamilies[Math.floor(Math.random() * fontFamilies.length)] || 'Bebas Neue';
       ctx.font = `bold 100px "${fontFamily}", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -1384,6 +1421,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 });
 
 // ===== END 17. /api/generate-thumbnails ENDPOINT =====
+
 
 
 

@@ -976,146 +976,94 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       return res.status(400).json({ success: false, error: "Topic required." });
     }
 
-    // --- 1. Load Fonts (only those present) ---
-    try {
-      registerFont(path.join(__dirname, 'fonts', 'BebasNeue-Regular.ttf'), { family: 'Bebas Neue' });
-      registerFont(path.join(__dirname, 'fonts', 'Anton-Regular.ttf'), { family: 'Anton' });
-      registerFont(path.join(__dirname, 'fonts', 'Oswald-VariableFont_wght.ttf'), { family: 'Oswald' });
-      // No Impact.ttf (skip to avoid error)
-    } catch (err) {
-      console.error("Font load error:", err);
-    }
+    // --- 1. Load ALL VIRAL FONTS (skip missing files, no crash) ---
+    const fontDir = path.join(__dirname, 'fonts');
+    const fontsToRegister = [
+      { file: 'Anton-Regular.ttf', family: 'Anton' },
+      { file: 'BebasNeue-Regular.ttf', family: 'Bebas Neue' },
+      { file: 'Oswald-Bold.ttf', family: 'Oswald Bold' },
+      { file: 'Oswald-Regular.ttf', family: 'Oswald' },
+      { file: 'Oswald-VariableFont_wght.ttf', family: 'Oswald' },
+      { file: 'Rubik-Black.ttf', family: 'Rubik Black' },
+      { file: 'Rubik-Bold.ttf', family: 'Rubik Bold' },
+      { file: 'Rubik-ExtraBold.ttf', family: 'Rubik ExtraBold' },
+      { file: 'Rubik-SemiBold.ttf', family: 'Rubik SemiBold' },
+      { file: 'Rubik-Regular.ttf', family: 'Rubik' },
+      { file: 'ArchiveBlock-Regular.ttf', family: 'Archive Block' },
+      { file: 'Bangers-Regular.ttf', family: 'Bangers' },
+      { file: 'Ultra-Regular.ttf', family: 'Ultra' }
+      // Add more here if you add more font files!
+    ];
+    fontsToRegister.forEach(f => {
+      try {
+        registerFont(path.join(fontDir, f.file), { family: f.family });
+      } catch (err) {}
+    });
+
+    // --- 2. Set up viral fonts to pick from for thumbnail captions ---
+    const viralFonts = [
+      'bold 110px "Rubik Black", "Rubik Bold", sans-serif',
+      'bold 110px "Anton", sans-serif',
+      'bold 110px "Bebas Neue", sans-serif',
+      'bold 110px "Oswald Bold", "Oswald", sans-serif',
+      'bold 110px "Rubik ExtraBold", sans-serif',
+      'bold 110px "Rubik SemiBold", sans-serif',
+      'bold 110px "Archive Block", sans-serif',
+      'bold 110px "Bangers", cursive',
+      'bold 110px "Ultra", serif'
+    ];
 
     const canvasWidth = 1280;
     const canvasHeight = 720;
     const previews = [];
     const zip = new JSZip();
 
-    // --- 2. Viral Caption Selection ---
+    // --- 3. Viral Caption Selection (long list for variety) ---
     const captions = caption ? [caption] : [
-      "You Won't Believe This!",
-      "Top Secrets Revealed",
-      "Watch Before It's Gone",
-      "How To Change Your Life",
-      "Shocking Truths Uncovered",
-      "Must See Facts",
-      "The Ultimate Guide",
-      "Hidden Details Exposed",
-      "Unlock The Mystery",
-      "This Changed Everything",
-      "Before and After",
-      "They Don’t Want You To Know",
-      "What Happens Next Will Shock You",
-      "I Tried This So You Don’t Have To",
-      "The Truth Behind",
-      "Things Nobody Tells You",
-      "How To Start",
-      "Why Nobody Talks About This",
-      "Insider Secrets Revealed",
-      "Don’t Make These Mistakes",
-      "The #1 Reason You Fail",
-      "Do This Every Morning",
-      "The Biggest Lie You’ve Been Told",
-      "Why You’re Doing It Wrong",
-      "Only 1% Know This Trick",
-      "5 Things You Need To Know",
-      "What No One Told Me",
-      "I Wish I Knew This Sooner",
-      "This Is Why You Struggle",
-      "The Easiest Way To Win",
-      "Experts Don’t Want You To See This",
-      "Stop Doing This Now",
-      "Most People Don’t Realize",
-      "I Was Today Years Old When I Learned",
-      "Little Known Life Hacks",
-      "The Real Reason Why",
-      "How I Did It",
-      "Everything You Know Is Wrong",
-      "The Fastest Way To Get Results",
-      "Why You Need To Try This",
-      "People Can’t Believe This Works",
-      "10 Hacks That Actually Work",
-      "Don’t Fall For This",
-      "My Secret Method",
-      "You’re Missing Out If You Don’t Know This",
-      "Never Seen Before",
-      "Mind Blowing Facts",
-      "The Most Underrated Trick",
-      "Quick & Easy Solution",
-      "Game Changing Tips",
-      "Why I Stopped",
-      "I Tested Viral Tips",
-      "The Ultimate Checklist",
-      "I Used This & Here’s What Happened",
-      "The Hard Truth",
-      "Why Nobody Succeeds",
-      "This Will Save You Time",
-      "Top 3 Mistakes Beginners Make",
-      "The Smart Way To",
-      "I Can’t Believe It’s This Simple",
-      "This Is The Real Secret",
-      "The Lazy Way That Works",
-      "Hidden Features",
-      "Do This & See What Happens",
-      "Crazy But It Works",
-      "Why Didn’t I Know This?",
-      "Everyone Should Try This",
-      "You’re Using This Wrong",
-      "Most People Do This Wrong",
-      "How To Fix It Fast",
-      "Stop Wasting Time",
-      "The Best Way To Get Results",
-      "Simple But Effective",
-      "The Truth Exposed",
-      "Are You Making These Mistakes?",
-      "You Need To Stop",
-      "How To Get Ahead",
-      "Change Your Life Today",
-      "Don’t Miss Out On This",
-      "This Trick Will Blow Your Mind",
-      "Unbelievable Results",
-      "Nobody Told Me This",
-      "Why It Works",
-      "The Best-Kept Secret",
-      "Don’t Try This At Home",
-      "10x Your Results",
-      "Secrets They Don’t Teach In School",
-      "I Did This For 7 Days",
-      "The Only Guide You Need",
-      "The Results Are Crazy",
-      "How I Went From Zero To Hero",
-      "Warning: Don’t Ignore This",
-      "Little Changes, Big Results",
-      "I Was Wrong About This",
-      "The Most Common Mistake",
-      "Everything Changed When I Did This",
-      "Watch This Before You Start",
-      "I Tried Every Method",
-      "The Most Powerful Trick",
-      "What They’re Not Telling You",
-      "Save Money With This Hack",
-      "Why Everyone Is Doing This",
-      "My Honest Review",
-      "Fastest Way To Succeed",
-      "This Is All You Need",
-      "Unlock The Secret",
-      "What Really Happens",
-      "Proven By Science",
-      "Crazy Results In 24 Hours",
-      "What I Wish I Knew",
-      "This Will Surprise You",
-      "The Truth They Hide From You",
-      "What I Learned The Hard Way",
-      "How You Can Too",
-      "Copy This To Succeed",
-      "Insane Results With This Trick",
-      "Is It Worth It?",
-      "Most People Miss This Step",
+      "You Won't Believe This!", "Top Secrets Revealed", "Watch Before It's Gone",
+      "How To Change Your Life", "Shocking Truths Uncovered", "Must See Facts",
+      "The Ultimate Guide", "Hidden Details Exposed", "Unlock The Mystery",
+      "This Changed Everything", "Before and After", "They Don’t Want You To Know",
+      "What Happens Next Will Shock You", "I Tried This So You Don’t Have To",
+      "The Truth Behind", "Things Nobody Tells You", "How To Start",
+      "Why Nobody Talks About This", "Insider Secrets Revealed",
+      "Don’t Make These Mistakes", "The #1 Reason You Fail",
+      "Do This Every Morning", "The Biggest Lie You’ve Been Told",
+      "Why You’re Doing It Wrong", "Only 1% Know This Trick", "5 Things You Need To Know",
+      "What No One Told Me", "I Wish I Knew This Sooner", "This Is Why You Struggle",
+      "The Easiest Way To Win", "Experts Don’t Want You To See This", "Stop Doing This Now",
+      "Most People Don’t Realize", "I Was Today Years Old When I Learned", "Little Known Life Hacks",
+      "The Real Reason Why", "How I Did It", "Everything You Know Is Wrong", "The Fastest Way To Get Results",
+      "Why You Need To Try This", "People Can’t Believe This Works", "10 Hacks That Actually Work",
+      "Don’t Fall For This", "My Secret Method", "You’re Missing Out If You Don’t Know This",
+      "Never Seen Before", "Mind Blowing Facts", "The Most Underrated Trick", "Quick & Easy Solution",
+      "Game Changing Tips", "Why I Stopped", "I Tested Viral Tips", "The Ultimate Checklist",
+      "I Used This & Here’s What Happened", "The Hard Truth", "Why Nobody Succeeds",
+      "This Will Save You Time", "Top 3 Mistakes Beginners Make", "The Smart Way To",
+      "I Can’t Believe It’s This Simple", "This Is The Real Secret", "The Lazy Way That Works",
+      "Hidden Features", "Do This & See What Happens", "Crazy But It Works",
+      "Why Didn’t I Know This?", "Everyone Should Try This", "You’re Using This Wrong",
+      "Most People Do This Wrong", "How To Fix It Fast", "Stop Wasting Time",
+      "The Best Way To Get Results", "Simple But Effective", "The Truth Exposed",
+      "Are You Making These Mistakes?", "You Need To Stop", "How To Get Ahead",
+      "Change Your Life Today", "Don’t Miss Out On This", "This Trick Will Blow Your Mind",
+      "Unbelievable Results", "Nobody Told Me This", "Why It Works", "The Best-Kept Secret",
+      "Don’t Try This At Home", "10x Your Results", "Secrets They Don’t Teach In School",
+      "I Did This For 7 Days", "The Only Guide You Need", "The Results Are Crazy",
+      "How I Went From Zero To Hero", "Warning: Don’t Ignore This", "Little Changes, Big Results",
+      "I Was Wrong About This", "The Most Common Mistake", "Everything Changed When I Did This",
+      "Watch This Before You Start", "I Tried Every Method", "The Most Powerful Trick",
+      "What They’re Not Telling You", "Save Money With This Hack", "Why Everyone Is Doing This",
+      "My Honest Review", "Fastest Way To Succeed", "This Is All You Need", "Unlock The Secret",
+      "What Really Happens", "Proven By Science", "Crazy Results In 24 Hours",
+      "What I Wish I Knew", "This Will Surprise You", "The Truth They Hide From You",
+      "What I Learned The Hard Way", "How You Can Too", "Copy This To Succeed",
+      "Insane Results With This Trick", "Is It Worth It?", "Most People Miss This Step",
       "So Easy Anyone Can Do It"
       // ...add more if you ever want, but this is a fire starter list for CTR!
     ];
 
-    // --- 3. Get the Best Pexels Image for the Topic ---
+    // --- 4. Get the Best Pexels Image for the Topic ---
     let pexelsImageUrl = null;
     try {
       const resp = await axios.get('https://api.pexels.com/v1/search', {
@@ -1158,7 +1106,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       return brightness * 0.7 + vividness * 1.2;
     }
 
-    // --- 4. Generate Thumbnails for Each Caption ---
+    // --- 5. Generate Thumbnails for Each Caption ---
     for (let i = 0; i < captions.length; i++) {
       const text = captions[i];
       const canvas = createCanvas(canvasWidth, canvasHeight);
@@ -1190,8 +1138,9 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       ctx.fillStyle = 'rgba(0,0,0,0.32)';
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-      // --- Draw the Caption Text ---
-      ctx.font = 'bold 100px "Anton", "Bebas Neue", "Oswald", sans-serif';
+      // --- Draw the Caption Text in Viral Font (rotate for each) ---
+      const fontStyle = viralFonts[i % viralFonts.length];
+      ctx.font = fontStyle;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.lineJoin = "round";
@@ -1208,8 +1157,8 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       ctx.strokeStyle = '#fff';
       ctx.strokeText(text, canvasWidth / 2, canvasHeight / 2);
 
-      // Watermark in corner
-      ctx.font = 'bold 48px "Bebas Neue", "Anton", "Oswald", sans-serif';
+      // Watermark in corner (Bebas Neue is viral)
+      ctx.font = 'bold 48px "Bebas Neue", "Anton", "Rubik Bold", sans-serif';
       ctx.globalAlpha = 0.34;
       ctx.fillStyle = "#00e0fe";
       ctx.fillText("SocialStorm AI", canvasWidth - 270, canvasHeight - 54);
@@ -1241,6 +1190,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 });
 
 // ===== END 17. /api/generate-thumbnails ENDPOINT =====
+
 
 
 

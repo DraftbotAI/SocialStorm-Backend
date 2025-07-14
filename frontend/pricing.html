@@ -1,0 +1,361 @@
+<!--
+1. SOCIALSTORMAI PRICING PAGE
+2. MATCHES MODERN SOCIALSTORM STYLE
+3. 3 TIERS + THUMBNAIL PACK UPSELL
+-->
+
+<!DOCTYPE html>
+
+
+<html lang="en">
+
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pricing – SocialStorm AI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f5f8fa;
+      color: #0a2342;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      background: #10141a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2rem;
+      z-index: 1000;
+      min-height: 80px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.14);
+    }
+    .nav-logo img {
+      height: 120px;
+      width: auto;
+      max-width: 88vw;
+      display: block;
+      filter: brightness(100);
+      margin-bottom: -14px;
+      margin-top: -14px;
+    }
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      align-items: center;
+    }
+    .nav-links li a {
+      color: #fff;
+      font-weight: 700;
+      font-size: 1.09rem;
+      letter-spacing: 0.03em;
+      transition: color 0.2s;
+    }
+    .nav-links li a:hover,
+    .nav-links li[aria-current="page"] a {
+      color: #00e0fe;
+      text-shadow: 0 0 8px #00e0fe55;
+    }
+
+    main {
+      flex: 1 0 auto;
+      width: 100%;
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 3.5rem 2rem 2.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      font-size: 2.7rem;
+      color: #0a2342;
+      font-weight: 900;
+      margin-bottom: 0.6rem;
+      text-align: center;
+      letter-spacing: -1.1px;
+    }
+
+    .subheadline {
+      font-size: 1.22rem;
+      color: #007fa3;
+      font-weight: 600;
+      margin-bottom: 2.7rem;
+      text-align: center;
+      letter-spacing: 0.01em;
+    }
+
+    .pricing-table {
+      width: 100%;
+      display: flex;
+      gap: 2rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 2.2rem;
+    }
+    .plan-card {
+      flex: 1 1 250px;
+      background: #fff;
+      border: 2.5px solid #00e0fe33;
+      border-radius: 18px;
+      box-shadow: 0 6px 24px #00e0fe10;
+      padding: 2.5rem 1.8rem 2.2rem 1.8rem;
+      margin: 0.4rem;
+      min-width: 260px;
+      max-width: 330px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      transition: box-shadow 0.18s, border 0.18s;
+      position: relative;
+    }
+    .plan-card.best {
+      border: 3.5px solid #00e0fe;
+      box-shadow: 0 10px 36px #00e0fe22;
+      z-index: 3;
+      transform: scale(1.04);
+    }
+    .plan-title {
+      font-size: 1.36rem;
+      font-weight: 900;
+      color: #00b3c4;
+      margin-bottom: 0.1rem;
+      letter-spacing: -0.5px;
+      text-align: center;
+    }
+    .plan-price {
+      font-size: 2.3rem;
+      font-weight: 900;
+      color: #0a2342;
+      margin-bottom: 0.3rem;
+      margin-top: 0.1rem;
+      letter-spacing: -2px;
+      text-align: center;
+    }
+    .plan-desc {
+      font-size: 1.09rem;
+      color: #0093ae;
+      margin-bottom: 1.6rem;
+      text-align: center;
+      font-weight: 500;
+    }
+    .plan-features {
+      margin-bottom: 1.7rem;
+      width: 100%;
+    }
+    .plan-features li {
+      margin-bottom: 0.8rem;
+      color: #0a2342;
+      font-size: 1.01rem;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .plan-features li::before {
+      content: "✔";
+      color: #00e0fe;
+      font-size: 1em;
+      margin-right: 7px;
+    }
+
+    .btn {
+      background: linear-gradient(90deg,#00e0fe 70%,#00b3c4 100%);
+      color: #111;
+      font-weight: 900;
+      padding: 0.68rem 2.2rem;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 1.18rem;
+      box-shadow: 0 5px 17px #00e0fe33;
+      transition: background 0.19s, color 0.19s;
+      letter-spacing: 0.01em;
+      margin-top: 0.7rem;
+    }
+    .btn:hover { background: #00b3c4; color: #fff; }
+
+    .badge {
+      position: absolute;
+      top: -16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #00e0fe;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 900;
+      border-radius: 30px;
+      padding: 0.32rem 1.2rem;
+      box-shadow: 0 4px 16px #00e0fe40;
+      letter-spacing: 0.03em;
+    }
+
+    /* Thumbnail upsell section */
+    .thumbnail-upsell {
+      margin-top: 2.2rem;
+      padding: 2.3rem 1.5rem 2.2rem 1.5rem;
+      background: linear-gradient(100deg, #eaf7fb 65%, #e9fdf9 100%);
+      border-radius: 15px;
+      box-shadow: 0 2px 18px #00e0fe0b;
+      border: 2px solid #00e0fe44;
+      width: 100%;
+      max-width: 660px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+    .thumbnail-upsell h2 {
+      color: #00b3c4;
+      font-size: 1.28rem;
+      font-weight: 900;
+      margin-bottom: 0.4rem;
+      letter-spacing: -0.5px;
+    }
+    .thumbnail-upsell p {
+      color: #0a2342;
+      font-size: 1.07rem;
+      margin-bottom: 1.4rem;
+      font-weight: 500;
+    }
+    .thumb-price {
+      font-size: 1.19rem;
+      color: #00b3c4;
+      font-weight: 700;
+      margin-bottom: 1.1rem;
+    }
+    .thumb-btn {
+      background: #00e0fe;
+      color: #10141a;
+      border: none;
+      border-radius: 6px;
+      font-size: 1.08rem;
+      font-weight: 900;
+      padding: 0.6rem 1.7rem;
+      cursor: pointer;
+      box-shadow: 0 3px 12px #00e0fe33;
+      transition: background 0.18s, color 0.18s;
+      margin-bottom: 0.2rem;
+    }
+    .thumb-btn:hover { background: #00b3c4; color: #fff; }
+
+    @media (max-width: 1000px) {
+      .pricing-table { flex-direction: column; gap: 1.6rem; }
+      main { padding: 2.4rem 0.5rem 2rem 0.5rem;}
+    }
+    @media (max-width: 650px) {
+      .plan-card { padding: 2rem 0.8rem 2rem 0.8rem; min-width: 220px; }
+      .nav-logo img { height: 80px; }
+      nav { min-height: 54px; padding: 0 0.7rem; }
+      .thumbnail-upsell { padding: 1.2rem 0.3rem 1.5rem 0.3rem; }
+      h1 { font-size: 2.1rem; }
+    }
+  </style>
+</head>
+
+
+<body>
+
+
+  <!-- 1. TOP NAV -->
+  <nav>
+    <div class="nav-logo" onclick="location.href='index.html'">
+      <img src="logo.png" alt="SocialStorm Logo" />
+    </div>
+    <ul class="nav-links">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="video.html">Create Video</a></li>
+      <li><a href="thumbnail.html">Thumbnails</a></li>
+      <li><a href="pricing.html" aria-current="page">Pricing</a></li>
+      <li><a href="about.html">About</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+  </nav>
+
+
+  <!-- 2. MAIN CONTENT -->
+  <main>
+    <h1>Pricing Plans</h1>
+    <div class="subheadline">
+      Get started free. Upgrade for more videos, voices, and unlimited thumbnails.<br>
+      <span style="color:#0a2342;font-weight:600;">Cancel anytime. No hidden fees.</span>
+    </div>
+
+    <div class="pricing-table">
+
+      <!-- FREE PLAN -->
+      <div class="plan-card">
+        <div class="plan-title">Free</div>
+        <div class="plan-price">$0</div>
+        <div class="plan-desc">Try out SocialStorm AI!<br>3 videos per week, watermark, limited voices.</div>
+        <ul class="plan-features">
+          <li>3 videos per week</li>
+          <li>Google voices (Free only)</li>
+          <li>Watermark on videos</li>
+          <li>Basic thumbnail preview</li>
+          <li>Limited support</li>
+        </ul>
+        <button class="btn" onclick="location.href='video.html'">Get Started</button>
+      </div>
+
+      <!-- CREATOR PLAN -->
+      <div class="plan-card">
+        <div class="plan-title">Creator</div>
+        <div class="plan-price">$19.99<span style="font-size:1.1rem;font-weight:600;color:#aaa;">/mo</span></div>
+        <div class="plan-desc">Best for regular creators. 30 videos per month. Remove watermark. Custom thumbnails.</div>
+        <ul class="plan-features">
+          <li>30 videos per month</li>
+          <li>Some premium voices</li>
+          <li>No watermark</li>
+          <li>1 auto-thumbnail per video</li>
+          <li>Email support</li>
+        </ul>
+        <button class="btn" onclick="location.href='video.html'">Upgrade</button>
+      </div>
+
+      <!-- PRO PLAN (BEST VALUE) -->
+      <div class="plan-card best">
+        <div class="badge">Best Value</div>
+        <div class="plan-title">Pro</div>
+        <div class="plan-price">$59.99<span style="font-size:1.1rem;font-weight:600;color:#aaa;">/mo</span></div>
+        <div class="plan-desc">Unlimited videos. All voices & features. Fastest delivery. Unlimited thumbnails.</div>
+        <ul class="plan-features">
+          <li>Unlimited videos</li>
+          <li>All ElevenLabs + Google voices</li>
+          <li>No watermark, no limits</li>
+          <li>Unlimited thumbnails</li>
+          <li>Priority support</li>
+          <li>Early access features</li>
+        </ul>
+        <button class="btn" onclick="location.href='video.html'">Go Pro</button>
+      </div>
+
+    </div>
+
+    <!-- THUMBNAIL PACK UPSELL -->
+    <div class="thumbnail-upsell">
+      <h2>Just want thumbnails?</h2>
+      <p>
+        Buy a 10-pack for any topic for only <span class="thumb-price">$9.99 one time</span>.<br>
+        Instantly download 10 different styles for your video. Included with Pro!
+      </p>
+      <button class="thumb-btn" onclick="location.href='thumbnail.html'">Buy Thumbnail Pack</button>
+      <div style="color:#0093ae;font-size:1rem;font-weight:600;margin-top:0.7rem;">Pro users get unlimited thumbnails included free.</div>
+    </div>
+  </main>
+
+  <footer style="width:100%;text-align:center;padding:1.5rem 0 0.5rem 0;font-size:1.08rem;color:#0093ae;">
+    &copy; 2025 SocialStorm AI. Built for creators who want to win.
+  </footer>
+
+</body>
+</html>

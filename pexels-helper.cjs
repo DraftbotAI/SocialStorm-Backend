@@ -1,9 +1,17 @@
-// ===== 1) ENV & DEPENDENCIES =====
+// =============================
+// SECTION 1: ENV & DEPENDENCIES
+// =============================
 require('dotenv').config();
 const axios = require('axios');
 const stringSimilarity = require('string-similarity');
 
-// ===== 2) STOP WORDS FOR QUERY CLEANUP =====
+
+
+
+
+// =============================
+// SECTION 2: STOP WORDS FOR QUERY CLEANUP
+// =============================
 const STOP_WORDS = new Set([
   'and','the','with','into','for','a','to','of','in','on','at','by','from'
 ]);
@@ -17,13 +25,25 @@ function sanitizeQuery(raw, maxWords = 10) {
     .join(' ');
 }
 
-// ===== 3) URL NORMALIZER =====
+
+
+
+
+// =============================
+// SECTION 3: URL NORMALIZER
+// =============================
 function normalizeUrl(url) {
   if (!url || typeof url !== 'string') return '';
   return url.trim().toLowerCase().replace(/\/+$/, '');
 }
 
-// ===== 4) SHUFFLE ARRAY =====
+
+
+
+
+// =============================
+// SECTION 4: SHUFFLE ARRAY
+// =============================
 function shuffleArray(arr) {
   for (let i = arr.length -1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i+1));
@@ -32,7 +52,13 @@ function shuffleArray(arr) {
   return arr;
 }
 
-// ===== 5) GPT-POWERED KEYWORD EXTRACTOR =====
+
+
+
+
+// =============================
+// SECTION 5: GPT-POWERED KEYWORD EXTRACTOR
+// =============================
 async function getSearchKeywords(line) {
   // Hard timeout: 7 seconds
   const promise = (async () => {
@@ -59,7 +85,13 @@ async function getSearchKeywords(line) {
   ]);
 }
 
-// ===== 6) PIXABAY PHOTO FALLBACK =====
+
+
+
+
+// =============================
+// SECTION 6: PIXABAY PHOTO FALLBACK
+// =============================
 async function searchPixabayPhoto(query, keywords = [], mainSubject = '', excludeUrls = []) {
   const url = 'https://pixabay.com/api/';
   const params = {
@@ -106,7 +138,13 @@ async function searchPixabayPhoto(query, keywords = [], mainSubject = '', exclud
   }
 }
 
-// ===== 7) PROMISE TIMEOUT WRAPPER =====
+
+
+
+
+// =============================
+// SECTION 7: PROMISE TIMEOUT WRAPPER
+// =============================
 function promiseTimeout(promise, ms, msg = "Timed out") {
   return Promise.race([
     promise,
@@ -114,7 +152,13 @@ function promiseTimeout(promise, ms, msg = "Timed out") {
   ]);
 }
 
-// ===== 8) MOTIVATIONAL DETECTOR =====
+
+
+
+
+// =============================
+// SECTION 8: MOTIVATIONAL DETECTOR
+// =============================
 function isMotivationalQuery(text, mainSubject = '') {
   const MOTIVATIONAL_WORDS = [
     'motivation','motivational','inspiration','inspiring','affirmation','affirmations',
@@ -124,7 +168,13 @@ function isMotivationalQuery(text, mainSubject = '') {
   return MOTIVATIONAL_WORDS.some(w => lc.includes(w));
 }
 
-// ===== 9) MAIN CLIP PICKER =====
+
+
+
+
+// =============================
+// SECTION 9: MAIN CLIP PICKER
+// =============================
 async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSubject = '', excludeUrls = []) {
   if (!rawQuery) throw new Error('pickClipFor: query is required');
   if (!mainSubject) throw new Error('pickClipFor: mainSubject is required');
@@ -404,5 +454,12 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
   return null;
 }
 
-// ===== 10) EXPORT =====
+
+
+
+
+// =============================
+// SECTION 10: EXPORT
+// =============================
 module.exports = { pickClipFor };
+

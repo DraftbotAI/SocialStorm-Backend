@@ -1,7 +1,16 @@
+// =============================
+// SECTION 1: CANVAS & JSZIP IMPORTS
+// =============================
 const { createCanvas, loadImage, registerFont } = require('canvas');
 const JSZip = require('jszip');
 
-// ==== DIRECTORY DEBUGGING (Safe to comment out in prod) ====
+
+
+
+
+// =============================
+// SECTION 2: DIRECTORY DEBUGGING (DEV ONLY)
+// =============================
 console.log('Working directory:', __dirname);
 console.log('Files/folders here:', require('fs').readdirSync(__dirname));
 if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
@@ -10,7 +19,13 @@ if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
   console.log('No frontend folder found!');
 }
 
-// ===== 1) ENVIRONMENT & DEPENDENCY SETUP =====
+
+
+
+
+// =============================
+// SECTION 3: ENVIRONMENT & DEPENDENCY SETUP
+// =============================
 require('dotenv').config();
 const express        = require('express');
 const cors           = require('cors');
@@ -28,14 +43,26 @@ const util           = require('util');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-// ====== PROGRESS TRACKING MAP ======
+
+
+
+
+// =============================
+// SECTION 4: PROGRESS TRACKING MAP
+// =============================
 const progress = {};
 const JOB_TTL_MS = 5 * 60 * 1000;
 function cleanupJob(jobId, delay = JOB_TTL_MS) {
   setTimeout(() => { delete progress[jobId]; }, delay);
 }
 
-// ===== 2) EXPRESS APP INITIALIZATION =====
+
+
+
+
+// =============================
+// SECTION 5: EXPRESS APP INITIALIZATION
+// =============================
 const app = express();
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
@@ -50,7 +77,13 @@ const PORT = process.env.PORT || 3000;
 // ===== HEALTH CHECK ENDPOINT =====
 app.get('/health', (req, res) => res.status(200).send('OK'));
 
-// ===== 3) CLOUD R2 CLIENT CONFIGURATION =====
+
+
+
+
+// =============================
+// SECTION 6: CLOUD R2 CLIENT CONFIGURATION
+// =============================
 const { S3, Endpoint } = AWS;
 const s3 = new S3({
   endpoint: new Endpoint(process.env.R2_ENDPOINT),
@@ -60,7 +93,13 @@ const s3 = new S3({
   region: 'us-east-1',
 });
 
-// ===== 4) HELPERS =====
+
+
+
+
+// =============================
+// SECTION 7: HELPERS
+// =============================
 async function downloadToFile(url, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const w = fs.createWriteStream(dest);
@@ -98,7 +137,13 @@ async function extractMainSubject(script) {
   }
 }
 
-// ===== VIRAL METADATA ENGINE =====
+
+
+
+
+// =============================
+// SECTION 8: VIRAL METADATA ENGINE
+// =============================
 async function generateViralMetadata({ script, topic, oldTitle, oldDesc }) {
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -143,7 +188,13 @@ HASHTAGS: [hashtag1, hashtag2, ...]
   }
 }
 
-// ====== SCRIPT-TO-SCENES SPLITTER ======
+
+
+
+
+// =============================
+// SECTION 9: SCRIPT-TO-SCENES SPLITTER & GOOGLE TTS CLIENT INIT
+// =============================
 function splitScriptToScenes(script) {
   return script
     .split(/(?<=[\.!\?])\s+|\n/)
@@ -163,7 +214,13 @@ try {
   console.error('FATAL: Could not initialize Google TTS client from JSON:', e);
 }
 
-// ======= GOOGLE TTS SYNTHESIZER =======
+
+
+
+
+// =============================
+// SECTION 10: GOOGLE TTS SYNTHESIZER & UTILS
+// =============================
 async function synthesizeWithGoogleTTS(text, voice = 'en-US-Neural2-D', outPath) {
   if (!googleTTSClient) throw new Error("Google TTS not initialized (no credentials file)");
   const request = {
@@ -199,7 +256,14 @@ function promiseTimeout(promise, ms, msg="Timed out") {
     new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))
   ]);
 }
-// ===== VOICES =====
+
+
+
+
+
+// =============================
+// SECTION 11: VOICES & /api/voices ENDPOINT
+// =============================
 function getVoicePreviewFile(id, fallback = null) {
   const previewDir = '/voice-previews/';
   const googlePattern = `sample_${id}.mp3`;
@@ -213,7 +277,6 @@ function getVoicePreviewFile(id, fallback = null) {
   return fallback;
 }
 
-// ===== VOICES (REFRESHED LIST) =====
 const googleFreeVoices = [
   { id: "en-US-Neural2-F", name: "Jenna (Free)",    description: "Google TTS, Female, US",     provider: "google",     tier: "Free", gender: "female", disabled: false },
   { id: "en-US-Neural2-G", name: "Hannah (Free)",   description: "Google TTS, Female, US",     provider: "google",     tier: "Free", gender: "female", disabled: false },
@@ -247,12 +310,17 @@ const mappedCustomVoices = [...googleFreeVoices, ...elevenProVoices].map(v => ({
   preview: getVoicePreviewFile(v.id, v.preview)
 }));
 
-// ===== /api/voices endpoint =====
 app.get('/api/voices', (req, res) => {
   res.json({ success: true, voices: mappedCustomVoices });
 });
 
-// ===== SPARKIE (IMPROVED) ENDPOINT =====
+
+
+
+
+// =============================
+// SECTION 12: SPARKIE (IMPROVED) ENDPOINT
+// =============================
 app.post('/api/sparkie', async (req, res) => {
   const { category, prompt } = req.body;
   if (!category && !prompt) return res.status(400).json({ success: false, error: 'Prompt or category required' });
@@ -303,7 +371,12 @@ Give only 7, no numbering or list format, just line by line.
   }
 });
 
-// ===== /api/generate-script endpoint (IMPROVED FOR VOICE NARRATION) =====
+
+
+
+// =============================
+// SECTION 13: /api/generate-script ENDPOINT (IMPROVED FOR VOICE NARRATION)
+// =============================
 app.post('/api/generate-script', async (req, res) => {
   const { idea } = req.body;
   if (!idea) return res.status(400).json({ success: false, error: 'Idea required' });
@@ -359,13 +432,19 @@ SCRIPT:
     if (!res.headersSent) return res.status(500).json({ success: false, error: err.message });
   }
 });
-// ===== /api/generate-video endpoint =====
+// =============================
+// SECTION 14: /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
+// =============================
+// ===== 14. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC) =====
+
 app.post('/api/generate-video', async (req, res) => {
+
   const jobId = uuidv4();
   progress[jobId] = { percent: 0, status: 'starting' };
   res.json({ jobId });
 
   (async () => {
+
     let finished = false;
     let watchdog = setTimeout(() => {
       if (!finished && progress[jobId]) {
@@ -375,6 +454,7 @@ app.post('/api/generate-video', async (req, res) => {
     }, 10 * 60 * 1000);
 
     try {
+
       const { script, voice, removeWatermark, paidUser } = req.body;
       if (!script || !voice) {
         progress[jobId] = { percent: 100, status: 'Failed: script & voice required' };
@@ -387,7 +467,42 @@ app.post('/api/generate-video', async (req, res) => {
       const mainSubject = await extractMainSubject(script);
       if (!mainSubject) throw new Error('No main subject found for this script.');
 
-      const steps = splitScriptToScenes(script).slice(0, 8);
+      // --- NEW: Dynamically select up to 60 seconds worth of lines ---
+      const allSteps = splitScriptToScenes(script);
+      let steps = [];
+      let totalDuration = 0;
+
+      // We'll estimate per-line duration using real TTS durations if possible, or fallback to 5s/line
+      for (let i = 0; i < allSteps.length; i++) {
+        const text = allSteps[i];
+        let estAudioDuration = 0;
+
+        // Create temp TTS file just to probe its length (don't waste credits on paid TTS for estimate)
+        const tempWorkDir = path.join(__dirname, 'tmp', 'dur-' + uuidv4());
+        fs.mkdirSync(tempWorkDir, { recursive: true });
+        const tempAudio = path.join(tempWorkDir, 'audio.mp3');
+        const tempWav   = path.join(tempWorkDir, 'audio.wav');
+        try {
+          // Use Google TTS (free) for estimate, regardless of actual voice selection
+          const wav = await synthesizeWithGoogleTTS(text, "en-US-Neural2-D", tempAudio);
+          fs.renameSync(wav, tempWav);
+          estAudioDuration = await new Promise((resolve, reject) =>
+            ffmpeg.ffprobe(tempWav, (err, info) => err ? reject(err) : resolve(info.format.duration))
+          );
+        } catch (err) {
+          estAudioDuration = Math.max(3.5, Math.min(text.length / 18, 8)); // fallback: 18 chars/sec, min 3.5, max 8
+        }
+        // +1.5 seconds for lead/tail/safe buffer
+        estAudioDuration += 1.5;
+
+        // Cleanup temp files
+        try { fs.rmSync(tempWorkDir, { recursive: true, force: true }); } catch {}
+
+        if (totalDuration + estAudioDuration > 60) break;
+        steps.push(text);
+        totalDuration += estAudioDuration;
+      }
+
       const totalSteps = steps.length + 4;
       let currentStep = 0;
 
@@ -601,7 +716,6 @@ app.post('/api/generate-video', async (req, res) => {
           await new Promise((resolve, reject) => {
             ffmpeg()
               .input(clipBase + ext)
-              // Removed stream_loop -1 to prevent looping of video clips
               .input(sceneAudio)
               .inputOptions([`-t ${sceneLen}`])
               .outputOptions([
@@ -803,9 +917,16 @@ app.post('/api/generate-video', async (req, res) => {
       clearTimeout(watchdog);
       return;
     }
+
   })();
+
 });
-// ===== PROGRESS POLLING ENDPOINT =====
+
+
+
+// =============================
+// SECTION 15: PROGRESS POLLING ENDPOINT
+// =============================
 app.get('/api/progress/:jobId', (req, res) => {
   const jobId = req.params.jobId;
   const job = progress[jobId];
@@ -815,7 +936,13 @@ app.get('/api/progress/:jobId', (req, res) => {
   res.json(job);
 });
 
-// ===== GENERATE VOICE PREVIEWS ENDPOINT =====
+
+
+
+
+// =============================
+// SECTION 16: GENERATE VOICE PREVIEWS ENDPOINT
+// =============================
 app.post('/api/generate-voice-previews', async (req, res) => {
   const sampleText = "This is a sample of my voice.";
   try {
@@ -832,7 +959,13 @@ app.post('/api/generate-voice-previews', async (req, res) => {
   }
 });
 
-// ======= /api/generate-thumbnails =======
+
+
+
+
+// =============================
+// SECTION 17: /api/generate-thumbnails ENDPOINT
+// =============================
 app.post('/api/generate-thumbnails', async (req, res) => {
   try {
     const { topic, caption } = req.body;
@@ -913,7 +1046,13 @@ app.post('/api/generate-thumbnails', async (req, res) => {
   }
 });
 
-// ===== Serve videos from Cloudflare R2 (streaming, download, range support) =====
+
+
+
+
+// =============================
+// SECTION 18: SERVE VIDEOS FROM CLOUDFLARE R2 (STREAMING, DOWNLOAD, RANGE SUPPORT)
+// =============================
 app.get('/video/videos/:key', async (req, res) => {
   try {
     const key = `videos/${req.params.key}`;
@@ -976,20 +1115,41 @@ app.get('/video/videos/:key', async (req, res) => {
   }
 });
 
-// Handle pretty URLs for .html pages (e.g., /pricing → /pricing.html)
+
+
+
+
+// =============================
+// SECTION 19: PRETTY URLs FOR .HTML PAGES
+// =============================
+// ===== 19) PRETTY URLs FOR .HTML PAGES =====
 app.get('/:page', (req, res, next) => {
   const page = req.params.page;
+
+  // Skip API or video endpoints to avoid conflict
   if (page.startsWith('api') || page === 'video') {
     return next();
   }
+
+  // Build path to corresponding HTML file in the frontend directory
   const htmlPath = path.join(__dirname, 'frontend', `${page}.html`);
+
+  // If the HTML file exists and isn't a directory, serve it
   if (fs.existsSync(htmlPath) && !fs.lstatSync(htmlPath).isDirectory()) {
     return res.sendFile(htmlPath);
   }
+
+  // Otherwise, continue to the next route (404 fallback, etc.)
   next();
 });
 
-// ===== 404 HTML fallback for SPA (not API) =====
+
+
+
+
+// =============================
+// SECTION 20: 404 HTML FALLBACK FOR SPA (NOT API)
+// =============================
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api/') && !req.path.startsWith('/video/')) {
     const htmlPath = path.join(__dirname, 'frontend', req.path.replace(/^\//, ''));
@@ -1003,5 +1163,12 @@ app.get('*', (req, res) => {
   }
 });
 
-// ===== LAUNCH SERVER =====
+
+
+
+
+// =============================
+// SECTION 21: LAUNCH SERVER
+// =============================
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server listening on port ${PORT}`));
+

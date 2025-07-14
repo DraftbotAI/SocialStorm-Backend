@@ -88,11 +88,16 @@
       position: relative;
       border-radius: 12px; box-shadow: 0 4px 18px #00e0fe13;
       overflow: hidden; background: #222;
+      cursor: pointer;
     }
     .thumb-preview img {
       width: 100%; height: 120px; object-fit: cover; display: block;
       border-radius: 12px;
       filter: blur(0.5px) brightness(0.85);
+      transition: filter 0.3s ease;
+    }
+    .thumb-preview:hover img {
+      filter: none;
     }
     .thumb-watermark {
       position: absolute; left: 0; top: 0; width: 100%; height: 100%;
@@ -111,6 +116,21 @@
     }
     #unlockDiv .btn { font-size: 1.12rem; width: 100%; }
     #downloadLinks { margin-top: 1.2rem; }
+    #downloadLinks a {
+      display: inline-block;
+      margin: 6px 6px 6px 0;
+      padding: 6px 10px;
+      background: #00e0fe;
+      color: #10141a;
+      font-weight: 900;
+      border-radius: 6px;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    #downloadLinks a:hover {
+      background: #00b3c4;
+      color: white;
+    }
     @media (max-width: 700px) {
       nav { gap: 1.5rem; min-height: 60px; }
       nav .logo img { height: 72px; }
@@ -140,7 +160,7 @@
   <main class="page-content">
     <h1>Get 10 Viral Thumbnails for Your Video</h1>
     <div class="desc">
-      Instantly generate eye-catching YouTube & TikTok thumbnails. Enter your topic or video idea, or create custom text. <br>
+      Instantly generate eye-catching YouTube & TikTok thumbnails. Enter your topic or video idea, or create custom text. <br />
       <b>Preview your 10-pack, watermarked. Unlock for $9.99 — or unlimited packs for $19/month.</b>
     </div>
     <form id="thumbForm" autocomplete="off">
@@ -154,75 +174,85 @@
       </div>
       <button class="btn" type="submit">Generate My Thumbnails</button>
     </form>
+
     <div id="thumbGrid"></div>
+
     <div id="unlockDiv" style="display:none;">
       <div style="font-weight:800; font-size:1.1rem; color:#00b3c4; margin-bottom:8px;">
         Unlock All 10 Thumbnails (No Watermark)
       </div>
       <button class="btn" id="unlockBtn">$9.99 – Unlock & Download</button>
-      <div style="margin-top:6px; font-size:0.95rem;">
-        <span>Or get unlimited packs for $19/month</span>
-      </div>
       <div id="downloadLinks" style="display:none;">
         <div style="margin:16px 0 10px 0; font-size:1.1rem; color:#0086b3;">Download your thumbnail pack:</div>
-        <a id="zipLink" class="btn" href="#" download style="margin-bottom:10px;">Download ZIP</a>
+        <a id="zipLink" class="btn" href="#" download="SocialStorm-thumbnails.zip" style="margin-bottom:10px;">Download ZIP</a>
         <div id="singleLinks"></div>
       </div>
     </div>
   </main>
+
   <footer>
     &copy; 2025 SocialStorm AI. Built for creators who want to win.
   </footer>
+
   <script>
     document.getElementById('thumbForm').onsubmit = async function(e) {
       e.preventDefault();
       const topic = document.getElementById('topicInput').value.trim();
-      const custom = document.getElementById('captionInput').value.trim();
-
-      // Fill array with custom (or leave blank for auto-viral captions)
-      let captions = [];
-      for (let i = 0; i < 10; i++) captions.push(custom);
+      const caption = document.getElementById('captionInput').value.trim();
 
       let thumbGrid = document.getElementById('thumbGrid');
       thumbGrid.innerHTML = '<div style="text-align:center;font-size:1.2rem;color:#00b3c4;">Generating thumbnails...</div>';
       document.getElementById('unlockDiv').style.display = 'none';
+      document.getElementById('downloadLinks').style.display = 'none';
+      document.getElementById('singleLinks').innerHTML = '';
 
       try {
         const res = await fetch('/api/generate-thumbnails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ topic, captions })
+          body: JSON.stringify({ topic, caption })
         });
         const data = await res.json();
-        if (!data.success) throw new Error(data.error || 'Failed to generate');
+
+        if (!data.success) throw new Error(data.error || 'Failed to generate thumbnails.');
 
         thumbGrid.innerHTML = '';
-        for (let i = 0; i < data.images.length; i++) {
-          if (!data.images[i]) continue;
+        data.previews.forEach((preview, i) => {
           thumbGrid.innerHTML += `
-            <div class="thumb-preview">
-              <img src="${data.images[i]}" alt="Thumbnail" />
+            <div class="thumb-preview" title="Thumbnail ${i + 1}">
+              <img src="${preview.dataUrl}" alt="Thumbnail ${i + 1}" />
               <div class="thumb-watermark">SOCIALSTORM AI</div>
             </div>
           `;
-        }
+        });
+
         document.getElementById('unlockDiv').style.display = 'block';
-        document.getElementById('downloadLinks').style.display = 'none';
+        // Set ZIP download link
+        document.getElementById('zipLink').href = data.zip;
+
       } catch (err) {
         thumbGrid.innerHTML = '<div style="color:#c00;font-size:1.1rem;">Error generating thumbnails. Please try again.</div>';
+        console.error(err);
       }
     };
 
     document.getElementById('unlockBtn').onclick = function() {
-      setTimeout(() => {
-        document.getElementById('downloadLinks').style.display = 'block';
-        document.getElementById('zipLink').href = "#"; // Replace with backend zip link in prod
-        let singleLinks = '';
-        for (let i = 1; i <= 10; i++) {
-          singleLinks += `<a href="#" class="btn" style="margin:4px 0;display:block;">Download Thumbnail ${i}</a>`;
-        }
-        document.getElementById('singleLinks').innerHTML = singleLinks;
-      }, 1200);
+      const singleLinksContainer = document.getElementById('singleLinks');
+      singleLinksContainer.innerHTML = '';
+
+      const previews = Array.from(document.querySelectorAll('#thumbGrid img'));
+
+      previews.forEach((img, index) => {
+        const link = document.createElement('a');
+        link.href = img.src;
+        link.download = `SocialStorm-thumbnail-${index + 1}.png`;
+        link.textContent = `Download Thumbnail ${index + 1}`;
+        link.className = 'btn';
+        link.style.margin = '4px 0';
+        singleLinksContainer.appendChild(link);
+      });
+
+      document.getElementById('downloadLinks').style.display = 'block';
     };
   </script>
 </body>

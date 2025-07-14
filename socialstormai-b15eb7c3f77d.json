@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "socialstormai",
+  "private_key_id": "b15eb7c3f77dcf5100a017b453ce2036b936c729",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDHuNIV9UcJr/FJ\n+2osuxWRZ9rbIDpRpBNSy3r7ii+7V2TwNuHhnoJqqB2iBFRwEksvspedWyx2dyJl\n+FCI+zFJdUR37p//H1nuqMwShtJoVWfPi5csdPOML0b/65c6Rp8UAzCOcSFLDli3\nIQphZM6Yep6xdiG7fBqHO3Pr5jJ9SeZEdXSS+HDczKoWUTJyYUJeRkz1dP7J8SbN\nd52EVFUMTX4BjZYUspC1tUfXfgZJah9lpVyQnQ/8hsluzPaQlKGSktBfoapjMAgw\nSEMaiJwhjn5E4VYsN0jbA0PXrnbOjifeV174yeMz3Y8lA8XW9+1pB0IDNDy5VoKS\nxWsqi9S1AgMBAAECggEAEvYbC/ajbeoEUG/MHr8MRyfDAXbH0qRvKTckT+lIqtKb\nRKsROuhfnVyko5MhqRozhS3BczEKwZyB6YhvrPGcNksp2vEOw5voX94qsb+XDky9\ndFjeW1wnGzIJ3ZYyX1gBFldPLtbSwFt2VLyQTbrSWmuZ0WNTxIb9xcUBNm4+cOJ+\nM5q6zAczUz38HgL7H6yX9FSanJE8v6XDV3YhZiIe34ENdFscBF7hEkoXp+L15dEk\n4SL2wIxx8u34F39qx/aMbNc9CpnZDjHeg/izneGKHWKTsmEcnYamveU3aBh8MEF7\nOPAScOVJkqqiCYldxEJ22r4/iuw6ruQ52nSRjfRaAQKBgQDwj+3Yf3qLXpv1oSjO\n6Cn0VcO34UxOBw/gK+m86wW/KesAg8OPhtSAUXv66RgVsYboACOgGe/w0ToQ/3aP\nvylQKvCfZuCtQWMeXqeNng9inVvtEA3JoufgQ7tizhZs5RfLZY8WUNEfPmQ0rpn+\nq9kySQ7JF20YXwgPWayL8jhpwQKBgQDUifK7pNBLRApif5Awvah3jQ3bt20EqMX/\nZqhBsEkH3po+Ejb13veYshpxzCQJFVW7yZOD3nmrvm9nfBzJwSdU4tVhMw9Xe7Qy\nkY6fU5xcsqmDGHxdRsTSzZfPX6wa/11d743NWRFuysH8PC1oI/OQ3HLS5YiJW2vL\n5vSqH1Bf9QKBgC90NPcALqxPfXR21hX6tkv8nx8m0maR/g+6meEqe3e6TSFM3Mbz\nUff+GvbkBFxDKNmbLWvnse1PWKUBv+GbVAr8bXsEUE3dGDBle6f0BhTt9bRN9mpQ\nOG2E7vIOtV3F02vMHO3KA3amWB4MU1Rpke7ZepEwjdTA6lYc2mzA22ABAoGBAMLh\nakxcJxGcZdlDFjda7+oO0DIy0id/iW1R992jgpNQrSVVFkgEFgtQ46aMhE4/3ci+\nYCB+EhpEF2pQByWHkkTnaLgjVWHl76iehqPYynrE52FpRj9Q8JBKK3TeSLTIihfj\n26X6kV2BVLWviAMBVAfz2uU9yiAIT6M7NgP3in8xAoGAIjkUZV2V32glraGR2STI\n+S/0e+KBdSSDZlBEsLKN59y8po3QBgE7lHSKJa05K5E3Bhd1oqaeWpLxS7MbPdbH\nM6Mk2BlhQkgbMF1YQoAFBb5N0l1S1NHzl9CGbIoKB/ENjZokGwzzTGY/Sdeikv3F\n/zyu2IMFdK7GiVVyazK0foU=\n-----END PRIVATE KEY-----\n",
+  "client_email": "socialstormai@socialstormai.iam.gserviceaccount.com",
+  "client_id": "116964559051057533574",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/socialstormai%40socialstormai.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

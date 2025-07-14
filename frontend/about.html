@@ -1,5 +1,26 @@
+<!--
+INDEX
+1. DOCTYPE & HTML BOILERPLATE
+2. HEAD: META, TITLE, STYLE
+3. BODY
+   3.1. NAVBAR (with "Thumbnail Generator" link at top)
+   3.2. MAIN ABOUT CONTENT
+   3.3. FOOTER
+4. JS: NAVBAR MOBILE TOGGLE
+END
+-->
+
+
+<!-- 1. DOCTYPE & HTML BOILERPLATE -->
+
 <!DOCTYPE html>
+
+
 <html lang="en">
+
+
+<!-- 2. HEAD: META, TITLE, STYLE -->
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -256,7 +277,12 @@
     }
   </style>
 </head>
+
+
+<!-- 3. BODY -->
 <body>
+
+  <!-- 3.1. NAVBAR (with Thumbnail Generator link at top) -->
   <nav>
     <div class="logo" onclick="location.href='index.html'">
       <img src="logo.png" alt="SocialStorm Logo" />
@@ -265,6 +291,7 @@
       <span></span>
     </button>
     <ul id="mainNavList">
+      <li><a href="thumbnail.html" style="color:#00e0fe;font-weight:900;">Thumbnail Generator</a></li>
       <li><a href="index.html">Home</a></li>
       <li><a href="video.html">Create Video</a></li>
       <li><a href="pricing.html">Pricing</a></li>
@@ -273,7 +300,11 @@
     </ul>
     <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
   </nav>
+
+
+  <!-- 3.2. MAIN ABOUT CONTENT -->
   <main class="page-content">
+
     <h1>About SocialStormAI</h1>
     <div class="about-lead">
       SocialStormAI was built for creators who want to make viral content fast—without technical headaches or endless editing.
@@ -333,9 +364,13 @@
       <strong>Summary:</strong> Don’t do anything stupid, illegal, or abusive with this tool. If you aren’t sure, ask first. Otherwise, have fun and make something awesome.
     </section>
   </main>
+
+  <!-- 3.3. FOOTER -->
   <footer>
     &copy; 2025 SocialStorm AI. Built for creators who want to win.
   </footer>
+
+  <!-- 4. JS: NAVBAR MOBILE TOGGLE -->
   <script>
     // Hamburger nav
     const hamburger = document.getElementById('navHamburger');
@@ -353,5 +388,7 @@
       });
     });
   </script>
+
 </body>
+
 </html>

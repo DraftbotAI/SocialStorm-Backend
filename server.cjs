@@ -463,16 +463,13 @@ app.post('/api/sparkie', async (req, res) => {
 });
 
 // ==========================================
-// 14. /api/generate-thumbnails ENDPOINT (HOOK FOR FUTURE)
-// ==========================================
-// ==========================================
 // 14. /api/generate-thumbnails ENDPOINT (VIRAL STYLE THUMBNAIL GENERATOR)
 // ==========================================
 app.post('/api/generate-thumbnails', async (req, res) => {
   const { topic } = req.body;
   if (!topic) return res.status(400).json({ success: false, error: 'Topic required' });
 
-  // Viral-style font files you have stored in /fonts folder on your server:
+  // Viral-style font files stored in /fonts
   const fontFiles = [
     'Impact.ttf',
     'Anton-Regular.ttf',
@@ -486,25 +483,42 @@ app.post('/api/generate-thumbnails', async (req, res) => {
     'ArchivoBlack-Regular.ttf'
   ];
 
+  // 20 proven viral captions (feel free to add your own, use topic if <10)
+  const viralCaptions = [
+    `You Won't Believe This!`,
+    `What Happens Next Will Shock You`,
+    `Top 10 ${topic}`,
+    `The Untold Truth About ${topic}`,
+    `How ${topic} Changed Everything`,
+    `Is This The Future of ${topic}?`,
+    `Watch Before It's Deleted`,
+    `#1 Reason People Love ${topic}`,
+    `They Don't Want You To Know This`,
+    `Insane Facts About ${topic}`,
+    `The Secret Behind ${topic}`,
+    `Are You Ready For This?`,
+    `Mind-Blowing ${topic} Facts`,
+    `Never Seen Before!`,
+    `Only 1% Know This`,
+    `This Will Change How You Think`,
+    `Warning: Highly Addictive`,
+    `Bet You Didn't Know This`,
+    `Must See!`,
+    `Viral In 24 Hours`
+  ];
+
   try {
     // Register fonts for Canvas
     fontFiles.forEach((font, i) => {
       registerFont(path.join(__dirname, 'fonts', font), { family: `ViralFont${i}` });
     });
 
-    // Helper to fetch random image from Unsplash based on topic
-    async function fetchBackgroundImage() {
-      try {
-        const url = `https://source.unsplash.com/1280x720/?${encodeURIComponent(topic)}`;
-        // Just return URL because Unsplash redirects to a random image
-        return url;
-      } catch {
-        // fallback image if needed
-        return 'https://via.placeholder.com/1280x720?text=SocialStormAI';
-      }
+    // Helper to fetch a truly random image for each thumbnail
+    async function fetchRandomImage(i) {
+      const q = encodeURIComponent(topic);
+      // add ?sig=${i} to force a new image each time
+      return `https://source.unsplash.com/1280x720/?${q}&sig=${i}`;
     }
-
-    const bgUrl = await fetchBackgroundImage();
 
     const canvasWidth = 1280;
     const canvasHeight = 720;
@@ -514,24 +528,37 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       const canvas = createCanvas(canvasWidth, canvasHeight);
       const ctx = canvas.getContext('2d');
 
-      // Load background image
+      // Get a unique Unsplash image
+      const bgUrl = await fetchRandomImage(i);
       const bgImage = await loadImage(bgUrl);
       ctx.drawImage(bgImage, 0, 0, canvasWidth, canvasHeight);
 
-      // Draw viral caption text on bottom center
+      // Pick a caption (rotate if fewer than 10, random if more)
+      const caption =
+        viralCaptions.length >= 10
+          ? viralCaptions[i % viralCaptions.length].toUpperCase()
+          : topic.toUpperCase();
+
+      // Pick a random or rotating font
       ctx.textBaseline = 'bottom';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'white';
       ctx.strokeStyle = 'black';
-      ctx.lineWidth = 7;
+      ctx.lineWidth = 8;
 
-      const fontSize = 84;
-      ctx.font = `${fontSize}px ViralFont${i}`;
-      const text = topic.toUpperCase();
+      const fontSize = 88;
+      ctx.font = `${fontSize}px ViralFont${i % fontFiles.length}`;
 
-      // Draw stroke then fill text for max contrast
-      ctx.strokeText(text, canvasWidth / 2, canvasHeight - 60);
-      ctx.fillText(text, canvasWidth / 2, canvasHeight - 60);
+      // Draw caption at bottom
+      ctx.strokeText(caption, canvasWidth / 2, canvasHeight - 60);
+      ctx.fillText(caption, canvasWidth / 2, canvasHeight - 60);
+
+      // Add a small watermark/logo in the bottom corner (optional)
+      ctx.font = '38px ViralFont1';
+      ctx.globalAlpha = 0.65;
+      ctx.fillStyle = '#00eaff';
+      ctx.fillText('SocialStormAI', canvasWidth - 230, canvasHeight - 22);
+      ctx.globalAlpha = 1;
 
       // Convert to base64
       const dataUrl = canvas.toDataURL('image/png');
@@ -547,22 +574,36 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 });
 
 
+
 // ==========================================
 // 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
 // ==========================================
+
+// --- 1. Helper: ffmpegPromise ---
+function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise timed out') {
+  return new Promise((resolve, reject) => {
+    const proc = setupFn();
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        proc.kill && proc.kill('SIGKILL');
+        reject(new Error(errMsg));
+      }
+    }, timeoutMs);
+    proc.on('end', (...a) => {
+      if (!settled) { settled = true; clearTimeout(timer); resolve(...a); }
+    });
+    proc.on('error', (e) => {
+      if (!settled) { settled = true; clearTimeout(timer); reject(e); }
+    });
+  });
+}
+
 app.post('/api/generate-video', async (req, res) => {
   const jobId = uuidv4();
   progress[jobId] = { percent: 0, status: 'starting' };
   res.json({ jobId });
-
-  // Helper: promise timeout
-  function promiseTimeout(p, ms, errMsg) {
-    let timeout;
-    return Promise.race([
-      p,
-      new Promise((_, reject) => timeout = setTimeout(() => reject(new Error(errMsg)), ms))
-    ]).finally(() => clearTimeout(timeout));
-  }
 
   (async () => {
     let finished = false;
@@ -675,27 +716,24 @@ app.post('/api/generate-video', async (req, res) => {
           const sceneFile = path.join(workDir, `scene-${idx}.mp4`);
 
           // Synthesize TTS audio (Polly or ElevenLabs)
-          console.log(`[${jobId}] [${i + 1}] synthesizeTTS starting`);
           await promiseTimeout(
             synthesizeTTS(text, voice, audioFile),
             30000,
             `[${jobId}] synthesizeTTS timed out for scene ${i + 1}`
           );
-          console.log(`[${jobId}] [${i + 1}] synthesizeTTS DONE`);
 
           // Convert MP3 audio to WAV for ffmpeg processing
-          console.log(`[${jobId}] [${i + 1}] Converting to WAV: ${audioFile} => ${wavFile}`);
-          await promiseTimeout(new Promise((resolve, reject) => {
+          await ffmpegPromise(() =>
             ffmpeg()
               .input(audioFile)
               .audioChannels(1)
               .audioFrequency(44100)
               .output(wavFile)
-              .on('end', () => { console.log(`[${jobId}] Audio converted to WAV`); resolve(); })
-              .on('error', (err) => { console.error(`[${jobId}] ffmpeg WAV error`, err); reject(err); })
-              .run();
-          }), 30000, `[${jobId}] FFmpeg WAV conversion timed out for scene ${i + 1}`);
-          console.log(`[${jobId}] [${i + 1}] WAV conversion DONE`);
+              .on('end', () => { console.log(`[${jobId}] Audio converted to WAV`); })
+              .on('error', (err) => { console.error(`[${jobId}] ffmpeg WAV error`, err); }),
+            30000,
+            `[${jobId}] FFmpeg WAV conversion timed out for scene ${i + 1}`
+          );
 
           // Robust Probe: Try both .wav and .mp3 for duration, use whichever works
           let audioDur = 3.5;
@@ -721,7 +759,6 @@ app.post('/api/generate-video', async (req, res) => {
           }
 
           // Pick clip for the scene
-          console.log(`[${jobId}] [${i + 1}] pickClipFor starting`);
           let mediaObj = null;
           let attempts = 0;
           let found = false;
@@ -768,7 +805,6 @@ app.post('/api/generate-video', async (req, res) => {
               }
             }
           }
-          console.log(`[${jobId}] [${i + 1}] pickClipFor DONE`, mediaObj ? mediaObj.url : 'null');
 
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
@@ -778,17 +814,16 @@ app.post('/api/generate-video', async (req, res) => {
             }
             const colorClip = path.join(workDir, `fallback-black-${idx}.mp4`);
             let safeDuration = Number(audioDur) && !isNaN(audioDur) ? audioDur + 1.5 : 3.5;
-            await promiseTimeout(new Promise((resolve, reject) => {
+            await ffmpegPromise(() =>
               ffmpeg()
                 .input(`color=black:s=720x1280:d=${safeDuration}`)
                 .inputFormat('lavfi')
-                .output(colorClip)
-                .on('end', resolve)
-                .on('error', reject)
-                .run();
-            }), 15000, `[${jobId}] FFmpeg fallback black video timed out`);
+                .output(colorClip),
+              15000,
+              `[${jobId}] FFmpeg fallback black video timed out`
+            );
 
-            await promiseTimeout(new Promise((resolve, reject) => {
+            await ffmpegPromise(() =>
               ffmpeg()
                 .input(colorClip)
                 .input(wavFile)
@@ -800,10 +835,10 @@ app.post('/api/generate-video', async (req, res) => {
                   '-shortest',
                   '-r 30'
                 ])
-                .save(sceneFile)
-                .on('end', resolve)
-                .on('error', reject);
-            }), 15000, `[${jobId}] FFmpeg fallback video build timed out`);
+                .save(sceneFile),
+              15000,
+              `[${jobId}] FFmpeg fallback video build timed out`
+            );
 
             scenes.push(sceneFile);
             console.log(`[${jobId}] Scene ${i + 1} built with fallback`);
@@ -811,33 +846,30 @@ app.post('/api/generate-video', async (req, res) => {
           }
 
           const ext = path.extname(new URL(mediaObj.url).pathname);
-          console.log(`[${jobId}] [${i + 1}] downloadToFile starting`);
           await promiseTimeout(downloadToFile(mediaObj.url, clipBase + ext), 30000, `[${jobId}] downloadToFile timed out`);
-          console.log(`[${jobId}] Downloaded media:`, mediaObj.url);
 
           // ===== Scene Audio Padding =====
           const leadFile = path.join(workDir, `lead-${idx}.wav`);
           const tailFile = path.join(workDir, `tail-${idx}.wav`);
 
-          await promiseTimeout(new Promise((resolve, reject) => {
+          await ffmpegPromise(() =>
             ffmpeg()
               .input('anullsrc=r=44100:cl=mono')
               .inputFormat('lavfi')
               .outputOptions(['-t 0.5'])
-              .save(leadFile)
-              .on('end', resolve)
-              .on('error', reject);
-          }), 10000, `[${jobId}] FFmpeg leadFile timed out`);
-
-          await promiseTimeout(new Promise((resolve, reject) => {
+              .save(leadFile),
+            10000,
+            `[${jobId}] FFmpeg leadFile timed out`
+          );
+          await ffmpegPromise(() =>
             ffmpeg()
               .input('anullsrc=r=44100:cl=mono')
               .inputFormat('lavfi')
               .outputOptions(['-t 1.0'])
-              .save(tailFile)
-              .on('end', resolve)
-              .on('error', reject);
-          }), 10000, `[${jobId}] FFmpeg tailFile timed out`);
+              .save(tailFile),
+            10000,
+            `[${jobId}] FFmpeg tailFile timed out`
+          );
 
           const sceneAudioWav = path.join(workDir, `scene-audio-${idx}.wav`);
           const audListFile = path.join(workDir, `audlist-${idx}.txt`);
@@ -846,25 +878,25 @@ app.post('/api/generate-video', async (req, res) => {
             [leadFile, wavFile, tailFile].map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
           );
 
-          await promiseTimeout(new Promise((resolve, reject) => {
+          await ffmpegPromise(() =>
             ffmpeg()
               .input(audListFile)
               .inputOptions(['-f concat', '-safe 0'])
               .outputOptions(['-c:a pcm_s16le'])
-              .save(sceneAudioWav)
-              .on('end', resolve)
-              .on('error', reject);
-          }), 20000, `[${jobId}] FFmpeg scene audio concat timed out`);
+              .save(sceneAudioWav),
+            20000,
+            `[${jobId}] FFmpeg scene audio concat timed out`
+          );
 
           let sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
-          await promiseTimeout(new Promise((resolve, reject) => {
+          await ffmpegPromise(() =>
             ffmpeg()
               .input(sceneAudioWav)
               .outputOptions(['-c:a aac', '-b:a 128k'])
-              .save(sceneAudio)
-              .on('end', resolve)
-              .on('error', reject);
-          }), 20000, `[${jobId}] FFmpeg m4a conversion timed out`);
+              .save(sceneAudio),
+            20000,
+            `[${jobId}] FFmpeg m4a conversion timed out`
+          );
 
           // === AUTO-BACKGROUND MUSIC MIX BLOCK (INCREASED TIMEOUT to 120s) ===
           let musicFile;
@@ -882,7 +914,7 @@ app.post('/api/generate-video', async (req, res) => {
           if (musicFile && fs.existsSync(musicFile)) {
             try {
               const sceneAudioWithMusic = path.join(workDir, `scene-audio-music-${idx}.m4a`);
-              await promiseTimeout(new Promise((resolve, reject) => {
+              await ffmpegPromise(() =>
                 ffmpeg()
                   .input(sceneAudio)
                   .input(musicFile)
@@ -890,10 +922,10 @@ app.post('/api/generate-video', async (req, res) => {
                     '[1:a]volume=0.19,adelay=0|0,apad[bkg];[0:a]apad[voice];[bkg][voice]amix=inputs=2:duration=first:dropout_transition=2'
                   ])
                   .outputOptions(['-c:a aac', '-b:a 128k'])
-                  .save(sceneAudioWithMusic)
-                  .on('end', () => { console.log(`[${jobId}] Music mixed for scene ${idx}`); resolve(); })
-                  .on('error', reject);
-              }), 120000, `[${jobId}] FFmpeg music mix timed out`);
+                  .save(sceneAudioWithMusic),
+                120000,
+                `[${jobId}] FFmpeg music mix timed out`
+              );
               sceneAudio = sceneAudioWithMusic;
             } catch (mixErr) {
               console.error(`[${jobId}] Music mixing failed for scene ${idx}:`, mixErr);
@@ -904,15 +936,7 @@ app.post('/api/generate-video', async (req, res) => {
           // === END MUSIC MIX BLOCK ===
 
           const sceneLen = Number(audioDur) && !isNaN(audioDur) ? audioDur + 1.5 : 5.0;
-          console.log(`[${jobId}] About to build scene video:`, {
-            scene: i + 1,
-            video: clipBase + ext,
-            audio: sceneAudio,
-            output: sceneFile,
-            duration: sceneLen
-          });
-
-          await promiseTimeout(new Promise((resolve, reject) => {
+          await ffmpegPromise(() =>
             ffmpeg()
               .input(clipBase + ext)
               .inputOptions(['-stream_loop', '-1'])
@@ -929,14 +953,13 @@ app.post('/api/generate-video', async (req, res) => {
               .videoFilters(
                 'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280'
               )
-              .save(sceneFile)
-              .on('end', () => { console.log(`[${jobId}] Scene video built: ${sceneFile}`); resolve(); })
-              .on('error', (err) => { console.error(`[${jobId}] FFmpeg scene video error:`, err); reject(err); });
-          }), 120000, `[${jobId}] FFmpeg scene video build timed out for scene ${i + 1}`);
+              .save(sceneFile),
+            120000,
+            `[${jobId}] FFmpeg scene video build timed out for scene ${i + 1}`
+          );
 
           scenes.push(sceneFile);
           console.log(`[${jobId}] ===== Scene ${i + 1}/${steps.length} COMPLETE =====`);
-
         } catch (err) {
           console.error(`[${jobId}] Scene ${i + 1} error:`, err);
           progress[jobId] = { percent: 100, status: "Failed: " + err.message, viralTitle, viralDesc, viralTags };
@@ -948,7 +971,7 @@ app.post('/api/generate-video', async (req, res) => {
       }
 
       // TODO: Keep your existing OUTRO, CONCAT, WATERMARK, UPLOAD code here!
-      // You can also wrap any long ffmpeg calls in promiseTimeout as above.
+      // You can also wrap any long ffmpeg calls in ffmpegPromise as above.
 
       progress[jobId] = { percent: 100, status: "Done", viralTitle, viralDesc, viralTags };
       cleanupJob(jobId, 90 * 1000);

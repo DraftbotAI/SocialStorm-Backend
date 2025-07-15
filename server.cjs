@@ -594,7 +594,6 @@ app.post('/api/generate-video', async (req, res) => {
         viralTitle = meta.viralTitle;
         viralDesc = meta.viralDesc;
         viralTags = meta.viralTags;
-        // Update progress object for live preview in frontend
         progress[jobId].viralTitle = viralTitle;
         progress[jobId].viralDesc = viralDesc;
         progress[jobId].viralTags = viralTags;
@@ -608,7 +607,7 @@ app.post('/api/generate-video', async (req, res) => {
 
       // Allow dynamic scene count (up to 20) to support longer videos (up to 60s)
       const steps = splitScriptToScenes(script).slice(0, 20);
-      const totalSteps = steps.length + 5; // +1 for metadata, +1 outro, +1 concat, +1 upload, +1 watermark
+      const totalSteps = steps.length + 5;
       let currentStep = 0;
 
       const workDir = path.join(__dirname, 'tmp', uuidv4());
@@ -626,7 +625,6 @@ app.post('/api/generate-video', async (req, res) => {
       async function synthesizeTTS(text, voiceId, outFile) {
         const pollyVoiceIds = pollyVoices.map(v => v.id);
         if (pollyVoiceIds.includes(voiceId)) {
-          // Use AWS Polly
           const params = {
             Text: text,
             OutputFormat: "mp3",
@@ -642,7 +640,6 @@ app.post('/api/generate-video', async (req, res) => {
             throw new Error(`Polly TTS error: ${err.message}`);
           }
         } else {
-          // Use ElevenLabs
           try {
             const ttsRes = await axios.post(
               `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
@@ -694,16 +691,27 @@ app.post('/api/generate-video', async (req, res) => {
               .run();
           }), 30000, `[${jobId}] FFmpeg WAV conversion timed out for scene ${i + 1}`);
 
-          // Probe duration
+          // Robust Probe: Try both .wav and .mp3 for duration, use whichever works
           let audioDur = 3.5;
+          let durErr = '';
           try {
             audioDur = await promiseTimeout(new Promise((resolve, reject) =>
               ffmpeg.ffprobe(wavFile, (err, info) => err ? reject(err) : resolve(info.format.duration))
-            ), 10000, `[${jobId}] ffprobe audio duration timed out`);
-            console.log(`[${jobId}] Scene audio duration: ${audioDur}s`);
-          } catch (e) {
-            audioDur = 3.5;
-            console.warn(`[${jobId}] Could not probe audio duration, using default 3.5s`);
+            ), 10000, `[${jobId}] ffprobe audio duration (wav) timed out`);
+            if (!audioDur || isNaN(audioDur)) throw new Error('Duration undefined');
+            console.log(`[${jobId}] Scene audio duration: ${audioDur}s (WAV)`);
+          } catch (e1) {
+            durErr = e1.message;
+            try {
+              audioDur = await promiseTimeout(new Promise((resolve, reject) =>
+                ffmpeg.ffprobe(audioFile, (err, info) => err ? reject(err) : resolve(info.format.duration))
+              ), 10000, `[${jobId}] ffprobe audio duration (mp3) timed out`);
+              if (!audioDur || isNaN(audioDur)) throw new Error('Duration undefined');
+              console.log(`[${jobId}] Scene audio duration: ${audioDur}s (MP3 fallback)`);
+            } catch (e2) {
+              console.warn(`[${jobId}] Could not probe audio duration from either wav or mp3, using default 3.5s`);
+              audioDur = 3.5;
+            }
           }
 
           // Pick clip for the scene
@@ -847,7 +855,7 @@ app.post('/api/generate-video', async (req, res) => {
               .on('error', reject);
           }), 20000, `[${jobId}] FFmpeg m4a conversion timed out`);
 
-          // === AUTO-BACKGROUND MUSIC MIX BLOCK ===
+          // === AUTO-BACKGROUND MUSIC MIX BLOCK (INCREASED TIMEOUT to 120s) ===
           let musicFile;
           let musicDebug = {};
           try {
@@ -874,7 +882,7 @@ app.post('/api/generate-video', async (req, res) => {
                   .save(sceneAudioWithMusic)
                   .on('end', () => { console.log(`[${jobId}] Music mixed for scene ${idx}`); resolve(); })
                   .on('error', reject);
-              }), 30000, `[${jobId}] FFmpeg music mix timed out`);
+              }), 120000, `[${jobId}] FFmpeg music mix timed out`);
               sceneAudio = sceneAudioWithMusic;
             } catch (mixErr) {
               console.error(`[${jobId}] Music mixing failed for scene ${idx}:`, mixErr);
@@ -884,8 +892,7 @@ app.post('/api/generate-video', async (req, res) => {
           }
           // === END MUSIC MIX BLOCK ===
 
-          const sceneLen = audioDur + 1.5;
-          // --- LOG the input video and audio before FFmpeg ---
+          const sceneLen = Number(audioDur) && !isNaN(audioDur) ? audioDur + 1.5 : 5.0;
           console.log(`[${jobId}] About to build scene video:`, {
             scene: i + 1,
             video: clipBase + ext,
@@ -914,10 +921,9 @@ app.post('/api/generate-video', async (req, res) => {
               .save(sceneFile)
               .on('end', () => { console.log(`[${jobId}] Scene video built: ${sceneFile}`); resolve(); })
               .on('error', (err) => { console.error(`[${jobId}] FFmpeg scene video error:`, err); reject(err); });
-          }), 60000, `[${jobId}] FFmpeg scene video build timed out for scene ${i + 1}`);
+          }), 120000, `[${jobId}] FFmpeg scene video build timed out for scene ${i + 1}`);
 
           scenes.push(sceneFile);
-
           console.log(`[${jobId}] ===== Scene ${i + 1}/${steps.length} COMPLETE =====`);
 
         } catch (err) {
@@ -930,11 +936,8 @@ app.post('/api/generate-video', async (req, res) => {
         }
       }
 
-      // Outro, watermark, concat, upload, etc
-      // ... [OUTRO/CONCAT/CLOUD LOGIC - keep as before, can add timeouts to those ffmpeg calls as well]
-      // If you want, I’ll update the rest with timeouts too, but this is the main loop freeze culprit
-
-      // [YOUR EXISTING OUTRO, CONCAT, WATERMARK, UPLOAD CODE HERE -- add timeouts/logs if you want!]
+      // TODO: Keep your existing OUTRO, CONCAT, WATERMARK, UPLOAD code here!
+      // You can also wrap any long ffmpeg calls in promiseTimeout as above.
 
       progress[jobId] = { percent: 100, status: "Done", viralTitle, viralDesc, viralTags };
       cleanupJob(jobId, 90 * 1000);
@@ -952,7 +955,6 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
-
 
 // ==========================================
 // 16. PROGRESS POLLING ENDPOINT

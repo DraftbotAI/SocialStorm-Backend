@@ -637,6 +637,7 @@ app.post('/api/generate-video', async (req, res) => {
             await fs.promises.writeFile(outFile, data.AudioStream);
             console.log(`[${jobId}] Polly TTS done for text: "${text}"`);
           } catch (err) {
+            console.error(`[${jobId}] Polly TTS error:`, err);
             throw new Error(`Polly TTS error: ${err.message}`);
           }
         } else {
@@ -649,11 +650,13 @@ app.post('/api/generate-video', async (req, res) => {
             fs.writeFileSync(outFile, ttsRes.data);
             console.log(`[${jobId}] ElevenLabs TTS done for text: "${text}"`);
           } catch (err) {
+            console.error(`[${jobId}] ElevenLabs TTS error:`, err);
             throw new Error(`ElevenLabs TTS error: ${err.message}`);
           }
         }
       }
 
+      // === MAIN SCENE LOOP ===
       for (let i = 0; i < steps.length; i++) {
         try {
           currentStep++;
@@ -672,11 +675,13 @@ app.post('/api/generate-video', async (req, res) => {
           const sceneFile = path.join(workDir, `scene-${idx}.mp4`);
 
           // Synthesize TTS audio (Polly or ElevenLabs)
+          console.log(`[${jobId}] [${i + 1}] synthesizeTTS starting`);
           await promiseTimeout(
             synthesizeTTS(text, voice, audioFile),
             30000,
             `[${jobId}] synthesizeTTS timed out for scene ${i + 1}`
           );
+          console.log(`[${jobId}] [${i + 1}] synthesizeTTS DONE`);
 
           // Convert MP3 audio to WAV for ffmpeg processing
           console.log(`[${jobId}] [${i + 1}] Converting to WAV: ${audioFile} => ${wavFile}`);
@@ -690,6 +695,7 @@ app.post('/api/generate-video', async (req, res) => {
               .on('error', (err) => { console.error(`[${jobId}] ffmpeg WAV error`, err); reject(err); })
               .run();
           }), 30000, `[${jobId}] FFmpeg WAV conversion timed out for scene ${i + 1}`);
+          console.log(`[${jobId}] [${i + 1}] WAV conversion DONE`);
 
           // Robust Probe: Try both .wav and .mp3 for duration, use whichever works
           let audioDur = 3.5;
@@ -715,6 +721,7 @@ app.post('/api/generate-video', async (req, res) => {
           }
 
           // Pick clip for the scene
+          console.log(`[${jobId}] [${i + 1}] pickClipFor starting`);
           let mediaObj = null;
           let attempts = 0;
           let found = false;
@@ -725,7 +732,8 @@ app.post('/api/generate-video', async (req, res) => {
                 20000,
                 "pickClipFor timed out"
               );
-            } catch {
+            } catch (err) {
+              console.warn(`[${jobId}] pickClipFor attempt ${attempts + 1} failed:`, err);
               mediaObj = null;
             }
             if (!mediaObj || !mediaObj.url) {
@@ -748,7 +756,8 @@ app.post('/api/generate-video', async (req, res) => {
                   15000,
                   "pickClipFor fallback timed out"
                 );
-              } catch {
+              } catch (err) {
+                console.warn(`[${jobId}] pickClipFor fallback failed:`, err);
                 mediaObj = null;
               }
               if (mediaObj && mediaObj.url && !usedUrls.has(mediaObj.url)) {
@@ -759,6 +768,7 @@ app.post('/api/generate-video', async (req, res) => {
               }
             }
           }
+          console.log(`[${jobId}] [${i + 1}] pickClipFor DONE`, mediaObj ? mediaObj.url : 'null');
 
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
@@ -801,6 +811,7 @@ app.post('/api/generate-video', async (req, res) => {
           }
 
           const ext = path.extname(new URL(mediaObj.url).pathname);
+          console.log(`[${jobId}] [${i + 1}] downloadToFile starting`);
           await promiseTimeout(downloadToFile(mediaObj.url, clipBase + ext), 30000, `[${jobId}] downloadToFile timed out`);
           console.log(`[${jobId}] Downloaded media:`, mediaObj.url);
 
@@ -955,6 +966,7 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
+
 
 // ==========================================
 // 16. PROGRESS POLLING ENDPOINT

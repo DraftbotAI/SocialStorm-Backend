@@ -178,19 +178,22 @@ function pickMusicFile(moodFolder) {
 }
 
 // ==========================================
-// 8. VIRAL METADATA ENGINE
+// 8. VIRAL METADATA ENGINE (ENHANCED FOR VIRAL PERFORMANCE)
 // ==========================================
 async function generateViralMetadata({ script, topic, oldTitle, oldDesc }) {
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const metaPrompt = `
-You are an expert YouTube Shorts viral strategist. For the following short-form video script and topic, generate:
-1. A title that instantly grabs curiosity and clicks. Must be under 65 characters, no all caps, use hooks, emotion, or cliffhanger if possible. If appropriate, add a “How,” “Why,” “Secret,” “Never Knew,” “You’ll Be Shocked,” etc. Use strong SEO keywords and viral language. No generic titles. NO EMOJIS.
-2. A 2-3 sentence description that summarizes the video, builds intrigue, and naturally fits SEO keywords. Start with a compelling hook, mention the main subject, and add a soft call to action (“Follow for more,” “Subscribe for wild facts,” etc). NO EMOJIS.
-3. A comma-separated stack of 12-16 hashtags, all relevant to the script, topic, and YouTube Shorts virality. Each must start with "#". No numbers or generic #shorts as the first hashtag. Prioritize quality, not quantity.
-DO NOT USE EMOJIS ANYWHERE.
+You are a top YouTube Shorts viral content strategist. For the following script and topic, do the following:
+1. Write a viral, clickable TITLE (max 62 characters). Use curiosity, emotion, cliffhangers, or “never knew,” “shocking,” “secret,” etc. Avoid all-caps, exclamation points, and generic language. Focus on high-CTR hooks and SEO keywords, but make it sound natural.
+2. Write a 2–3 sentence DESCRIPTION that summarizes the video, starts with a compelling hook, works in the main topic/subject, and ends with a soft call to action like “Follow for more” or “Subscribe for crazy facts.” SEO and intrigue are key. No emojis, no hashtags here.
+3. Give a stack of 14–18 hashtags (comma separated, no numbers, all must start with #, no #shorts as the first). Include highly relevant, trending, and niche tags for the topic. Use main subject and viral YouTube Shorts keywords, and at least one hashtag should be highly specific.
+
+Do **NOT** use emojis anywhere. Prioritize real clickbait, curiosity, and YouTube Shorts growth.
+
 TOPIC: ${topic}
 SCRIPT: ${script}
+
 Format:
 TITLE: [title]
 DESCRIPTION: [desc]
@@ -200,18 +203,32 @@ HASHTAGS: [hashtag1, hashtag2, ...]
     const out = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'user', content: metaPrompt }],
-      temperature: 0.8,
-      max_tokens: 350,
+      temperature: 0.93,
+      max_tokens: 380,
     });
 
     const text = out.choices[0].message.content.trim();
-    const titleMatch = text.match(/TITLE:\s*(.+)\s*DESCRIPTION:/i);
-    const descMatch = text.match(/DESCRIPTION:\s*([\s\S]*?)HASHTAGS:/i);
+
+    // Parse results out of OpenAI output
+    const titleMatch = text.match(/TITLE:\s*(.+?)\s*DESCRIPTION:/is);
+    const descMatch = text.match(/DESCRIPTION:\s*([\s\S]+?)HASHTAGS:/is);
     const hashtagsMatch = text.match(/HASHTAGS:\s*(.+)$/i);
 
     let viralTitle = stripEmojis(titleMatch ? titleMatch[1].trim() : oldTitle);
-    let viralDesc = stripEmojis(descMatch ? descMatch[1].trim() : oldDesc);
-    let viralTags = stripEmojis(hashtagsMatch ? hashtagsMatch[1].trim() : '');
+    // Strict length cap for Shorts
+    if (viralTitle.length > 62) viralTitle = viralTitle.slice(0, 59) + "...";
+
+    let viralDesc = stripEmojis(descMatch ? descMatch[1].replace(/\n/g, ' ').replace(/\s+/g, ' ').trim() : oldDesc);
+    if (viralDesc.length > 180) viralDesc = viralDesc.slice(0, 177) + "...";
+
+    let viralTags = stripEmojis(hashtagsMatch ? hashtagsMatch[1].replace(/[\s,]+/g, ', ').trim() : '');
+
+    // Remove duplicate hashtags, keep first appearance only
+    if (viralTags) {
+      let tagsArr = viralTags.split(',').map(t => t.trim().toLowerCase()).filter(t => t.startsWith('#'));
+      let uniqueTags = Array.from(new Set(tagsArr));
+      viralTags = uniqueTags.join(', ');
+    }
 
     return { viralTitle, viralDesc, viralTags };
   } catch (err) {
@@ -219,6 +236,7 @@ HASHTAGS: [hashtag1, hashtag2, ...]
     return { viralTitle: oldTitle, viralDesc: oldDesc, viralTags: '' };
   }
 }
+
 
 // ==========================================
 // 9. SCRIPT-TO-SCENES SPLITTER (ELEVENLABS & POLLY ONLY)
@@ -483,13 +501,30 @@ app.post('/api/generate-video', async (req, res) => {
         return;
       }
 
+      // === GENERATE VIRAL METADATA FOR ANY SCRIPT ===
+      let viralTitle = '', viralDesc = '', viralTags = '';
+      try {
+        const meta = await generateViralMetadata({
+          script, topic: await extractMainSubject(script), oldTitle: '', oldDesc: ''
+        });
+        viralTitle = meta.viralTitle;
+        viralDesc = meta.viralDesc;
+        viralTags = meta.viralTags;
+        // Update progress object for live preview in frontend
+        progress[jobId].viralTitle = viralTitle;
+        progress[jobId].viralDesc = viralDesc;
+        progress[jobId].viralTags = viralTags;
+      } catch (metaErr) {
+        console.error(`[${jobId}] Metadata generation error:`, metaErr);
+      }
+
       const mainSubject = await extractMainSubject(script);
       console.log(`[${jobId}] Main subject:`, mainSubject);
       if (!mainSubject) throw new Error('No main subject found for this script.');
 
       // Allow dynamic scene count (up to 20) to support longer videos (up to 60s)
       const steps = splitScriptToScenes(script).slice(0, 20);
-      const totalSteps = steps.length + 4;
+      const totalSteps = steps.length + 5; // +1 for metadata, +1 outro, +1 concat, +1 upload, +1 watermark
       let currentStep = 0;
 
       const workDir = path.join(__dirname, 'tmp', uuidv4());
@@ -543,7 +578,8 @@ app.post('/api/generate-video', async (req, res) => {
           currentStep++;
           progress[jobId] = {
             percent: Math.round((currentStep / totalSteps) * 100),
-            status: `Building scene ${i + 1}/${steps.length}`
+            status: `Building scene ${i + 1}/${steps.length}`,
+            viralTitle, viralDesc, viralTags
           };
           console.log(`[${jobId}] ===== Scene ${i + 1}/${steps.length} START =====`);
 
@@ -791,7 +827,7 @@ app.post('/api/generate-video', async (req, res) => {
 
         } catch (err) {
           console.error(`[${jobId}] Scene ${i + 1} error:`, err);
-          progress[jobId] = { percent: 100, status: "Failed: " + err.message };
+          progress[jobId] = { percent: 100, status: "Failed: " + err.message, viralTitle, viralDesc, viralTags };
           cleanupJob(jobId, 10 * 1000);
           finished = true;
           clearTimeout(watchdog);
@@ -803,7 +839,7 @@ app.post('/api/generate-video', async (req, res) => {
       if (!(paidUser && removeWatermark)) {
         try {
           currentStep++;
-          progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Adding outro..." };
+          progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Adding outro...", viralTitle, viralDesc, viralTags };
           const outroText = "This video was made with SocialStormAI.";
           const outroLogo = path.join(__dirname, 'frontend', 'logo.png');
           const outroVoiceId = voice;
@@ -833,7 +869,7 @@ app.post('/api/generate-video', async (req, res) => {
                 await fs.promises.writeFile(outroAudioMp3, data.AudioStream);
                 console.log(`[${jobId}] Polly outro TTS done.`);
               } catch (err) {
-                progress[jobId] = { percent: 100, status: `Failed: Polly outro error: ${err.message}` };
+                progress[jobId] = { percent: 100, status: `Failed: Polly outro error: ${err.message}`, viralTitle, viralDesc, viralTags };
                 cleanupJob(jobId, 10 * 1000);
                 finished = true;
                 clearTimeout(watchdog);
@@ -850,7 +886,7 @@ app.post('/api/generate-video', async (req, res) => {
                 fs.writeFileSync(outroAudioMp3, ttsOutroRes.data);
                 console.log(`[${jobId}] ElevenLabs outro TTS done.`);
               } catch (err) {
-                progress[jobId] = { percent: 100, status: `Failed: ElevenLabs outro error: ${err.message}` };
+                progress[jobId] = { percent: 100, status: `Failed: ElevenLabs outro error: ${err.message}`, viralTitle, viralDesc, viralTags };
                 cleanupJob(jobId, 10 * 1000);
                 finished = true;
                 clearTimeout(watchdog);
@@ -921,7 +957,7 @@ app.post('/api/generate-video', async (req, res) => {
             await new Promise(resolve => ff.on('end', resolve));
             scenes.push(outroSceneFile);
             console.log(`[${jobId}] Outro scene added.`);
-            progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Outro added." };
+            progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Outro added.", viralTitle, viralDesc, viralTags };
           }
         } catch (err) {
           console.error(`[${jobId}] Outro creation failed:`, err);
@@ -929,7 +965,7 @@ app.post('/api/generate-video', async (req, res) => {
       }
 
       currentStep++;
-      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes...", viralTitle, viralDesc, viralTags };
 
       const listFile = path.join(workDir, 'list.txt');
       fs.writeFileSync(
@@ -972,7 +1008,7 @@ app.post('/api/generate-video', async (req, res) => {
       }
 
       currentStep++;
-      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud...", viralTitle, viralDesc, viralTags };
       const key = `videos/${uuidv4()}.mp4`;
       await s3.upload({
         Bucket: process.env.R2_BUCKET,
@@ -982,7 +1018,7 @@ app.post('/api/generate-video', async (req, res) => {
         ACL: 'public-read'
       }).promise();
 
-      progress[jobId] = { percent: 100, status: "Done", key };
+      progress[jobId] = { percent: 100, status: "Done", key, viralTitle, viralDesc, viralTags };
       cleanupJob(jobId, 90 * 1000);
       finished = true;
       clearTimeout(watchdog);
@@ -998,6 +1034,7 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
+
 
 // ==========================================
 // 16. PROGRESS POLLING ENDPOINT

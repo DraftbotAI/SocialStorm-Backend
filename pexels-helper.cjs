@@ -4,10 +4,7 @@
 require('dotenv').config();
 const axios = require('axios');
 const stringSimilarity = require('string-similarity');
-
-
-
-
+const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 
 // =============================
 // SECTION 2: STOP WORDS FOR QUERY CLEANUP
@@ -25,10 +22,6 @@ function sanitizeQuery(raw, maxWords = 10) {
     .join(' ');
 }
 
-
-
-
-
 // =============================
 // SECTION 3: URL NORMALIZER
 // =============================
@@ -36,10 +29,6 @@ function normalizeUrl(url) {
   if (!url || typeof url !== 'string') return '';
   return url.trim().toLowerCase().replace(/\/+$/, '');
 }
-
-
-
-
 
 // =============================
 // SECTION 4: SHUFFLE ARRAY
@@ -51,10 +40,6 @@ function shuffleArray(arr) {
   }
   return arr;
 }
-
-
-
-
 
 // =============================
 // SECTION 5: GPT-POWERED KEYWORD EXTRACTOR
@@ -85,65 +70,8 @@ async function getSearchKeywords(line) {
   ]);
 }
 
-
-
-
-
 // =============================
-// SECTION 6: PIXABAY PHOTO FALLBACK
-// =============================
-async function searchPixabayPhoto(query, keywords = [], mainSubject = '', excludeUrls = []) {
-  const url = 'https://pixabay.com/api/';
-  const params = {
-    key: process.env.PIXABAY_API_KEY,
-    q: query,
-    safesearch: true,
-    per_page: 20,
-    lang: 'en',
-    image_type: 'photo'
-  };
-  try {
-    const resp = await axios.get(url, { params, timeout: 6000 });
-    if (resp.data && Array.isArray(resp.data.hits) && resp.data.hits.length > 0) {
-      let filtered = resp.data.hits.filter(img => {
-        const meta = `${img.tags} ${img.user}`.toLowerCase();
-        const imgUrl = normalizeUrl(img.largeImageURL);
-        return mainSubject && meta.includes(mainSubject.toLowerCase()) && !excludeUrls.includes(imgUrl);
-      });
-      if (filtered.length === 0) {
-        filtered = resp.data.hits.filter(img => {
-          const imgUrl = normalizeUrl(img.largeImageURL);
-          return !excludeUrls.includes(imgUrl);
-        });
-      }
-      if (filtered.length > 0) {
-        filtered = shuffleArray(filtered);
-        const best = filtered[0];
-        if (best && best.largeImageURL) {
-          return {
-            type: 'photo',
-            url: best.largeImageURL,
-            score: 0.7,
-            isKenBurns: true,
-            source: 'pixabay',
-            credit: 'Pixabay'
-          };
-        }
-      }
-    }
-    return null;
-  } catch (err) {
-    console.error('[Pixabay PHOTO ERROR]', err.message);
-    return null;
-  }
-}
-
-
-
-
-
-// =============================
-// SECTION 7: PROMISE TIMEOUT WRAPPER
+// SECTION 6: PROMISE TIMEOUT WRAPPER
 // =============================
 function promiseTimeout(promise, ms, msg = "Timed out") {
   return Promise.race([
@@ -152,12 +80,8 @@ function promiseTimeout(promise, ms, msg = "Timed out") {
   ]);
 }
 
-
-
-
-
 // =============================
-// SECTION 8: MOTIVATIONAL DETECTOR
+// SECTION 7: MOTIVATIONAL DETECTOR
 // =============================
 function isMotivationalQuery(text, mainSubject = '') {
   const MOTIVATIONAL_WORDS = [
@@ -168,12 +92,70 @@ function isMotivationalQuery(text, mainSubject = '') {
   return MOTIVATIONAL_WORDS.some(w => lc.includes(w));
 }
 
+// =============================
+// SECTION 8: CLOUD LIBRARY VIDEO LOOKUP (R2/S3)
+// =============================
+const s3 = new S3Client({
+  region: "auto",
+  endpoint: process.env.R2_ENDPOINT, // e.g. https://<accountid>.r2.cloudflarestorage.com
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
+  }
+});
 
+async function findVideosByTopic(topic, limit = 3, bucket = process.env.R2_BUCKET) {
+  const keyword = topic.toLowerCase().replace(/[^a-z0-9_]/gi, "_");
+  let results = [];
+  let continuationToken = undefined;
+  const prefix = keyword + '/'; // e.g. "animals/"
 
+  // 1. Try folder match (e.g., "animals/")
+  do {
+    const resp = await s3.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: prefix,
+      ContinuationToken: continuationToken
+    }));
+    const hits = (resp.Contents || [])
+      .filter(obj =>
+        /\.(mp4|mov|webm|mkv)$/i.test(obj.Key) // Only video files
+      )
+      .map(obj =>
+        `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucket}/${obj.Key}`
+      );
+    results.push(...hits);
+    continuationToken = resp.NextContinuationToken;
+  } while (results.length < limit && continuationToken);
 
+  // 2. If not enough, scan the bucket for filenames matching the keyword (slower!)
+  if (results.length < limit) {
+    let moreResults = [];
+    let token = undefined;
+    do {
+      const resp = await s3.send(new ListObjectsV2Command({
+        Bucket: bucket,
+        ContinuationToken: token
+      }));
+      const hits = (resp.Contents || [])
+        .filter(obj =>
+          /\.(mp4|mov|webm|mkv)$/i.test(obj.Key) &&
+          obj.Key.toLowerCase().includes(keyword)
+        )
+        .map(obj =>
+          `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucket}/${obj.Key}`
+        );
+      moreResults.push(...hits);
+      token = resp.NextContinuationToken;
+    } while (moreResults.length < limit - results.length && token);
+    results.push(...moreResults.slice(0, limit - results.length));
+  }
+
+  return results.slice(0, limit);
+}
 
 // =============================
-// SECTION 9: MAIN CLIP PICKER
+// SECTION 9: MAIN CLIP PICKER (LIBRARY -> PEXELS -> PIXABAY)
 // =============================
 async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSubject = '', excludeUrls = []) {
   if (!rawQuery) throw new Error('pickClipFor: query is required');
@@ -195,7 +177,25 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
     mainSubject
   ].filter((v, i, arr) => v && arr.indexOf(v) === i);
 
-  // ===== A) SPECIAL LOGIC FOR MOTIVATIONAL/INSPIRATIONAL/AFFIRMATION =====
+  // ===== 1) CHECK CLOUD LIBRARY FIRST =====
+  for (const variant of searchVariants) {
+    try {
+      const cloudMatches = await findVideosByTopic(variant, 1);
+      if (cloudMatches.length) {
+        return {
+          type: 'video',
+          url: cloudMatches[0],
+          score: 1,
+          isKenBurns: false,
+          source: 'cloud_library'
+        };
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+
+  // ===== 2) SPECIAL LOGIC FOR MOTIVATIONAL =====
   if (isMotivationalQuery(rawQuery, mainSubject)) {
     const motivationalThemes = [
       "inspiring people", "crowd cheering", "audience clapping", "mountain sunrise", "running on beach",
@@ -270,7 +270,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
     }
   }
 
-  // ===== B) PEXELS VIDEO =====
+  // ===== 3) PEXELS VIDEO SEARCH =====
   for (const query of searchVariants) {
     try {
       const resp = await promiseTimeout(
@@ -324,56 +324,11 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
         }
       }
     } catch (err) {
-      console.error('[Pexels VIDEO ERROR]', err.message);
       continue;
     }
   }
 
-  // ===== C) PEXELS PHOTO =====
-  for (const query of searchVariants) {
-    try {
-      const resp = await promiseTimeout(
-        axios.get('https://api.pexels.com/v1/search', {
-          headers: { Authorization: process.env.PEXELS_API_KEY },
-          params: { query, per_page: 12 },
-          timeout: 6000
-        }),
-        7000,
-        "Pexels photo search timed out"
-      );
-      const pics = resp.data.photos || [];
-      if (pics.length) {
-        const scored = pics
-          .map(p => {
-            const meta = [
-              p.alt || '',
-              p.photographer || '',
-              (p.tags ? p.tags.join(' ') : '')
-            ].join('');
-            const score = stringSimilarity.compareTwoStrings(meta.toLowerCase(), rawQuery.toLowerCase());
-            const picUrl = normalizeUrl(p.src?.large || '');
-            return { ...p, score, picUrl };
-          })
-          .filter(p => p.picUrl && !excludeUrls.includes(p.picUrl));
-        scored.sort((a, b) => b.score - a.score || 0);
-        if (scored.length) {
-          const best = scored[0];
-          return {
-            type: 'photo',
-            url: best.src.large,
-            score: best.score,
-            isKenBurns: true,
-            source: 'pexels'
-          };
-        }
-      }
-    } catch (err) {
-      console.error('[Pexels PHOTO ERROR]', err.message);
-      continue;
-    }
-  }
-
-  // ===== D) PIXABAY VIDEO =====
+  // ===== 4) PIXABAY VIDEO (AS FALLBACK) =====
   for (const query of searchVariants) {
     const url = 'https://pixabay.com/api/videos/';
     const params = {
@@ -423,43 +378,16 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
         }
       }
     } catch (err) {
-      console.error('[Pixabay VIDEO ERROR]', err.message);
       continue;
     }
   }
 
-  // ===== E) PIXABAY PHOTO =====
-  const photoResults = await Promise.all(
-    searchVariants.map(q =>
-      promiseTimeout(searchPixabayPhoto(q, keywordsArr, mainSubject, excludeUrls), 7000, "Pixabay photo search timed out")
-    )
-  );
-  const pixabayPic = photoResults.find(r => r && r.url);
-  if (pixabayPic) {
-    return pixabayPic;
-  }
-
-  // ===== F) Last Resort: Only use mainSubject photo for Ken Burns effect
-  const pixabayFallback = await promiseTimeout(
-    searchPixabayPhoto(mainSubject, keywordsArr, mainSubject, excludeUrls),
-    7000,
-    "Pixabay fallback photo search timed out"
-  );
-  if (pixabayFallback) {
-    return pixabayFallback;
-  }
-
-  // ===== G) TOTAL FAIL-SAFE =====
+  // ===== 5) TOTAL FAIL-SAFE =====
   // If *everything* fails, return null to let the server generate a fallback color/black video.
   return null;
 }
-
-
-
-
 
 // =============================
 // SECTION 10: EXPORT
 // =============================
 module.exports = { pickClipFor };
-

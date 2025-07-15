@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Get Viral Thumbnails – SocialStorm AI</title>
   <style>
+    /* ==========================
+       SECTION 1: BASE STYLES & LAYOUT
+    =========================== */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -80,6 +83,9 @@
       letter-spacing: 0.01em;
     }
     .btn:hover { background: #00b3c4; color: #fff; }
+    /* ==========================
+       SECTION 2: THUMBNAIL GRID
+    =========================== */
     #thumbGrid {
       width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       gap: 1.6rem; margin: 2.2rem 0 2rem 0;
@@ -107,7 +113,12 @@
       color: rgba(0,224,254,0.52); text-shadow: 2px 2px 12px #0008, 0 2px 10px #fff7;
       text-align: center; transform: rotate(-21deg);
       user-select: none;
+      /* HIDDEN BY DEFAULT (now handled in backend PNG) */
+      display: none;
     }
+    /* ==========================
+       SECTION 3: UNLOCK & DOWNLOAD
+    =========================== */
     #unlockDiv {
       width: 100%; max-width: 400px; margin: 2.2rem auto 0 auto;
       text-align: center; padding: 2.1rem 1.7rem 1.2rem;
@@ -131,6 +142,9 @@
       background: #00b3c4;
       color: white;
     }
+    /* ==========================
+       SECTION 4: MOBILE STYLES
+    =========================== */
     @media (max-width: 700px) {
       nav { gap: 1.5rem; min-height: 60px; }
       nav .logo img { height: 72px; }
@@ -142,6 +156,9 @@
   </style>
 </head>
 <body>
+  <!-- ==========================
+       SECTION 5: NAVIGATION
+  =========================== -->
   <nav>
     <div class="logo" onclick="location.href='index.html'">
       <img src="logo.png" alt="SocialStorm Logo" />
@@ -157,6 +174,9 @@
     <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
   </nav>
 
+  <!-- ==========================
+       SECTION 6: PAGE CONTENT
+  =========================== -->
   <main class="page-content">
     <h1>Get 10 Viral Thumbnails for Your Video</h1>
     <div class="desc">
@@ -190,11 +210,18 @@
     </div>
   </main>
 
+  <!-- ==========================
+       SECTION 7: FOOTER
+  =========================== -->
   <footer>
     &copy; 2025 SocialStorm AI. Built for creators who want to win.
   </footer>
 
+  <!-- ==========================
+       SECTION 8: MAIN SCRIPT (THUMBNAIL LOGIC)
+  =========================== -->
   <script>
+    // --- Handle Thumbnail Form Submission ---
     document.getElementById('thumbForm').onsubmit = async function(e) {
       e.preventDefault();
       const topic = document.getElementById('topicInput').value.trim();
@@ -207,6 +234,7 @@
       document.getElementById('singleLinks').innerHTML = '';
 
       try {
+        // Call backend endpoint
         const res = await fetch('/api/generate-thumbnails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -216,19 +244,21 @@
 
         if (!data.success) throw new Error(data.error || 'Failed to generate thumbnails.');
 
+        // --- SECTION 8A: DISPLAY ALL 10 THUMBNAILS ---
         thumbGrid.innerHTML = '';
-        data.previews.forEach((preview, i) => {
+        let previews = data.previews || [];
+        previews.forEach((preview, i) => {
           thumbGrid.innerHTML += `
             <div class="thumb-preview" title="Thumbnail ${i + 1}">
               <img src="${preview.dataUrl}" alt="Thumbnail ${i + 1}" />
-              <div class="thumb-watermark">SOCIALSTORM AI</div>
             </div>
           `;
         });
 
         document.getElementById('unlockDiv').style.display = 'block';
-        // Set ZIP download link
-        document.getElementById('zipLink').href = data.zip;
+        // Set ZIP download link if you ever add this to the backend
+        if (data.zip) document.getElementById('zipLink').href = data.zip;
+        else document.getElementById('zipLink').style.display = 'none';
 
       } catch (err) {
         thumbGrid.innerHTML = '<div style="color:#c00;font-size:1.1rem;">Error generating thumbnails. Please try again.</div>';
@@ -236,12 +266,12 @@
       }
     };
 
+    // --- SECTION 8B: UNLOCK/DOWNLOAD BUTTONS ---
     document.getElementById('unlockBtn').onclick = function() {
       const singleLinksContainer = document.getElementById('singleLinks');
       singleLinksContainer.innerHTML = '';
 
       const previews = Array.from(document.querySelectorAll('#thumbGrid img'));
-
       previews.forEach((img, index) => {
         const link = document.createElement('a');
         link.href = img.src;
@@ -254,6 +284,13 @@
 
       document.getElementById('downloadLinks').style.display = 'block';
     };
+
+    // ==========================
+    // SECTION 9: READY FOR TOPIC-MATCHED IMAGES?
+    // ==========================
+    // When backend supports real photo backgrounds (from Pexels or your library),
+    // thumbnails will show the matching visual here automatically.
+    // No extra changes needed in this file!
   </script>
 </body>
 </html>

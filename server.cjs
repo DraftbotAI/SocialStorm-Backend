@@ -465,12 +465,87 @@ app.post('/api/sparkie', async (req, res) => {
 // ==========================================
 // 14. /api/generate-thumbnails ENDPOINT (HOOK FOR FUTURE)
 // ==========================================
+// ==========================================
+// 14. /api/generate-thumbnails ENDPOINT (VIRAL STYLE THUMBNAIL GENERATOR)
+// ==========================================
 app.post('/api/generate-thumbnails', async (req, res) => {
-  // Here, you'd implement your viral-style, template-based thumbnail generator,
-  // cycling through your 50+ preset templates, using canvas, etc.
-  // For now, just return not implemented (unless you paste your code here)
-  return res.json({ success: false, message: "Thumbnail generator coming soon." });
+  const { topic } = req.body;
+  if (!topic) return res.status(400).json({ success: false, error: 'Topic required' });
+
+  // Viral-style font files you have stored in /fonts folder on your server:
+  const fontFiles = [
+    'Impact.ttf',
+    'Anton-Regular.ttf',
+    'BebasNeue-Regular.ttf',
+    'LeagueGothic-Regular.ttf',
+    'Oswald-Regular.ttf',
+    'Montserrat-Bold.ttf',
+    'Poppins-Bold.ttf',
+    'Raleway-Black.ttf',
+    'Roboto-Bold.ttf',
+    'ArchivoBlack-Regular.ttf'
+  ];
+
+  try {
+    // Register fonts for Canvas
+    fontFiles.forEach((font, i) => {
+      registerFont(path.join(__dirname, 'fonts', font), { family: `ViralFont${i}` });
+    });
+
+    // Helper to fetch random image from Unsplash based on topic
+    async function fetchBackgroundImage() {
+      try {
+        const url = `https://source.unsplash.com/1280x720/?${encodeURIComponent(topic)}`;
+        // Just return URL because Unsplash redirects to a random image
+        return url;
+      } catch {
+        // fallback image if needed
+        return 'https://via.placeholder.com/1280x720?text=SocialStormAI';
+      }
+    }
+
+    const bgUrl = await fetchBackgroundImage();
+
+    const canvasWidth = 1280;
+    const canvasHeight = 720;
+    const thumbnails = [];
+
+    for (let i = 0; i < 10; i++) {
+      const canvas = createCanvas(canvasWidth, canvasHeight);
+      const ctx = canvas.getContext('2d');
+
+      // Load background image
+      const bgImage = await loadImage(bgUrl);
+      ctx.drawImage(bgImage, 0, 0, canvasWidth, canvasHeight);
+
+      // Draw viral caption text on bottom center
+      ctx.textBaseline = 'bottom';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'white';
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 7;
+
+      const fontSize = 84;
+      ctx.font = `${fontSize}px ViralFont${i}`;
+      const text = topic.toUpperCase();
+
+      // Draw stroke then fill text for max contrast
+      ctx.strokeText(text, canvasWidth / 2, canvasHeight - 60);
+      ctx.fillText(text, canvasWidth / 2, canvasHeight - 60);
+
+      // Convert to base64
+      const dataUrl = canvas.toDataURL('image/png');
+      thumbnails.push(dataUrl);
+    }
+
+    return res.json({ success: true, thumbnails });
+
+  } catch (err) {
+    console.error('Thumbnail generator error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
+
 
 // ==========================================
 // 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
@@ -510,7 +585,6 @@ app.post('/api/generate-video', async (req, res) => {
         viralTitle = meta.viralTitle;
         viralDesc = meta.viralDesc;
         viralTags = meta.viralTags;
-        // Update progress object for live preview in frontend
         progress[jobId].viralTitle = viralTitle;
         progress[jobId].viralDesc = viralDesc;
         progress[jobId].viralTags = viralTags;
@@ -522,9 +596,8 @@ app.post('/api/generate-video', async (req, res) => {
       console.log(`[${jobId}] Main subject:`, mainSubject);
       if (!mainSubject) throw new Error('No main subject found for this script.');
 
-      // Allow dynamic scene count (up to 20) to support longer videos (up to 60s)
       const steps = splitScriptToScenes(script).slice(0, 20);
-      const totalSteps = steps.length + 5; // +1 for metadata, +1 outro, +1 concat, +1 upload, +1 watermark
+      const totalSteps = steps.length + 5; // metadata, outro, concat, upload, watermark
       let currentStep = 0;
 
       const workDir = path.join(__dirname, 'tmp', uuidv4());
@@ -590,10 +663,8 @@ app.post('/api/generate-video', async (req, res) => {
           const clipBase = path.join(workDir, `media-${idx}`);
           const sceneFile = path.join(workDir, `scene-${idx}.mp4`);
 
-          // Synthesize TTS audio (Polly or ElevenLabs)
           await synthesizeTTS(text, voice, audioFile);
 
-          // Convert MP3 audio to WAV for ffmpeg processing
           await new Promise((resolve, reject) => {
             ffmpeg()
               .input(audioFile)
@@ -605,7 +676,6 @@ app.post('/api/generate-video', async (req, res) => {
               .run();
           });
 
-          // Probe duration
           let audioDur = 3.5;
           try {
             audioDur = await new Promise((resolve, reject) =>
@@ -894,7 +964,6 @@ app.post('/api/generate-video', async (req, res) => {
               }
             }
 
-            // Convert outro MP3 to WAV
             await new Promise((resolve, reject) => {
               ffmpeg()
                 .input(outroAudioMp3)

@@ -89,6 +89,7 @@
     #thumbGrid {
       width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       gap: 1.6rem; margin: 2.2rem 0 2rem 0;
+      min-height: 140px;
     }
     .thumb-preview {
       position: relative;
@@ -221,76 +222,94 @@
        SECTION 8: MAIN SCRIPT (THUMBNAIL LOGIC)
   =========================== -->
   <script>
-    // --- Handle Thumbnail Form Submission ---
-    document.getElementById('thumbForm').onsubmit = async function(e) {
+    const thumbForm = document.getElementById('thumbForm');
+    const thumbGrid = document.getElementById('thumbGrid');
+    const unlockDiv = document.getElementById('unlockDiv');
+    const downloadLinks = document.getElementById('downloadLinks');
+    const singleLinks = document.getElementById('singleLinks');
+    const unlockBtn = document.getElementById('unlockBtn');
+    const zipLink = document.getElementById('zipLink');
+
+    let currentPreviews = [];
+
+    thumbForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const topic = document.getElementById('topicInput').value.trim();
       const caption = document.getElementById('captionInput').value.trim();
 
-      let thumbGrid = document.getElementById('thumbGrid');
       thumbGrid.innerHTML = '<div style="text-align:center;font-size:1.2rem;color:#00b3c4;">Generating thumbnails...</div>';
-      document.getElementById('unlockDiv').style.display = 'none';
-      document.getElementById('downloadLinks').style.display = 'none';
-      document.getElementById('singleLinks').innerHTML = '';
+      unlockDiv.style.display = 'none';
+      downloadLinks.style.display = 'none';
+      singleLinks.innerHTML = '';
+      zipLink.style.display = 'inline-block';
+      zipLink.href = '#';
+
+      currentPreviews = [];
 
       try {
-        // Call backend endpoint
+        // We assume backend returns all thumbnails in one batch for now, but
+        // can be adapted later for incremental display with websockets or SSE.
+
         const res = await fetch('/api/generate-thumbnails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ topic, caption })
+          body: JSON.stringify({ topic, caption }),
         });
         const data = await res.json();
 
         if (!data.success) throw new Error(data.error || 'Failed to generate thumbnails.');
 
-        // --- SECTION 8A: DISPLAY ALL 10 THUMBNAILS ---
-        thumbGrid.innerHTML = '';
-        let previews = data.previews || [];
-        previews.forEach((preview, i) => {
-          thumbGrid.innerHTML += `
-            <div class="thumb-preview" title="Thumbnail ${i + 1}">
-              <img src="${preview.dataUrl}" alt="Thumbnail ${i + 1}" />
-            </div>
-          `;
-        });
+        currentPreviews = data.previews || [];
 
-        document.getElementById('unlockDiv').style.display = 'block';
-        // Set ZIP download link if you ever add this to the backend
-        if (data.zip) document.getElementById('zipLink').href = data.zip;
-        else document.getElementById('zipLink').style.display = 'none';
+        // Clear grid first
+        thumbGrid.innerHTML = '';
+
+        // Show thumbnails one by one with small delay for effect
+        for (let i = 0; i < currentPreviews.length; i++) {
+          const preview = currentPreviews[i];
+          const div = document.createElement('div');
+          div.className = 'thumb-preview';
+          div.title = `Thumbnail ${i + 1}`;
+          const img = document.createElement('img');
+          img.src = preview.dataUrl;
+          img.alt = `Thumbnail ${i + 1}`;
+          div.appendChild(img);
+          thumbGrid.appendChild(div);
+
+          // Delay for visual effect (optional)
+          await new Promise(r => setTimeout(r, 300));
+        }
+
+        unlockDiv.style.display = 'block';
+
+        if (data.zip) {
+          zipLink.href = data.zip;
+          zipLink.style.display = 'inline-block';
+        } else {
+          zipLink.style.display = 'none';
+        }
 
       } catch (err) {
         thumbGrid.innerHTML = '<div style="color:#c00;font-size:1.1rem;">Error generating thumbnails. Please try again.</div>';
         console.error(err);
       }
-    };
+    });
 
-    // --- SECTION 8B: UNLOCK/DOWNLOAD BUTTONS ---
-    document.getElementById('unlockBtn').onclick = function() {
-      const singleLinksContainer = document.getElementById('singleLinks');
-      singleLinksContainer.innerHTML = '';
+    unlockBtn.addEventListener('click', () => {
+      singleLinks.innerHTML = '';
 
-      const previews = Array.from(document.querySelectorAll('#thumbGrid img'));
-      previews.forEach((img, index) => {
+      currentPreviews.forEach((preview, idx) => {
         const link = document.createElement('a');
-        link.href = img.src;
-        link.download = `SocialStorm-thumbnail-${index + 1}.png`;
-        link.textContent = `Download Thumbnail ${index + 1}`;
+        link.href = preview.dataUrl;
+        link.download = `SocialStorm-thumbnail-${idx + 1}.png`;
+        link.textContent = `Download Thumbnail ${idx + 1}`;
         link.className = 'btn';
         link.style.margin = '4px 0';
-        singleLinksContainer.appendChild(link);
+        singleLinks.appendChild(link);
       });
 
-      document.getElementById('downloadLinks').style.display = 'block';
-    };
-
-    // ==========================
-    // SECTION 9: READY FOR TOPIC-MATCHED IMAGES?
-    // ==========================
-    // When backend supports real photo backgrounds (from Pexels or your library),
-    // thumbnails will show the matching visual here automatically.
-    // No extra changes needed in this file!
+      downloadLinks.style.display = 'block';
+    });
   </script>
 </body>
 </html>

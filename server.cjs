@@ -348,7 +348,7 @@ app.get('/api/voices', (req, res) => {
 });
 
 // ==========================================
-// 12. /api/generate-script ENDPOINT (FULL LOGGING)
+// 12. /api/generate-script ENDPOINT
 // ==========================================
 app.post('/api/generate-script', async (req, res) => {
   console.log("[12] /api/generate-script endpoint called.");
@@ -363,7 +363,26 @@ app.post('/api/generate-script', async (req, res) => {
       console.error("[12] OpenAI unavailable.");
       return res.status(503).json({ success: false, error: "OpenAI unavailable." });
     }
-    const hookPrompt = `Write a viral short-form video script for the topic: "${idea}". Each sentence on its own line. Hook in first line. Max 60s total. Format:\n\nLine 1\nLine 2\n...`;
+
+    // FORCE hook in first line, no numbers, no quotes
+    const hookPrompt = `
+Write a viral short-form video script for the topic: "${idea}".
+Rules:
+- The FIRST sentence must introduce the topic in a punchy, curiosity-driven way.
+- DO NOT use "Line 1", "Line 2", or any line numbers.
+- DO NOT add quotes around the lines.
+- Each sentence must be on its own line.
+- Start with a strong hook sentence.
+- Keep it punchy, engaging, and suitable for TikTok or YouTube Shorts.
+- Limit the script to under 60 seconds total.
+Format (NO numbering or quotes):
+
+Your first punchy sentence here.
+Next sentence here.
+Another punchy line.
+Final sentence.
+`.trim();
+
     const response = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
@@ -374,13 +393,23 @@ app.post('/api/generate-script', async (req, res) => {
       max_tokens: 500,
       n: 1,
     });
+
     let script = response.choices[0].message.content.trim();
-    let lines = script.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
-    if (lines.length > 20) lines = lines.slice(0, 20);
-    script = lines.join('\n');
+
+    // STRIP line numbers and quotes from each line, but KEEP strong opener
+    let scriptLines = script.split(/\r?\n/).map(line =>
+      line.replace(/^line\s*\d+[:\-\.]?\s*/i, '')
+          .replace(/^["']|["']$/g, '')
+          .trim()
+    ).filter(line => line.length > 0);
+
+    // If the first line is somehow NOT a hook, keep as is — you want it!
+    script = scriptLines.join('\n');
+
     const viralMeta = await generateViralMetadata(script);
     console.log("[12] Script generated:", script);
     console.log("[12] Metadata:", viralMeta);
+
     return res.json({
       success: true,
       script,

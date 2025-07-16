@@ -116,7 +116,6 @@ console.log('[6] Cloudflare R2 S3 client configured. Bucket:', process.env.R2_BU
 // 7. HELPERS, CLIP SOURCING, VOICES, LOGGING
 // ==========================================
 
-const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const stringSimilarity = require('string-similarity'); // Ensure in package.json!

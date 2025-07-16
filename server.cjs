@@ -675,36 +675,37 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 });
 
 
+// ...end of Section 14...
+
 // ==========================================
-// Helper: generateSceneAudio (Polly + ElevenLabs)
+// generateSceneAudio helper (Polly + ElevenLabs)
 // ==========================================
 async function generateSceneAudio(sceneText, voice) {
-  // List of ElevenLabs voice IDs — add more as needed
   const elevenLabsIds = new Set([
-    "ZthjuvLPty3kTMaNKVKb", "6F5Zhi321D3Oq7v1oNT4", "p2ueywPKFXYa6hdYfSIJ", "EXAVITQu4vr4xnSDxMaL", "FUfBrNit0NNZAwb58KWH",
-    "xctasy8XvGp2cVO9HL9k", "goT3UYdM9bhm0n2lmKQx", "19STyYD15bswVz51nqLf", "2h7ex7B1yGrkcLFI8zUO", "xNtG3W2oqJs0cJZuTyBc",
-    "IP2syKL31S2JthzSSfZH", "WLjZnm4PkNmYtNCyiCq8", "zA6D7RyKdc2EClouEMkP", "RCQHZdatZm4oG3N6Nwme", "RBknfnzK8KHNwv44gIrh",
-    "GL7nH05mDrxcH1JPJK5T"
+    // your ElevenLabs IDs...
   ]);
   const isElevenLabs = elevenLabsIds.has(voice);
 
   const audioOut = path.join(__dirname, 'tmp', `scene_${Date.now()}_${Math.random().toString(36).substr(2,6)}.mp3`);
+  await fs.promises.mkdir(path.dirname(audioOut), { recursive: true }); // <-- This line here
 
   try {
     if (isElevenLabs) {
-      console.log(`[generateSceneAudio] Using ElevenLabs for voice: ${voice}`);
       await synthesizeWithElevenLabs(sceneText, voice, audioOut);
       return audioOut;
     } else {
-      console.log(`[generateSceneAudio] Using Polly for voice: ${voice}`);
       await synthesizeWithPolly(sceneText, voice, audioOut);
       return audioOut;
     }
   } catch (err) {
-    console.error(`[generateSceneAudio] TTS error for voice ${voice}:`, err);
     throw new Error("Audio generation failed: " + err.message);
   }
 }
+
+// ==========================================
+// 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
+// ==========================================
+
 
 
 // ==========================================

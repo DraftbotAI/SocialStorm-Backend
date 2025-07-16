@@ -11,6 +11,7 @@ console.log('[1] Canvas and JSZip modules loaded.');
 // ==========================================
 // 2. DIRECTORY DEBUGGING (DEV ONLY)
 // ==========================================
+
 const fs = require('fs');
 const path = require('path');
 console.log('[2] Working directory:', __dirname);
@@ -116,9 +117,8 @@ console.log('[6] Cloudflare R2 S3 client configured. Bucket:', process.env.R2_BU
 // 7. HELPERS, CLIP SOURCING, VOICES, LOGGING
 // ==========================================
 
-const path = require('path');
-const axios = require('axios');
-const stringSimilarity = require('string-similarity'); // Ensure in package.json!
+// --- REMOVED duplicate requires for axios and stringSimilarity ---
+// These are already imported once in Section 3, so no repeats here.
 
 // === String & subject helpers ===
 function stripEmojis(str) {
@@ -323,6 +323,7 @@ console.log('[7] All helper utilities, clip finders, and voices loaded.');
 // Make sure these are in your package.json dependencies:
 // "axios": "^1.6.0",
 // "string-similarity": "^4.0.4"
+
 
 
 

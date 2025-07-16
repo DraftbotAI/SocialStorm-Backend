@@ -213,6 +213,119 @@ function pickMusicFile(moodFolder) {
   console.log(`[7] pickMusicFile selected: ${chosen}`);
   return path.join(absPath, chosen);
 }
+
+// ===== UNIVERSAL BEST-CLIP FINDER (R2 → PEXELS → PIXABAY → GENERIC) =====
+
+const stringSimilarity = require('string-similarity');
+const R2_CLIP_PREFIX = 'clips/'; // adjust if your R2 videos are under another path
+const R2_CACHE_FILE = path.join(__dirname, 'cache', 'r2-clip-list.json');
+
+// Utility: fetch and cache R2 clip list (to avoid slow API calls for every scene)
+async function getR2ClipList(safe = false) {
+  try {
+    if (fs.existsSync(R2_CACHE_FILE)) {
+      const age = Date.now() - fs.statSync(R2_CACHE_FILE).mtimeMs;
+      if (age < 5 * 60 * 1000) // cache is fresh for 5 min
+        return JSON.parse(fs.readFileSync(R2_CACHE_FILE, 'utf8'));
+    }
+    // List objects from R2
+    const data = await r2Client.send(new ListObjectsV2Command({
+      Bucket: process.env.R2_BUCKET,
+      Prefix: R2_CLIP_PREFIX
+    }));
+    const clipList = (data.Contents || []).map(obj => obj.Key);
+    fs.mkdirSync(path.dirname(R2_CACHE_FILE), { recursive: true });
+    fs.writeFileSync(R2_CACHE_FILE, JSON.stringify(clipList));
+    return clipList;
+  } catch (err) {
+    if (!safe) throw err;
+    console.warn('[7] getR2ClipList: error or unavailable, returning empty:', err.message);
+    return [];
+  }
+}
+
+// Main Helper: find the best available clip for a scene, searching R2, then Pexels, then Pixabay, then fallback
+async function findBestClipForScene(sceneText, workDir) {
+  const mainSubject = await extractMainSubject(sceneText);
+  const keywords = [mainSubject, ...sanitizeQuery(sceneText).split(' ').slice(0,2), 'nature', 'animal', 'background'];
+  let triedSources = [];
+
+  // 1. R2 (Cloudflare) search (fuzzy match)
+  try {
+    const clipList = await getR2ClipList(true);
+    for (let kw of keywords) {
+      // Look for best fuzzy match among all R2 clip filenames
+      const names = clipList.map(key => key.toLowerCase());
+      const best = stringSimilarity.findBestMatch(kw.toLowerCase(), names);
+      if (best.bestMatch.rating > 0.28) { // low threshold to ensure *something* matches
+        const key = clipList[best.bestMatchIndex];
+        triedSources.push(`R2:${key}`);
+        // Download to workDir for processing
+        const r2Dest = path.join(workDir, path.basename(key));
+        await downloadFromR2ToFile(key, r2Dest);
+        console.log(`[7] findBestClipForScene: Using R2 clip: ${key}`);
+        return r2Dest;
+      }
+    }
+  } catch (err) {
+    console.warn(`[7] R2 search failed:`, err.message);
+  }
+
+  // 2. Pexels search (by keyword)
+  try {
+    for (let kw of keywords) {
+      const pexelsPath = await getClipFromPexels(kw, workDir);
+      if (pexelsPath) {
+        triedSources.push(`Pexels:${kw}`);
+        console.log(`[7] findBestClipForScene: Using Pexels clip for "${kw}"`);
+        return pexelsPath;
+      }
+    }
+  } catch (err) {
+    console.warn(`[7] Pexels search failed:`, err.message);
+  }
+
+  // 3. Pixabay search (by keyword)
+  try {
+    for (let kw of keywords) {
+      const pixabayPath = await getClipFromPixabay(kw, workDir);
+      if (pixabayPath) {
+        triedSources.push(`Pixabay:${kw}`);
+        console.log(`[7] findBestClipForScene: Using Pixabay clip for "${kw}"`);
+        return pixabayPath;
+      }
+    }
+  } catch (err) {
+    console.warn(`[7] Pixabay search failed:`, err.message);
+  }
+
+  // 4. Local fallback (just in case)
+  try {
+    const localFallbackDir = path.join(__dirname, 'clips');
+    if (fs.existsSync(localFallbackDir)) {
+      const files = fs.readdirSync(localFallbackDir).filter(f => f.endsWith('.mp4'));
+      if (files.length) {
+        const chosen = files[Math.floor(Math.random() * files.length)];
+        console.log(`[7] findBestClipForScene: Using random local fallback: ${chosen}`);
+        return path.join(localFallbackDir, chosen);
+      }
+    }
+  } catch (err) {
+    console.warn(`[7] Local fallback search failed:`, err.message);
+  }
+
+  // 5. Still nothing? Throw clear error!
+  console.error(`[7] findBestClipForScene: FAILED for scene: "${sceneText}". Tried:`, triedSources);
+  return null;
+}
+
+// You must implement these (or import from your pexels-helper etc):
+//  - downloadFromR2ToFile(r2Key, dest)
+//  - getClipFromPexels(keyword, workDir)
+//  - getClipFromPixabay(keyword, workDir)
+// If you want plug-and-play samples for those, just ask!
+
+
 // ==========================================
 // 8. VIRAL METADATA ENGINE (ENHANCED FOR VIRAL PERFORMANCE)
 // ==========================================
@@ -730,15 +843,6 @@ app.post('/api/generate-video', async (req, res) => {
       const workDir = path.join(__dirname, 'tmp', uuidv4());
       fs.mkdirSync(workDir, { recursive: true });
       const scenes = [];
-      const usedUrls = new Set();
-      const usedIds = new Set();
-
-      // Fallbacks for clip search (if no match found)
-      const fallbackQueries = [
-        "nature", "background", "city", "abstract", "travel", "people", "pattern", "wallpaper"
-      ];
-
-      let mediaFailCount = 0;
 
       // --- Helper: synthesize TTS with Polly or ElevenLabs ---
       async function synthesizeTTS(text, voiceId, outFile) {
@@ -793,55 +897,11 @@ app.post('/api/generate-video', async (req, res) => {
           await synthesizeTTS(sceneText, voice, audioPath);
           console.log(`[15][${jobId}] Scene ${i + 1} TTS audio generated: ${audioPath}`);
 
-          // --- 2. Find/choose a video clip for this scene (decoupled from metadata) ---
-          let clipPath = null;
-          let foundClip = false;
-          let searchTries = 0;
-          let searchTerm = sceneText;
-
-          // Try: local library → Pexels → Pixabay → fallback query
-          // 1. Local search (user’s own video vault logic here)
-          try {
-            clipPath = await findLocalClipForScene(sceneText); // implement this function for your system
-            if (clipPath) foundClip = true;
-          } catch (e) {
-            console.warn(`[15][${jobId}] No local clip found for scene: "${sceneText}"`);
+          // --- 2. Find best-available video clip for this scene ---
+          const clipPath = await findBestClipForScene(sceneText, workDir);
+          if (!clipPath) {
+            throw new Error(`No video clip found for scene: "${sceneText}" (even after all sources)`);
           }
-
-          // 2. If not found, try Pexels
-          if (!foundClip) {
-            try {
-              clipPath = await getClipFromPexels(sceneText);
-              if (clipPath) foundClip = true;
-            } catch (e) {
-              console.warn(`[15][${jobId}] No Pexels clip found for scene: "${sceneText}"`);
-            }
-          }
-
-          // 3. If not found, try Pixabay
-          if (!foundClip) {
-            try {
-              clipPath = await getClipFromPixabay(sceneText);
-              if (clipPath) foundClip = true;
-            } catch (e) {
-              console.warn(`[15][${jobId}] No Pixabay clip found for scene: "${sceneText}"`);
-            }
-          }
-
-          // 4. If all fails, use a fallback generic search
-          if (!foundClip) {
-            try {
-              let fallbackTerm = fallbackQueries[i % fallbackQueries.length];
-              clipPath = await getClipFromPexels(fallbackTerm);
-              if (clipPath) foundClip = true;
-              else throw new Error('No fallback clip found');
-            } catch (e) {
-              console.error(`[15][${jobId}] No fallback clip found for scene: "${sceneText}"`);
-              mediaFailCount++;
-              throw new Error(`No video clip found for scene: "${sceneText}"`);
-            }
-          }
-
           console.log(`[15][${jobId}] Scene ${i + 1} video clip selected: ${clipPath}`);
 
           // --- 3. Combine audio & video into a scene file ---

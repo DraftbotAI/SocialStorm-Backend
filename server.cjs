@@ -85,157 +85,35 @@ const s3 = new S3({
   signatureVersion: 'v4',
   region: 'us-east-1',
 });
-console.log('[6] Cloudflare R2 S3 client configured.');
+console.log('[6] Cloudflare R2 S3 client configured. Bucket:', process.env.R2_BUCKET);
 
 // ==========================================
 // 7. HELPERS
 // ==========================================
-async function downloadToFile(url, dest) {
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const w = fs.createWriteStream(dest);
-  console.log(`[7] downloadToFile: Downloading from ${url} to ${dest}`);
-  try {
-    const r = await axios.get(url, { responseType: 'stream' });
-    r.data.pipe(w);
-    return new Promise((res, rej) => w.on('finish', () => {
-      console.log(`[7] downloadToFile: Finished writing to ${dest}`);
-      res();
-    }).on('error', (err) => {
-      console.error(`[7] downloadToFile error for ${url} → ${dest}:`, err);
-      rej(err);
-    }));
-  } catch (err) {
-    console.error(`[7] downloadToFile AXIOS ERROR for ${url}:`, err);
-    throw err;
-  }
-}
-function sanitizeQuery(s, max=12) {
-  const stop = new Set(['and','the','with','into','for','a','to','of','in']);
-  const sanitized = s.replace(/["“”‘’.,!?;]/g,'')
-    .split(/\s+/)
-    .filter(w => !stop.has(w.toLowerCase()))
-    .slice(0, max)
-    .join(' ');
-  console.log(`[7] sanitizeQuery result: "${sanitized}"`);
-  return sanitized;
-}
-function stripEmojis(str) {
-  const noEmoji = str.replace(/\p{Extended_Pictographic}/gu, '');
-  if (str !== noEmoji) console.log('[7] stripEmojis removed emojis.');
-  return noEmoji;
-}
-async function extractMainSubject(script) {
-  try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const out = await openai.chat.completions.create({
-      model:'gpt-3.5-turbo',
-      messages:[
-        { role:'system', content:'Extract the ONE main subject of this script in 1-3 words, lowercase, no hashtags or punctuation. Only return the subject.' },
-        { role:'user', content: script }
-      ],
-      temperature: 0.2
-    });
-    let subject = out.choices[0].message.content.trim().toLowerCase();
-    if (subject.includes('\n')) subject = subject.split('\n')[0].trim();
-    const cleaned = subject.replace(/[^a-z0-9 ]+/gi, '').trim();
-    console.log(`[7] extractMainSubject: "${cleaned}"`);
-    return cleaned;
-  } catch (err) {
-    console.warn('[7] extractMainSubject fallback:', err.message);
-    return sanitizeQuery(script).split(' ')[0] || 'topic';
-  }
-}
-
-// ===== MUSIC MOOD MATCHING & PICKER =====
-const MUSIC_ROOT = path.join(__dirname, 'frontend', 'assets', 'music_library');
-
-const moodKeywords = [
-  { mood: 'spooky_creepy_mystery_horror',   keywords: ['lore', 'mystery', 'ghost', 'scary', 'creepy', 'paranormal', 'dark'] },
-  { mood: 'science_tech_futuristic',        keywords: ['science', 'technology', 'ai', 'robot', 'future', 'futuristic'] },
-  { mood: 'action_sports_intense',          keywords: ['action', 'fight', 'sports', 'extreme', 'race', 'speed'] },
-  { mood: 'dramatic_tense_suspense',        keywords: ['suspense', 'tense', 'drama', 'danger', 'survive'] },
-  { mood: 'cinematic_epic_adventure',       keywords: ['epic', 'adventure', 'quest', 'legend', 'battle', 'cinematic'] },
-  { mood: 'fantasy_magical',                keywords: ['fantasy', 'magic', 'myth', 'dragon', 'wizard', 'magical'] },
-  { mood: 'motivation_inspiration_uplifting',keywords: ['motivation', 'inspire', 'uplift', 'success', 'dream', 'hope'] },
-  { mood: 'happy_summer',                   keywords: ['summer', 'happy', 'sun', 'beach', 'vacation', 'fun'] },
-  { mood: 'funny_quirky_whimsical',         keywords: ['funny', 'quirky', 'weird', 'strange', 'whimsical', 'silly'] },
-  { mood: 'retro_8-bit_gaming',             keywords: ['game', 'retro', '8-bit', 'arcade', 'video game'] },
-  { mood: 'news_documentary_neutral',       keywords: ['news', 'documentary', 'report', 'neutral', 'journalism'] },
-  { mood: 'corporate_educational_explainer',keywords: ['corporate', 'business', 'office', 'explainer', 'education', 'learning'] },
-  { mood: 'lofi_chill_ambient',             keywords: ['lofi', 'chill', 'relax', 'calm', 'study', 'ambient'] },
-  { mood: 'nature_ambient_relaxing',        keywords: ['nature', 'animal', 'forest', 'water', 'mountain', 'relax'] },
-  { mood: 'sad_emotional_reflective',       keywords: ['sad', 'emotional', 'cry', 'reflect', 'loss', 'goodbye'] },
-  { mood: 'upbeat_energetic_pop',           keywords: ['pop', 'energy', 'upbeat', 'dance', 'party'] },
-  { mood: 'historical',                     keywords: ['history', 'historical', 'ancient', 'past', 'event'] },
-];
-
-async function guessMusicMood(text) {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const prompt = `
-You are a YouTube video scene music selector. Choose the single best background music mood for this line, based on the genres in this list:
-${moodKeywords.map(m => `- ${m.mood}`).join('\n')}
-For the following scene, output ONLY the exact folder name from the list above. NO extra words, no explanation.
-
-SCENE: "${text}"
-Mood:`;
-  try {
-    const out = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      max_tokens: 8,
-    });
-    const mood = out.choices[0].message.content.trim();
-    if (moodKeywords.find(m => m.mood === mood)) {
-      console.log(`[7] guessMusicMood detected mood: ${mood}`);
-      return mood;
-    }
-    console.warn(`[7] guessMusicMood: model returned unknown mood "${mood}", using fallback.`);
-    return 'news_documentary_neutral';
-  } catch (err) {
-    console.warn('[7] guessMusicMood fallback:', err.message);
-    return 'news_documentary_neutral';
-  }
-}
-
-function pickMusicFile(moodFolder) {
-  const absPath = path.join(MUSIC_ROOT, moodFolder);
-  if (!fs.existsSync(absPath)) {
-    console.warn(`[7] pickMusicFile: folder does not exist: ${absPath}`);
-    return null;
-  }
-  const files = fs.readdirSync(absPath).filter(f => f.endsWith('.mp3'));
-  if (!files.length) {
-    console.warn(`[7] pickMusicFile: no mp3 files in ${absPath}`);
-    return null;
-  }
-  const chosen = files[Math.floor(Math.random() * files.length)];
-  console.log(`[7] pickMusicFile selected: ${chosen}`);
-  return path.join(absPath, chosen);
-}
-
-// ===== UNIVERSAL BEST-CLIP FINDER (R2 → PEXELS → PIXABAY → GENERIC) =====
-
 const stringSimilarity = require('string-similarity');
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+
 const R2_CLIP_PREFIX = 'clips/'; // adjust if your R2 videos are under another path
 const R2_CACHE_FILE = path.join(__dirname, 'cache', 'r2-clip-list.json');
 
-// Utility: fetch and cache R2 clip list (to avoid slow API calls for every scene)
+// Utility: fetch and cache R2 clip list to avoid slow API calls each scene
 async function getR2ClipList(safe = false) {
   try {
     if (fs.existsSync(R2_CACHE_FILE)) {
       const age = Date.now() - fs.statSync(R2_CACHE_FILE).mtimeMs;
-      if (age < 5 * 60 * 1000) // cache is fresh for 5 min
+      if (age < 5 * 60 * 1000) // cache fresh for 5 minutes
         return JSON.parse(fs.readFileSync(R2_CACHE_FILE, 'utf8'));
     }
-    // List objects from R2
-    const data = await r2Client.send(new ListObjectsV2Command({
+    const data = await s3.send(new ListObjectsV2Command({
       Bucket: process.env.R2_BUCKET,
       Prefix: R2_CLIP_PREFIX
     }));
     const clipList = (data.Contents || []).map(obj => obj.Key);
     fs.mkdirSync(path.dirname(R2_CACHE_FILE), { recursive: true });
     fs.writeFileSync(R2_CACHE_FILE, JSON.stringify(clipList));
+    console.log(`[7] getR2ClipList: fetched and cached ${clipList.length} clips.`);
     return clipList;
   } catch (err) {
     if (!safe) throw err;
@@ -244,31 +122,43 @@ async function getR2ClipList(safe = false) {
   }
 }
 
-// Main Helper: find the best available clip for a scene, searching R2, then Pexels, then Pixabay, then fallback
+// Download a file from R2 by key to local path
+async function downloadFromR2ToFile(r2Key, dest) {
+  const params = { Bucket: process.env.R2_BUCKET, Key: r2Key };
+  try {
+    const data = await s3.getObject(params).promise();
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    await fs.promises.writeFile(dest, data.Body);
+    console.log(`[7] downloadFromR2ToFile: Downloaded ${r2Key} to ${dest}`);
+  } catch (err) {
+    console.error(`[7] downloadFromR2ToFile error: ${err.message}`);
+    throw err;
+  }
+}
+
+// Main helper: find best clip for a scene by R2, then Pexels, then Pixabay, then fallback
 async function findBestClipForScene(sceneText, workDir) {
   const mainSubject = await extractMainSubject(sceneText);
   const keywords = [mainSubject, ...sanitizeQuery(sceneText).split(' ').slice(0,2), 'nature', 'animal', 'background'];
   let triedSources = [];
 
-  // 1. R2 (Cloudflare) search (fuzzy match)
+  // 1. R2 Cloudflare search (fuzzy match)
   try {
     const clipList = await getR2ClipList(true);
+    const names = clipList.map(key => key.toLowerCase());
     for (let kw of keywords) {
-      // Look for best fuzzy match among all R2 clip filenames
-      const names = clipList.map(key => key.toLowerCase());
       const best = stringSimilarity.findBestMatch(kw.toLowerCase(), names);
-      if (best.bestMatch.rating > 0.28) { // low threshold to ensure *something* matches
+      if (best.bestMatch.rating > 0.28) { // low threshold to ensure some match
         const key = clipList[best.bestMatchIndex];
         triedSources.push(`R2:${key}`);
-        // Download to workDir for processing
-        const r2Dest = path.join(workDir, path.basename(key));
-        await downloadFromR2ToFile(key, r2Dest);
+        const localDest = path.join(workDir, path.basename(key));
+        await downloadFromR2ToFile(key, localDest);
         console.log(`[7] findBestClipForScene: Using R2 clip: ${key}`);
-        return r2Dest;
+        return localDest;
       }
     }
   } catch (err) {
-    console.warn(`[7] R2 search failed:`, err.message);
+    console.warn(`[7] R2 search failed: ${err.message}`);
   }
 
   // 2. Pexels search (by keyword)
@@ -282,7 +172,7 @@ async function findBestClipForScene(sceneText, workDir) {
       }
     }
   } catch (err) {
-    console.warn(`[7] Pexels search failed:`, err.message);
+    console.warn(`[7] Pexels search failed: ${err.message}`);
   }
 
   // 3. Pixabay search (by keyword)
@@ -296,10 +186,10 @@ async function findBestClipForScene(sceneText, workDir) {
       }
     }
   } catch (err) {
-    console.warn(`[7] Pixabay search failed:`, err.message);
+    console.warn(`[7] Pixabay search failed: ${err.message}`);
   }
 
-  // 4. Local fallback (just in case)
+  // 4. Local fallback directory
   try {
     const localFallbackDir = path.join(__dirname, 'clips');
     if (fs.existsSync(localFallbackDir)) {
@@ -311,19 +201,24 @@ async function findBestClipForScene(sceneText, workDir) {
       }
     }
   } catch (err) {
-    console.warn(`[7] Local fallback search failed:`, err.message);
+    console.warn(`[7] Local fallback search failed: ${err.message}`);
   }
 
-  // 5. Still nothing? Throw clear error!
-  console.error(`[7] findBestClipForScene: FAILED for scene: "${sceneText}". Tried:`, triedSources);
+  // 5. Final fail: log and return null
+  console.error(`[7] findBestClipForScene: FAILED for scene: "${sceneText}". Tried sources:`, triedSources);
   return null;
 }
 
-// You must implement these (or import from your pexels-helper etc):
-//  - downloadFromR2ToFile(r2Key, dest)
+// NOTE: You must implement or import these helper functions:
 //  - getClipFromPexels(keyword, workDir)
 //  - getClipFromPixabay(keyword, workDir)
-// If you want plug-and-play samples for those, just ask!
+
+module.exports = {
+  getR2ClipList,
+  downloadFromR2ToFile,
+  findBestClipForScene,
+};
+console.log('[7] Exported helpers: getR2ClipList, downloadFromR2ToFile, findBestClipForScene');
 
 
 // ==========================================
@@ -539,7 +434,7 @@ app.get('/api/voices', (req, res) => {
 });
 
 // ==========================================
-// 12. /api/generate-script ENDPOINT (IMPROVED FOR VOICE NARRATION)
+// 12. /api/generate-script ENDPOINT (IMPROVED FOR VOICE NARRATION WITH HOOK + LENGTH LIMIT)
 // ==========================================
 app.post('/api/generate-script', async (req, res) => {
   const { idea } = req.body;
@@ -551,14 +446,17 @@ app.post('/api/generate-script', async (req, res) => {
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+    // Prompt now asks for a strong hook first line + max 12 lines total (~1 minute)
     const scriptPrompt = `
-Generate a YouTube Shorts script for this topic, with each line being a punchy, voice-friendly fact or statement.
+Generate a YouTube Shorts script for this topic with the following rules:
+- The FIRST line must be a curiosity-piquing HOOK sentence (a question or teaser) that makes viewers want to watch, without revealing facts yet.
+- After the hook, provide up to 11 more short, punchy, voice-friendly facts or statements related to the topic.
+- Total lines should be 12 maximum.
 - No emojis, no lists, no numbers, no bullet points, just natural, crisp lines.
 - Lines must be short and easy for text-to-speech voices to read.
-- Do NOT use any numbered list, bullet list, or anything that sounds like a list unless user requests it.
 - No repeating words/phrases, no "as you know", no generic filler.
 - Each line must be interesting and unique.
-Format (no headers, just the raw script, one short line per line):
+Format (no headers, just raw script, one short line per line):
 
 THEME: ${idea}
 
@@ -569,17 +467,23 @@ SCRIPT:
       model: 'gpt-4o',
       messages: [{ role: 'system', content: scriptPrompt }],
       temperature: 0.92,
-      max_tokens: 400,
+      max_tokens: 450, // increased for 12 lines
     });
 
     let script = out.choices[0].message.content
-      .replace(/^[\d\-\.\*]+\s*/gm, '')
-      .replace(/\p{Extended_Pictographic}/gu, '')
+      .replace(/^[\d\-\.\*]+\s*/gm, '')      // clean numbered/bullets if any
+      .replace(/\p{Extended_Pictographic}/gu, '') // remove emojis
       .split('\n')
       .map(l => l.trim())
-      .filter(l => l.length > 2)
-      .join('\n');
+      .filter(l => l.length > 2);
 
+    // Enforce max 12 lines in case API returns more
+    if (script.length > 12) {
+      script = script.slice(0, 12);
+      console.log('[12] Script truncated to 12 lines for ~1 minute limit.');
+    }
+
+    script = script.join('\n');
     script = stripEmojis(script);
 
     const { viralTitle, viralDesc, viralTags } = await generateViralMetadata({
@@ -602,6 +506,7 @@ SCRIPT:
     if (!res.headersSent) return res.status(500).json({ success: false, error: err.message });
   }
 });
+
 // ==========================================
 // 13. SPARKIE (IDEA GENERATOR) ENDPOINT
 // ==========================================
@@ -844,6 +749,9 @@ app.post('/api/generate-video', async (req, res) => {
       fs.mkdirSync(workDir, { recursive: true });
       const scenes = [];
 
+      // Used clips tracking to prevent repeats
+      const usedClipPaths = [];
+
       // --- Helper: synthesize TTS with Polly or ElevenLabs ---
       async function synthesizeTTS(text, voiceId, outFile) {
         const pollyVoiceIds = pollyVoices.map(v => v.id);
@@ -897,12 +805,16 @@ app.post('/api/generate-video', async (req, res) => {
           await synthesizeTTS(sceneText, voice, audioPath);
           console.log(`[15][${jobId}] Scene ${i + 1} TTS audio generated: ${audioPath}`);
 
-          // --- 2. Find best-available video clip for this scene ---
-          const clipPath = await findBestClipForScene(sceneText, workDir);
-          if (!clipPath) {
+          // --- 2. Find best-available video clip for this scene, excluding used ones ---
+          const pickResult = await findBestClipForScene(sceneText, workDir, usedClipPaths);
+          if (!pickResult) {
             throw new Error(`No video clip found for scene: "${sceneText}" (even after all sources)`);
           }
+          const clipPath = pickResult;
           console.log(`[15][${jobId}] Scene ${i + 1} video clip selected: ${clipPath}`);
+
+          // Track used clips to avoid repeats
+          usedClipPaths.push(clipPath);
 
           // --- 3. Combine audio & video into a scene file ---
           const sceneOutPath = path.join(workDir, `scene-${i + 1}.mp4`);

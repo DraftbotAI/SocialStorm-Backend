@@ -431,74 +431,61 @@ app.get('/api/voices', (req, res) => {
 });
 
 // ==========================================
-// 12. /api/generate-script ENDPOINT (HOOK + 12 LINES + ERROR PROOF)
+// 12. /api/generate-script ENDPOINT
 // ==========================================
+
 app.post('/api/generate-script', async (req, res) => {
-  const { idea } = req.body;
-  console.log('[12] /api/generate-script called. idea:', idea);
+  const idea = (req.body.idea || "").trim();
+  console.log("[/api/generate-script] Incoming idea:", idea);
+
   if (!idea) {
-    console.warn('[12] No idea provided');
-    return res.status(400).json({ success: false, error: 'Idea required' });
+    console.log("[/api/generate-script] ❌ No idea provided.");
+    return res.status(400).json({ success: false, error: "No idea provided" });
   }
 
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const hookPrompt = `Write a viral short-form video script for the topic: "${idea}". 
+Make sure each sentence is on its own line. Hook the viewer in the first line.
+Keep it concise and engaging — under 60 seconds total. Format:\n\nLine 1\nLine 2\n...`;
 
-    const scriptPrompt = `
-Generate a viral YouTube Shorts script under 1 minute for this topic: "${idea}"
-
-Instructions:
-- Start with a strong hook line that makes people want to keep watching.
-- The next 11 lines should each be a punchy, fascinating, short fact or idea.
-- Each line must stand on its own and sound natural when read aloud.
-- Do NOT use numbers, emojis, bullets, or any list format.
-- No filler words like "as you know", "interestingly", etc.
-- Just 12 powerful lines total (1 hook + 11 facts).
-- No extra formatting, no labels — just the raw script, one line per line.
-
-SCRIPT:
-`.trim();
-
-    const out = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'system', content: scriptPrompt }],
-      temperature: 0.92,
-      max_tokens: 500,
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: "You write punchy short-form scripts for TikTok/YouTube Shorts." },
+        { role: "user", content: hookPrompt }
+      ],
+      temperature: 0.9,
     });
 
-    let script = out.choices[0].message.content
-      .replace(/^[\d\-\.\*]+\s*/gm, '')
-      .replace(/\p{Extended_Pictographic}/gu, '')
-      .split('\n')
-      .map(l => l.trim())
-      .filter(l => l.length > 2)
-      .slice(0, 12)
+    let script = response.choices?.[0]?.message?.content?.trim() || "";
+    console.log("[/api/generate-script] ✍️ Raw script output:\n", script);
+
+    // Clean + limit to ~20 lines max
+    script = script
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line && line.length > 0)
+      .slice(0, 20)
       .join('\n');
 
-    script = stripEmojis(script);
-    console.log('[12] Raw script:', script);
+    if (!script) throw new Error("Script generation failed");
 
-    const { viralTitle, viralDesc, viralTags } = await generateViralMetadata({
-      script, topic: idea, oldTitle: '', oldDesc: ''
-    });
+    const viralMeta = await generateViralMetadata(script);
 
-    console.log('[12] Metadata success. Title:', viralTitle);
+    console.log("[/api/generate-script] ✅ Success. Returning script and metadata.");
     return res.json({
       success: true,
       script,
-      title: viralTitle,
-      description: viralDesc,
-      hashtags: viralTags,
-      tags: viralTags,
+      title: viralMeta.title || "",
+      description: viralMeta.description || "",
+      tags: viralMeta.tags || "#shorts",
     });
-
   } catch (err) {
-    console.error('[12] SCRIPT ERR:', err);
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, error: err.message });
-    }
+    console.error("[/api/generate-script] ❌ Error:", err);
+    return res.status(500).json({ success: false, error: "Failed to generate script" });
   }
 });
+
 
 // ==========================================
 // 13. SPARKIE (IDEA GENERATOR) ENDPOINT

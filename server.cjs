@@ -63,17 +63,32 @@ console.log('[3] AWS Polly client configured.');
 
 
 // ==========================================
-// 4. PROGRESS TRACKING MAP
+// 4. PROGRESS TRACKING MAP & CLEANUP
 // ==========================================
+
 const progress = {};
-const JOB_TTL_MS = 5 * 60 * 1000;
+const JOB_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Schedule cleanup of a job's progress info after a delay.
+ * Logs cleanup activity.
+ * @param {string} jobId - Unique job ID to clean up
+ * @param {number} delay - Delay in milliseconds before cleanup (default 5 minutes)
+ */
 function cleanupJob(jobId, delay = JOB_TTL_MS) {
-  setTimeout(() => { 
-    delete progress[jobId]; 
-    console.log(`[4] Cleaned up job from progress map: ${jobId}`); 
+  console.log(`[4] Scheduling cleanup for job ${jobId} in ${delay/1000}s`);
+  setTimeout(() => {
+    if (progress[jobId]) {
+      delete progress[jobId];
+      console.log(`[4] Cleaned up job progress: ${jobId}`);
+    } else {
+      console.log(`[4] Job ${jobId} already cleaned or missing.`);
+    }
   }, delay);
-  console.log(`[4] Scheduled cleanup for job ${jobId} in ${delay/1000}s`);
 }
+
+module.exports = { progress, cleanupJob };
+
 
 
 
@@ -149,7 +164,7 @@ async function getR2ClipList(safe = false) {
     }).promise();
     const list = (Contents || []).map(obj => obj.Key).filter(Boolean).filter(k => k.match(/\.(mp4|mov|webm)$/));
     if (!list.length) throw new Error("No clips in R2");
-    console.log(`[7] getR2ClipList: Found ${list.length} in R2`);
+    console.log(`[7] getR2ClipList: Found ${list.length} clips in R2`);
     return list;
   } catch (err) {
     if (!safe) throw err;
@@ -179,7 +194,7 @@ async function findR2Clip(sceneText, usedClipPaths = []) {
     if (!available.length) return null;
     const names = available.map(key => key.toLowerCase());
     const mainSubject = extractMainSubject(sceneText);
-    const keywords = [mainSubject, ...sanitizeQuery(sceneText).split(' ').slice(0,2), 'nature', 'animal', 'background'];
+    const keywords = [mainSubject, ...sanitizeQuery(sceneText).split(' ').slice(0, 2), 'nature', 'animal', 'background'];
     let bestKey = null, bestScore = 0;
     for (let kw of keywords) {
       const { bestMatch, bestMatchIndex } = stringSimilarity.findBestMatch(kw.toLowerCase(), names);
@@ -202,31 +217,63 @@ async function findR2Clip(sceneText, usedClipPaths = []) {
 }
 
 // --- 2. PEXELS CLIP SEARCH & DOWNLOAD ---
+// Improved to better handle queries and selection with fallback and expanded query logic
 async function findPexelsClip(sceneText, workDir) {
   try {
-    const query = extractMainSubject(sceneText) || 'nature';
+    const baseQuery = extractMainSubject(sceneText) || 'nature';
     const apiKey = process.env.PEXELS_API_KEY;
     if (!apiKey) throw new Error('Missing PEXELS_API_KEY');
-    const url = `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=3`;
-    const resp = await axios.get(url, { headers: { Authorization: apiKey } });
-    const videos = resp.data.videos;
-    if (videos && videos.length) {
-      const vid = videos[0]; // Take the top result for now
-      const clipUrl = vid.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || vid.video_files[0]?.link;
-      if (clipUrl) {
-        const dest = path.join(workDir, `pexels_${Date.now()}.mp4`);
-        const writer = fs.createWriteStream(dest);
-        const response = await axios.get(clipUrl, { responseType: 'stream' });
-        await new Promise((resolve, reject) => {
-          response.data.pipe(writer);
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-        });
-        console.log(`[7] findPexelsClip: Downloaded ${clipUrl} -> ${dest}`);
-        return dest;
+
+    // Build multiple queries for fallback attempts
+    const queries = [baseQuery];
+    // Add some fallback related keywords heuristically
+    if (!baseQuery.toLowerCase().includes('nature')) {
+      queries.push('nature');
+    }
+    if (!baseQuery.toLowerCase().includes('animal')) {
+      queries.push('animal');
+    }
+
+    for (const query of queries) {
+      const url = `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=5`;
+      console.log(`[7] findPexelsClip: Searching Pexels for query: "${query}"`);
+      const resp = await axios.get(url, { headers: { Authorization: apiKey } });
+      const videos = resp.data.videos || [];
+      if (videos.length > 0) {
+        // Attempt to pick the clip best matching the sceneText keywords
+        // Score clips based on text similarity with video title and tags if available
+        let bestVideo = null;
+        let bestScore = 0;
+        const names = videos.map(v => (v.user?.name || '') + ' ' + (v.url || ''));
+        for (const vid of videos) {
+          const title = vid.user?.name || '';
+          const desc = vid.url || '';
+          const combined = title + " " + desc;
+          const sim = stringSimilarity.compareTwoStrings(sceneText.toLowerCase(), combined.toLowerCase());
+          if (sim > bestScore) {
+            bestScore = sim;
+            bestVideo = vid;
+          }
+        }
+        if (!bestVideo) bestVideo = videos[0]; // fallback to first if no score
+        const clipUrl = bestVideo.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || bestVideo.video_files[0]?.link;
+        if (clipUrl) {
+          const dest = path.join(workDir, `pexels_${Date.now()}.mp4`);
+          const writer = fs.createWriteStream(dest);
+          const response = await axios.get(clipUrl, { responseType: 'stream' });
+          await new Promise((resolve, reject) => {
+            response.data.pipe(writer);
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+          });
+          console.log(`[7] findPexelsClip: Downloaded clip for query "${query}" -> ${dest}`);
+          return dest;
+        }
+      } else {
+        console.warn(`[7] findPexelsClip: No videos found for query "${query}"`);
       }
     }
-    console.warn(`[7] findPexelsClip: No video found for "${query}"`);
+    console.warn(`[7] findPexelsClip: No video found for any query derived from "${sceneText}"`);
     return null;
   } catch (err) {
     console.warn(`[7] Pexels search/download failed: ${err.message}`);
@@ -240,12 +287,24 @@ async function findPixabayClip(sceneText, workDir) {
     const query = extractMainSubject(sceneText) || 'nature';
     const apiKey = process.env.PIXABAY_API_KEY;
     if (!apiKey) throw new Error('Missing PIXABAY_API_KEY');
-    const url = `https://pixabay.com/api/videos/?key=${apiKey}&q=${encodeURIComponent(query)}&per_page=3&safesearch=true`;
+    const url = `https://pixabay.com/api/videos/?key=${apiKey}&q=${encodeURIComponent(query)}&per_page=5&safesearch=true`;
+    console.log(`[7] findPixabayClip: Searching Pixabay for query: "${query}"`);
     const resp = await axios.get(url);
-    const hits = resp.data.hits;
-    if (hits && hits.length) {
-      const vid = hits[0];
-      const sources = Object.values(vid.videos || {});
+    const hits = resp.data.hits || [];
+    if (hits.length) {
+      // Choose clip with best matching URL or tags if available
+      let bestHit = null;
+      let bestScore = 0;
+      for (const vid of hits) {
+        const combined = (vid.tags || '') + ' ' + (vid.user || '') + ' ' + (vid.pageURL || '');
+        const sim = stringSimilarity.compareTwoStrings(sceneText.toLowerCase(), combined.toLowerCase());
+        if (sim > bestScore) {
+          bestScore = sim;
+          bestHit = vid;
+        }
+      }
+      if (!bestHit) bestHit = hits[0];
+      const sources = Object.values(bestHit.videos || {});
       const bestSource = sources.find(s => s.url) || sources[0];
       if (bestSource && bestSource.url) {
         const dest = path.join(workDir, `pixabay_${Date.now()}.mp4`);
@@ -256,11 +315,12 @@ async function findPixabayClip(sceneText, workDir) {
           writer.on('finish', resolve);
           writer.on('error', reject);
         });
-        console.log(`[7] findPixabayClip: Downloaded ${bestSource.url} -> ${dest}`);
+        console.log(`[7] findPixabayClip: Downloaded clip -> ${dest}`);
         return dest;
       }
+    } else {
+      console.warn(`[7] findPixabayClip: No videos found for query "${query}"`);
     }
-    console.warn(`[7] findPixabayClip: No video found for "${query}"`);
     return null;
   } catch (err) {
     console.warn(`[7] Pixabay search/download failed: ${err.message}`);
@@ -319,13 +379,6 @@ const pollyVoices = [
 ];
 console.log('[7] All helper utilities, clip finders, and voices loaded.');
 
-// === PACKAGE REQUIREMENTS ===
-// Make sure these are in your package.json dependencies:
-// "axios": "^1.6.0",
-// "string-similarity": "^4.0.4"
-
-
-
 
 // ==========================================
 // 8. VIRAL METADATA ENGINE (FULL LOGGING)
@@ -382,6 +435,7 @@ HASHTAGS: [hashtags]
     };
   }
 }
+
 
 // ==========================================
 // 9. SCRIPT-TO-SCENES SPLITTER (FULL LOGGING)
@@ -447,7 +501,6 @@ async function synthesizeWithPolly(text, voice, outFile) {
 
 
 
-
 // ==========================================
 // 11. /api/voices ENDPOINT (FULL LOGGING)
 // ==========================================
@@ -456,7 +509,6 @@ app.get('/api/voices', (req, res) => {
   const mappedCustomVoices = [...pollyVoices, ...elevenProVoices];
   res.json({ success: true, voices: mappedCustomVoices });
 });
-
 
 
 
@@ -538,7 +590,6 @@ Final sentence.
 
 
 
-
 // ==========================================
 // 13. SPARKIE (IDEA GENERATOR) ENDPOINT (FULL LOGGING)
 // ==========================================
@@ -569,10 +620,10 @@ app.post('/api/sparkie', async (req, res) => {
 
 
 
-
 // ==========================================
 // 14. /api/generate-thumbnails ENDPOINT (FULL LOGGING)
 // ==========================================
+const { createCanvas, registerFont } = require('canvas');
 app.post('/api/generate-thumbnails', async (req, res) => {
   console.log("[14] /api/generate-thumbnails endpoint called.");
   const { topic } = req.body;
@@ -606,7 +657,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 
-
 // ==========================================
 // 15. /api/generate-video ENDPOINT (R2 → Pexels → Pixabay → blank, FULL LOGGING)
 // ==========================================
@@ -628,53 +678,6 @@ function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise time
       if (!settled) { settled = true; clearTimeout(timer); reject(e); }
     });
   });
-}
-
-// --- NEW CLIP FINDER ---
-async function findBestClipForScene(sceneText, workDir, usedClipPaths) {
-  // 1. Try Cloudflare R2 first
-  try {
-    const clipPathR2 = await findR2Clip(sceneText, usedClipPaths);
-    if (clipPathR2) {
-      console.log(`[15] [CLIP] Found R2 match: ${clipPathR2}`);
-      return clipPathR2;
-    } else {
-      console.warn(`[15] [CLIP] No R2 match for: "${sceneText}"`);
-    }
-  } catch (err) {
-    console.warn(`[15] [CLIP] R2 search error: ${err.message}`);
-  }
-
-  // 2. Try Pexels API next
-  try {
-    const clipPathPexels = await findPexelsClip(sceneText, workDir);
-    if (clipPathPexels) {
-      console.log(`[15] [CLIP] Found Pexels match: ${clipPathPexels}`);
-      return clipPathPexels;
-    } else {
-      console.warn(`[15] [CLIP] No Pexels match for: "${sceneText}"`);
-    }
-  } catch (err) {
-    console.warn(`[15] [CLIP] Pexels search error: ${err.message}`);
-  }
-
-  // 3. Try Pixabay last
-  try {
-    const clipPathPixabay = await findPixabayClip(sceneText, workDir);
-    if (clipPathPixabay) {
-      console.log(`[15] [CLIP] Found Pixabay match: ${clipPathPixabay}`);
-      return clipPathPixabay;
-    } else {
-      console.warn(`[15] [CLIP] No Pixabay match for: "${sceneText}"`);
-    }
-  } catch (err) {
-    console.warn(`[15] [CLIP] Pixabay search error: ${err.message}`);
-  }
-
-  // 4. Fallback to blank.mp4
-  const blankPath = path.join(__dirname, 'assets', 'blank.mp4');
-  console.warn(`[15] [CLIP] Fallback: using blank.mp4 for "${sceneText}"`);
-  return blankPath;
 }
 
 app.post('/api/generate-video', async (req, res) => {
@@ -704,13 +707,13 @@ app.post('/api/generate-video', async (req, res) => {
         return;
       }
 
-      // Metadata: always generated, never blocks video creation
+      // Metadata: generate but don't block video creation
       let viralTitle = '', viralDesc = '', viralTags = '';
       try {
         const meta = await generateViralMetadata(script);
-        viralTitle = meta.title;
-        viralDesc = meta.description;
-        viralTags = meta.tags;
+        viralTitle = meta.viralTitle || meta.title || '';
+        viralDesc = meta.viralDesc || meta.description || '';
+        viralTags = meta.viralTags || meta.tags || '';
         console.log(`[15][${jobId}] Metadata:`, { viralTitle, viralDesc, viralTags });
       } catch (metaErr) {
         console.warn(`[15][${jobId}] Metadata error: ${metaErr.message}`);
@@ -733,7 +736,6 @@ app.post('/api/generate-video', async (req, res) => {
       const scenes = [];
       const usedClipPaths = [];
 
-      // --- SCENE LOOP ---
       for (let i = 0; i < steps.length; i++) {
         const sceneText = steps[i].trim();
         try {
@@ -746,35 +748,112 @@ app.post('/api/generate-video', async (req, res) => {
           console.log(`[15][${jobId}] ===== Scene ${i + 1}/${steps.length} START =====`);
           console.log(`[15][${jobId}] Scene text: "${sceneText}"`);
 
-          // --- 1. TTS (Polly/ElevenLabs) ---
-          const audioPath = path.join(workDir, `scene-${i + 1}.mp3`);
+          // --- 1. Generate TTS audio (Polly or ElevenLabs) ---
+          const audioMp3 = path.join(workDir, `scene-${i + 1}.mp3`);
           if (pollyVoices.map(v => v.id).includes(voice)) {
-            await synthesizeWithPolly(sceneText, voice, audioPath);
+            await synthesizeWithPolly(sceneText, voice, audioMp3);
           } else {
-            await synthesizeWithElevenLabs(sceneText, voice, audioPath);
+            await synthesizeWithElevenLabs(sceneText, voice, audioMp3);
           }
-          console.log(`[15][${jobId}] Scene ${i + 1} TTS audio generated: ${audioPath}`);
+          console.log(`[15][${jobId}] Scene ${i + 1} TTS audio generated: ${audioMp3}`);
+
+          // Convert mp3 to wav for padding
+          const audioWav = audioMp3.replace('.mp3', '.wav');
+          await ffmpegPromise(() =>
+            ffmpeg()
+              .input(audioMp3)
+              .audioChannels(1)
+              .audioFrequency(44100)
+              .output(audioWav)
+          );
+          console.log(`[15][${jobId}] Scene ${i + 1} converted to WAV: ${audioWav}`);
+
+          // Get duration of audio wav
+          let audioDur = 3.5;
+          try {
+            audioDur = await new Promise((resolve, reject) =>
+              ffmpeg.ffprobe(audioWav, (err, info) => err ? reject(err) : resolve(info.format.duration))
+            );
+          } catch (e) {
+            console.warn(`[15][${jobId}] ffprobe error, defaulting audioDur to 3.5`);
+          }
+          console.log(`[15][${jobId}] Scene ${i + 1} audio duration: ${audioDur}s`);
 
           // --- 2. Pick video clip ---
           let clipPath = await findBestClipForScene(sceneText, workDir, usedClipPaths);
           usedClipPaths.push(clipPath);
           console.log(`[15][${jobId}] Scene ${i + 1} video clip selected: ${clipPath}`);
 
-          // --- 3. Combine audio & video into scene file ---
-          const sceneOutPath = path.join(workDir, `scene-${i + 1}.mp4`);
+          // --- 3. Create lead and tail silent audio ---
+          const leadFile = path.join(workDir, `lead-${i + 1}.wav`);
+          const tailFile = path.join(workDir, `tail-${i + 1}.wav`);
+
+          await ffmpegPromise(() =>
+            ffmpeg()
+              .input('anullsrc=r=44100:cl=mono')
+              .inputFormat('lavfi')
+              .outputOptions(['-t 0.5'])
+              .save(leadFile)
+          );
+          await ffmpegPromise(() =>
+            ffmpeg()
+              .input('anullsrc=r=44100:cl=mono')
+              .inputFormat('lavfi')
+              .outputOptions(['-t 1.0'])
+              .save(tailFile)
+          );
+
+          // --- 4. Concatenate lead + main audio + tail to form final scene audio ---
+          const sceneAudioWav = path.join(workDir, `scene-audio-${i + 1}.wav`);
+          const audListFile = path.join(workDir, `audlist-${i + 1}.txt`);
+          fs.writeFileSync(
+            audListFile,
+            [leadFile, audioWav, tailFile].map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+          );
+
+          await ffmpegPromise(() =>
+            ffmpeg()
+              .input(audListFile)
+              .inputOptions(['-f concat', '-safe 0'])
+              .outputOptions(['-c:a pcm_s16le'])
+              .save(sceneAudioWav)
+          );
+
+          // --- 5. Convert concatenated wav to AAC (m4a) ---
+          const sceneAudioM4a = path.join(workDir, `scene-audio-${i + 1}.m4a`);
+          await ffmpegPromise(() =>
+            ffmpeg()
+              .input(sceneAudioWav)
+              .outputOptions(['-c:a aac', '-b:a 128k'])
+              .save(sceneAudioM4a)
+          );
+
+          // Scene length is audio duration plus padding
+          const sceneLen = audioDur + 1.5;
+
+          // --- 6. Loop video clip and combine with scene audio (trimmed to sceneLen) ---
           await ffmpegPromise(() =>
             ffmpeg()
               .input(clipPath)
-              .input(audioPath)
+              .inputOptions(['-stream_loop', '-1'])
+              .input(sceneAudioM4a)
+              .inputOptions([`-t ${sceneLen}`])
               .outputOptions([
-                '-c:v libx264', '-preset veryfast', '-crf 22',
-                '-map 0:v:0', '-map 1:a:0',
-                '-shortest', '-y'
+                '-map 0:v:0',
+                '-map 1:a:0',
+                '-c:v libx264',
+                '-c:a aac',
+                '-shortest',
+                '-r 30'
               ])
-              .save(sceneOutPath)
+              .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
+              .save(path.join(workDir, `scene-${i + 1}.mp4`))
           );
-          scenes.push(sceneOutPath);
-          console.log(`[15][${jobId}] Scene ${i + 1} mp4 built: ${sceneOutPath}`);
+
+          scenes.push(path.join(workDir, `scene-${i + 1}.mp4`));
+
+          console.log(`[15][${jobId}] Scene ${i + 1} video created and synced.`);
+
           console.log(`[15][${jobId}] ===== Scene ${i + 1}/${steps.length} COMPLETE =====`);
         } catch (err) {
           progress[jobId] = { percent: 100, status: "Failed: " + err.message, viralTitle, viralDesc, viralTags };
@@ -805,7 +884,8 @@ app.post('/api/generate-video', async (req, res) => {
             .outputOptions(['-c copy', '-y'])
             .save(stitchedVideoPath)
         );
-        // === DUMMY R2 UPLOAD (local save, you can wire your R2 here) ===
+
+        // Save locally, you can swap with actual R2 upload logic later
         const r2Key = `videos/${jobId}.mp4`;
         fs.copyFileSync(stitchedVideoPath, path.join(__dirname, 'tmp', `${jobId}.mp4`));
         progress[jobId] = {

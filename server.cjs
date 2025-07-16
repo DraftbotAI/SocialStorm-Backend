@@ -677,295 +677,139 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 // ==========================================
-// 15. /api/generate-video ENDPOINT (PARANOID FOOLPROOF BULLETPROOF VERSION)
+// 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
 // ==========================================
-function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise timed out') {
-  return new Promise((resolve, reject) => {
-    const proc = setupFn();
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        proc.kill && proc.kill('SIGKILL');
-        reject(new Error(errMsg));
-      }
-    }, timeoutMs);
-    proc.on('end', (...a) => {
-      if (!settled) { settled = true; clearTimeout(timer); resolve(...a); }
-    });
-    proc.on('error', (e) => {
-      if (!settled) { settled = true; clearTimeout(timer); reject(e); }
-    });
-  });
-}
 
 app.post('/api/generate-video', async (req, res) => {
-  console.log("[15] /api/generate-video endpoint called.");
   const jobId = uuidv4();
-  progress[jobId] = { percent: 0, status: 'starting' };
-  res.json({ jobId });
+  const startTime = Date.now();
+  const progressKey = jobId;
+  progressMap[progressKey] = { percent: 0, status: "Starting...", started: new Date().toISOString() };
+  console.log(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] Video generation started`);
 
-  (async () => {
-    let finished = false;
-    const watchdog = setTimeout(() => {
-      if (!finished && progress[jobId]) {
-        progress[jobId] = { percent: 100, status: "Failed: Timed out." };
-        cleanupJob(jobId);
-        console.error(`[15][${jobId}] TIMED OUT!`);
-      }
-    }, 10 * 60 * 1000);
-
-    try {
-      const { script, voice } = req.body;
-      if (!script || !voice) {
-        progress[jobId] = { percent: 100, status: 'Failed: script & voice required' };
-        cleanupJob(jobId, 10 * 1000);
-        finished = true;
-        clearTimeout(watchdog);
-        console.error(`[15][${jobId}] ERROR: script & voice required`);
-        return;
-      }
-
-      const meta = await generateViralMetadata(script);
-      const { title: viralTitle, description: viralDesc, tags: viralTags } = meta;
-      Object.assign(progress[jobId], { viralTitle, viralDesc, viralTags });
-      console.log(`[15][${jobId}] Metadata:`, meta);
-
-      const steps = splitScriptToScenes(script).slice(0, 20);
-      const totalSteps = steps.length + 5;
-      let currentStep = 0;
-
-      if (!steps.length) throw new Error('No scenes found in script.');
-
-      const workDir = path.join(__dirname, 'tmp', uuidv4());
-      fs.mkdirSync(workDir, { recursive: true });
-      const scenes = [];
-      const usedClipPaths = [];
-
-      for (let i = 0; i < steps.length; i++) {
-        const sceneText = steps[i].trim();
-        currentStep++;
-        progress[jobId] = {
-          percent: Math.round((currentStep / totalSteps) * 100),
-          status: `Building scene ${i + 1}/${steps.length}`,
-          viralTitle, viralDesc, viralTags
-        };
-        console.log(`\n=========================\n[15][${jobId}] Scene ${i + 1}/${steps.length} - "${sceneText}"`);
-
-        let audioMp3, audioWav, audioDur, sceneAudioWav, sceneAudioM4a, finalScenePath, fallbackHit = false;
-
-        try {
-          // === 1. TTS AUDIO ===
-          audioMp3 = path.join(workDir, `scene-${i + 1}.mp3`);
-          console.log(`[15][${jobId}][${i + 1}] 1. Generating TTS audio...`);
-          if (pollyVoices && pollyVoices.some(v => v.id === voice)) {
-            await synthesizeWithPolly(sceneText, voice, audioMp3);
-          } else {
-            await synthesizeWithElevenLabs(sceneText, voice, audioMp3);
-          }
-          // Paranoid check
-          if (!fs.existsSync(audioMp3) || fs.statSync(audioMp3).size < 1000) throw new Error(`TTS failed or file too small for ${audioMp3}`);
-          console.log(`[15][${jobId}][${i + 1}] TTS done: ${audioMp3}, ${fs.statSync(audioMp3).size} bytes.`);
-
-          // === 2. AUDIO WAV ===
-          audioWav = audioMp3.replace('.mp3', '.wav');
-          console.log(`[15][${jobId}][${i + 1}] 2. Converting mp3 to wav...`);
-          await ffmpegPromise(() =>
-            ffmpeg().input(audioMp3).audioChannels(1).audioFrequency(44100).output(audioWav)
-          );
-          if (!fs.existsSync(audioWav) || fs.statSync(audioWav).size < 1000) throw new Error(`WAV failed or file too small for ${audioWav}`);
-          console.log(`[15][${jobId}][${i + 1}] WAV done: ${audioWav}, ${fs.statSync(audioWav).size} bytes.`);
-
-          // === 3. AUDIO DURATION ===
-          audioDur = 3.5;
-          try {
-            audioDur = await new Promise((resolve, reject) =>
-              ffmpeg.ffprobe(audioWav, (err, info) => err ? reject(err) : resolve(info.format.duration))
-            );
-            if (!audioDur || isNaN(audioDur) || audioDur < 0.5) throw new Error('Invalid audio duration');
-            console.log(`[15][${jobId}][${i + 1}] Audio duration: ${audioDur}`);
-          } catch (e) {
-            console.warn(`[15][${jobId}][${i + 1}] ffprobe error, default audio duration used.`);
-            audioDur = 3.5;
-          }
-
-          // === 4. FIND BEST CLIP ===
-          let clipPath = null;
-          let clipSource = '';
-          console.log(`[15][${jobId}][${i + 1}] 4. Finding best clip...`);
-          try {
-            clipPath = await findBestClipForScene(sceneText, workDir, usedClipPaths);
-            if (clipPath && fs.existsSync(clipPath) && fs.statSync(clipPath).size > 5000) {
-              clipSource = 'findBestClipForScene';
-              console.log(`[15][${jobId}][${i + 1}] Clip found: ${clipPath}, ${fs.statSync(clipPath).size} bytes.`);
-            } else {
-              clipPath = null;
-              console.warn(`[15][${jobId}][${i + 1}] No valid clip found, using fallback chain.`);
-            }
-          } catch (clipErr) {
-            console.error(`[15][${jobId}][${i + 1}] Clip search error: ${clipErr.message}`);
-            clipPath = null;
-          }
-          // Fallbacks
-          if (!clipPath) {
-            const r2List = await getR2ClipList(true);
-            for (let key of r2List) {
-              const dest = path.join(workDir, `r2_any_${Date.now()}.mp4`);
-              await downloadFromR2ToFile(key, dest);
-              if (fs.existsSync(dest) && fs.statSync(dest).size > 5000) { clipPath = dest; clipSource = 'R2-any'; break; }
-            }
-            if (!clipPath && process.env.PEXELS_API_KEY) {
-              const pexelsFallback = await findPexelsClip('animal', workDir);
-              if (pexelsFallback && fs.existsSync(pexelsFallback) && fs.statSync(pexelsFallback).size > 5000) {
-                clipPath = pexelsFallback; clipSource = 'Pexels-fallback';
-              }
-            }
-            if (!clipPath && process.env.PIXABAY_API_KEY) {
-              const pixabayFallback = await findPixabayClip('animal', workDir);
-              if (pixabayFallback && fs.existsSync(pixabayFallback) && fs.statSync(pixabayFallback).size > 5000) {
-                clipPath = pixabayFallback; clipSource = 'Pixabay-fallback';
-              }
-            }
-            if (!clipPath) {
-              clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
-              clipSource = 'local-fallback';
-              fallbackHit = true;
-              console.warn(`[15][${jobId}][${i + 1}] Using fallback.mp4`);
-            }
-          }
-          usedClipPaths.push(clipPath);
-
-          // === 5. SILENCE LEAD & TAIL ===
-          const leadFile = path.join(workDir, `lead-${i + 1}.wav`);
-          const tailFile = path.join(workDir, `tail-${i + 1}.wav`);
-          console.log(`[15][${jobId}][${i + 1}] 5. Creating silence lead/tail...`);
-          await Promise.all([
-            ffmpegPromise(() =>
-              ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 0.5').save(leadFile)),
-            ffmpegPromise(() =>
-              ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 1.0').save(tailFile))
-          ]);
-          if (!fs.existsSync(leadFile) || !fs.existsSync(tailFile)) throw new Error('Lead/tail silence creation failed.');
-
-          // === 6. CONCAT AUDIO SEGMENTS ===
-          sceneAudioWav = path.join(workDir, `scene-audio-${i + 1}.wav`);
-          const audListFile = path.join(workDir, `audlist-${i + 1}.txt`);
-          fs.writeFileSync(
-            audListFile,
-            [leadFile, audioWav, tailFile].map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
-          );
-          console.log(`[15][${jobId}][${i + 1}] 6. Concatenating audio segments...`);
-          await ffmpegPromise(() =>
-            ffmpeg().input(audListFile).input('-f', 'concat').input('-safe', '0').outputOptions('-c:a pcm_s16le').save(sceneAudioWav)
-          );
-          if (!fs.existsSync(sceneAudioWav) || fs.statSync(sceneAudioWav).size < 1000) throw new Error(`Scene audio concat failed or too small: ${sceneAudioWav}`);
-
-          // === 7. AAC FINAL AUDIO ===
-          sceneAudioM4a = path.join(workDir, `scene-audio-${i + 1}.m4a`);
-          console.log(`[15][${jobId}][${i + 1}] 7. Converting to AAC audio...`);
-          await ffmpegPromise(() =>
-            ffmpeg().input(sceneAudioWav).outputOptions('-c:a aac', '-b:a 128k').save(sceneAudioM4a)
-          );
-          if (!fs.existsSync(sceneAudioM4a) || fs.statSync(sceneAudioM4a).size < 1000) throw new Error(`Scene audio AAC failed or too small: ${sceneAudioM4a}`);
-
-          // === 8. FINAL CLIP COMPOSITION ===
-          const sceneLen = audioDur + 1.5;
-          finalScenePath = path.join(workDir, `scene-${i + 1}.mp4`);
-          console.log(`[15][${jobId}][${i + 1}] 8. Composing final clip. Duration: ${sceneLen}, Clip: ${clipPath}`);
-          await ffmpegPromise(() =>
-            ffmpeg()
-              .input(clipPath).inputOptions('-stream_loop', '-1')
-              .input(sceneAudioM4a).inputOptions(`-t ${sceneLen}`)
-              .outputOptions('-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30')
-              .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
-              .save(finalScenePath)
-          );
-          if (!fs.existsSync(finalScenePath) || fs.statSync(finalScenePath).size < 10000) throw new Error(`Final scene video missing or too small: ${finalScenePath}`);
-
-          scenes.push(finalScenePath);
-          console.log(`[15][${jobId}] Scene ${i + 1} complete. Clip source: ${clipSource} | Used clip: ${clipPath}`);
-        } catch (sceneErr) {
-          // === FATAL FALLBACK: BLANK VIDEO FOR THIS SCENE ===
-          console.error(`[15][${jobId}] Scene ${i + 1} FATAL error: ${sceneErr.message}. Creating blank fallback scene.`);
-          fallbackHit = true;
-          try {
-            finalScenePath = path.join(workDir, `scene-fallback-${i + 1}.mp4`);
-            const fallbackClip = path.join(__dirname, 'assets', 'fallback.mp4');
-            const fallbackAudioMp3 = path.join(workDir, `fallback-${i + 1}.mp3`);
-            await ffmpegPromise(() =>
-              ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 3').save(fallbackAudioMp3)
-            );
-            await ffmpegPromise(() =>
-              ffmpeg()
-                .input(fallbackClip).inputOptions('-stream_loop', '-1')
-                .input(fallbackAudioMp3).inputOptions('-t', '3')
-                .outputOptions('-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30')
-                .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
-                .save(finalScenePath)
-            );
-            if (!fs.existsSync(finalScenePath) || fs.statSync(finalScenePath).size < 5000) throw new Error(`Fallback video for scene ${i + 1} failed: ${finalScenePath}`);
-            scenes.push(finalScenePath);
-            console.warn(`[15][${jobId}] Fallback scene for scene ${i + 1} created: ${finalScenePath}`);
-          } catch (fallbackErr) {
-            console.error(`[15][${jobId}] FATAL fallback for scene ${i + 1} also failed: ${fallbackErr.message}`);
-          }
-        }
-      }
-
-      // ======= PRE-CONCAT FILE CHECKS =======
-      console.log(`[15][${jobId}] ====== PRE-CONCAT FILE DUMP ======`);
-      scenes.forEach((file, idx) => {
-        let stat = null;
-        try { stat = fs.statSync(file); } catch {}
-        console.log(`[15][${jobId}] [CONCAT FILE ${idx + 1}] ${file} | ${stat ? stat.size + ' bytes' : 'MISSING!'}`);
-      });
-
-      if (scenes.some(file => !fs.existsSync(file) || fs.statSync(file).size < 5000)) {
-        console.error(`[15][${jobId}] ERROR: One or more scene files are missing or too small! Aborting concat.`);
-        progress[jobId] = { percent: 100, status: "Failed: Invalid scene files before concat." };
-        cleanupJob(jobId, 60000);
-        finished = true;
-        clearTimeout(watchdog);
-        return;
-      }
-
-      // === CONCATENATE ALL SCENES ===
-      currentStep++;
-      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Stitching scenes..." };
-      const concatListPath = path.join(workDir, "concat.txt");
-      fs.writeFileSync(concatListPath, scenes.map(s => `file '${s}'`).join('\n'));
-      console.log(`[15][${jobId}] 9. Concatenating all scenes using ffmpeg concat. List: ${concatListPath}`);
-      const stitchedVideoPath = path.join(workDir, 'final-stitched.mp4');
-      await ffmpegPromise(() =>
-        ffmpeg()
-          .input(concatListPath)
-          .input('-f', 'concat')
-          .input('-safe', '0')
-          .outputOptions('-c', 'copy')
-          .save(stitchedVideoPath)
-      );
-      if (!fs.existsSync(stitchedVideoPath) || fs.statSync(stitchedVideoPath).size < 20000) {
-        throw new Error('Final stitched video missing or too small after concat!');
-      }
-      console.log(`[15][${jobId}] 10. All scenes concatenated: ${stitchedVideoPath}, ${fs.statSync(stitchedVideoPath).size} bytes.`);
-
-      const r2Key = `videos/${jobId}.mp4`;
-      fs.copyFileSync(stitchedVideoPath, path.join(__dirname, 'tmp', `${jobId}.mp4`));
-      progress[jobId] = { percent: 100, status: "Done", key: r2Key, viralTitle, viralDesc, viralTags };
-      cleanupJob(jobId, 90000);
-      finished = true;
-      clearTimeout(watchdog);
-      console.log(`[15][${jobId}] VIDEO JOB COMPLETE`);
-    } catch (e) {
-      progress[jobId] = { percent: 100, status: "Failed: " + e.message };
-      cleanupJob(jobId, 60000);
-      finished = true;
-      clearTimeout(watchdog);
-      console.error(`[15][${jobId}] FATAL Error:`, e);
+  // Catch all top-level errors so we never leave a zombie job
+  try {
+    // 1. Extract request data
+    const { script, voice, paidUser, removeWatermark } = req.body;
+    if (!script || !voice) {
+      progressMap[progressKey] = { percent: 0, status: "Script or voice missing.", error: true };
+      return res.status(400).json({ success: false, error: "Script and voice are required." });
     }
-  })();
-});
 
+    // 2. Parse script into scenes
+    let scenes = [];
+    try {
+      scenes = parseScriptToScenes(script); // From Section 9
+      console.log(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] Script split into ${scenes.length} scenes.`);
+      if (!Array.isArray(scenes) || scenes.length === 0) throw new Error("Script parsing yielded no scenes.");
+    } catch (e) {
+      progressMap[progressKey] = { percent: 0, status: "Script parsing failed.", error: true };
+      console.error(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] ERROR parsing script: ${e.stack || e}`);
+      return res.status(400).json({ success: false, error: "Script parsing failed." });
+    }
+
+    // 3. Main processing: one scene at a time, classic for loop
+    let sceneClips = [];
+    for (let i = 0; i < scenes.length; i++) {
+      const sceneText = scenes[i];
+      const stepMsg = `[generate-video] [jobId: ${jobId}] Scene ${i+1}/${scenes.length}`;
+      try {
+        progressMap[progressKey] = { percent: Math.round((i / scenes.length) * 80), status: `Rendering scene ${i+1} of ${scenes.length}` };
+        console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Starting. Text: "${sceneText}"`);
+
+        // 3a. Generate audio
+        let audioPath;
+        try {
+          audioPath = await generateSceneAudio(sceneText, voice); // Should return a path
+          if (!audioPath) throw new Error("Audio path not returned");
+          console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Audio generated at ${audioPath}`);
+        } catch (err) {
+          console.error(`[15] [${new Date().toISOString()}] ${stepMsg}: AUDIO FAIL - ${err.stack || err}`);
+          progressMap[progressKey] = { percent: Math.round((i / scenes.length) * 80), status: `Audio failed on scene ${i+1}`, error: true };
+          throw new Error(`Audio generation failed for scene ${i+1}: ${err.message}`);
+        }
+
+        // 3b. Select video clip (cloud > local > Pexels)
+        let videoPath;
+        try {
+          videoPath = await findMatchingClip(sceneText); // Should return a path
+          if (!videoPath) throw new Error("No video path returned");
+          console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Video found at ${videoPath}`);
+        } catch (err) {
+          console.error(`[15] [${new Date().toISOString()}] ${stepMsg}: VIDEO FAIL - ${err.stack || err}`);
+          progressMap[progressKey] = { percent: Math.round((i / scenes.length) * 80), status: `Video failed on scene ${i+1}`, error: true };
+          throw new Error(`Video selection failed for scene ${i+1}: ${err.message}`);
+        }
+
+        // 3c. Combine audio and video for scene
+        let sceneOutput;
+        try {
+          sceneOutput = await combineAudioAndClip(audioPath, videoPath); // Should return a path
+          if (!sceneOutput) throw new Error("Scene output path missing");
+          console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Scene created at ${sceneOutput}`);
+          sceneClips.push(sceneOutput);
+        } catch (err) {
+          console.error(`[15] [${new Date().toISOString()}] ${stepMsg}: COMBINE FAIL - ${err.stack || err}`);
+          progressMap[progressKey] = { percent: Math.round((i / scenes.length) * 80), status: `Failed to combine audio/video on scene ${i+1}`, error: true };
+          throw new Error(`Scene combine failed for scene ${i+1}: ${err.message}`);
+        }
+
+      } catch (sceneError) {
+        // Immediately break loop on any unrecoverable scene error
+        progressMap[progressKey] = { percent: Math.round((i / scenes.length) * 80), status: `Stopped: ${sceneError.message}`, error: true };
+        console.error(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] FATAL scene error: ${sceneError.stack || sceneError}`);
+        break;
+      }
+    }
+
+    if (sceneClips.length !== scenes.length) {
+      // Not all scenes rendered — exit with error
+      progressMap[progressKey] = { percent: 100, status: "Generation failed: Not all scenes processed.", error: true };
+      console.error(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] ERROR: Only ${sceneClips.length} of ${scenes.length} scenes rendered. Aborting.`);
+      return res.status(500).json({ success: false, error: "Not all scenes rendered, check logs." });
+    }
+
+    // 4. Concat all scenes
+    let finalVideoPath = null;
+    try {
+      progressMap[progressKey] = { percent: 82, status: "Concatenating scenes…" };
+      finalVideoPath = await assembleFinalVideo(sceneClips); // Should return final video path
+      if (!finalVideoPath) throw new Error("Final video concat failed");
+      console.log(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] Final video assembled at ${finalVideoPath}`);
+    } catch (err) {
+      progressMap[progressKey] = { percent: 83, status: "Concat failed.", error: true };
+      console.error(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] CONCAT ERROR: ${err.stack || err}`);
+      return res.status(500).json({ success: false, error: "Concat failed." });
+    }
+
+    // 5. Add outro/watermark if required (optional)
+    // ... (Your branding/outro logic here, if needed)
+
+    // 6. Upload to Cloudflare R2 (or wherever)
+    let videoKey = null;
+    try {
+      progressMap[progressKey] = { percent: 89, status: "Uploading…" };
+      videoKey = await uploadVideoToR2(finalVideoPath); // Should return unique key
+      if (!videoKey) throw new Error("Upload failed");
+      console.log(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] Uploaded to R2 key: ${videoKey}`);
+    } catch (err) {
+      progressMap[progressKey] = { percent: 90, status: "Upload failed.", error: true };
+      console.error(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] UPLOAD ERROR: ${err.stack || err}`);
+      return res.status(500).json({ success: false, error: "Upload failed." });
+    }
+
+    // 7. All done
+    progressMap[progressKey] = { percent: 100, status: "Done!", key: videoKey, completed: new Date().toISOString() };
+    console.log(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] Done! All scenes processed, video ready. Total time: ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+
+    return res.json({ success: true, jobId, key: videoKey });
+
+  } catch (fatalError) {
+    progressMap[progressKey] = { percent: 100, status: `Fatal error: ${fatalError.message}`, error: true };
+    console.error(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] UNCAUGHT FATAL ERROR: ${fatalError.stack || fatalError}`);
+    return res.status(500).json({ success: false, error: "Fatal error in video generation.", details: fatalError.message });
+  }
+});
 
 
 

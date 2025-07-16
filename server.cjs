@@ -675,7 +675,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 // ==========================================
-// 15. /api/generate-video ENDPOINT (BULLETPROOF, ALWAYS PICKS BEST POSSIBLE CLIP)
+// 15. /api/generate-video ENDPOINT (BULLETPROOF, STITCHED FROM OLD + NEW)
 // ==========================================
 function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise timed out') {
   return new Promise((resolve, reject) => {
@@ -726,8 +726,8 @@ app.post('/api/generate-video', async (req, res) => {
 
       const meta = await generateViralMetadata(script);
       const { title: viralTitle, description: viralDesc, tags: viralTags } = meta;
-      console.log(`[15][${jobId}] Metadata:`, meta);
       Object.assign(progress[jobId], { viralTitle, viralDesc, viralTags });
+      console.log(`[15][${jobId}] Metadata:`, meta);
 
       const steps = splitScriptToScenes(script).slice(0, 20);
       const totalSteps = steps.length + 5;
@@ -751,7 +751,7 @@ app.post('/api/generate-video', async (req, res) => {
         console.log(`[15][${jobId}] Scene ${i + 1}/${steps.length} - "${sceneText}"`);
 
         try {
-          // 1. TTS AUDIO
+          // === 1. TTS AUDIO ===
           const audioMp3 = path.join(workDir, `scene-${i + 1}.mp3`);
           if (pollyVoices && pollyVoices.some(v => v.id === voice)) {
             await synthesizeWithPolly(sceneText, voice, audioMp3);
@@ -759,13 +759,13 @@ app.post('/api/generate-video', async (req, res) => {
             await synthesizeWithElevenLabs(sceneText, voice, audioMp3);
           }
 
-          // 2. AUDIO WAV
+          // === 2. AUDIO WAV ===
           const audioWav = audioMp3.replace('.mp3', '.wav');
           await ffmpegPromise(() =>
             ffmpeg().input(audioMp3).audioChannels(1).audioFrequency(44100).output(audioWav)
           );
 
-          // 3. AUDIO DURATION
+          // === 3. AUDIO DURATION ===
           let audioDur = 3.5;
           try {
             audioDur = await new Promise((resolve, reject) =>
@@ -775,62 +775,54 @@ app.post('/api/generate-video', async (req, res) => {
             console.warn(`[15][${jobId}] ffprobe error, default audio duration.`);
           }
 
-          // 4. FIND BEST CLIP (robust logic)
+          // === 4. FIND BEST CLIP (BULLETPROOF CHAIN) ===
           let clipPath = null;
           let clipSource = '';
+
+          // Try all sources in order, always log and fallback to a guaranteed .mp4
           try {
-            console.log(`[15][${jobId}] Looking for best clip for: "${sceneText}"`);
+            // 1. Try R2/local
             clipPath = await findBestClipForScene(sceneText, workDir, usedClipPaths);
             if (clipPath && fs.existsSync(clipPath)) {
               clipSource = 'findBestClipForScene';
-              console.log(`[15][${jobId}] Clip found via findBestClipForScene: ${clipPath}`);
-            }
-          } catch (e) {
-            console.warn(`[15][${jobId}] findBestClipForScene error: ${e.message}`);
-            clipPath = null;
-          }
-
-          // 4.1 If nothing found, try fallback to ANY R2, Pexels, Pixabay, or fallback asset
-          if (!clipPath || !fs.existsSync(clipPath)) {
-            // Try ALL R2
-            const r2List = await getR2ClipList(true);
-            for (let key of r2List) {
-              const dest = path.join(workDir, `r2_any_${Date.now()}_${Math.random().toString(36).slice(2)}.mp4`);
-              await downloadFromR2ToFile(key, dest);
-              if (fs.existsSync(dest)) {
-                clipPath = dest; clipSource = 'R2-any'; 
-                console.warn(`[15][${jobId}] Used random R2 fallback: ${dest}`);
-                break;
+            } else {
+              // 2. Try ANY R2
+              const r2List = await getR2ClipList(true);
+              for (let key of r2List) {
+                const dest = path.join(workDir, `r2_any_${Date.now()}.mp4`);
+                await downloadFromR2ToFile(key, dest);
+                if (fs.existsSync(dest)) { clipPath = dest; clipSource = 'R2-any'; break; }
               }
             }
-          }
-          if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PEXELS_API_KEY) {
-            try {
+            // 3. Try Pexels generic (animal)
+            if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PEXELS_API_KEY) {
               const pexelsFallback = await findPexelsClip('animal', workDir);
               if (pexelsFallback && fs.existsSync(pexelsFallback)) {
                 clipPath = pexelsFallback; clipSource = 'Pexels-fallback';
-                console.warn(`[15][${jobId}] Used Pexels generic fallback: ${pexelsFallback}`);
               }
-            } catch { }
-          }
-          if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PIXABAY_API_KEY) {
-            try {
+            }
+            // 4. Try Pixabay generic (animal)
+            if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PIXABAY_API_KEY) {
               const pixabayFallback = await findPixabayClip('animal', workDir);
               if (pixabayFallback && fs.existsSync(pixabayFallback)) {
                 clipPath = pixabayFallback; clipSource = 'Pixabay-fallback';
-                console.warn(`[15][${jobId}] Used Pixabay generic fallback: ${pixabayFallback}`);
               }
-            } catch { }
+            }
+            // 5. Final fallback: blank/fallback
+            if (!clipPath || !fs.existsSync(clipPath)) {
+              clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
+              clipSource = 'local-fallback';
+              console.warn(`[15][${jobId}] No clip found, using fallback.mp4`);
+            }
+          } catch (e) {
+            clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
+            clipSource = 'local-fallback-catch';
+            console.warn(`[15][${jobId}] Error in clip selection: ${e.message}, using fallback.mp4`);
           }
-          // FINAL ULTIMATE fallback
-          if (!clipPath || !fs.existsSync(clipPath)) {
-            clipPath = path.join(__dirname, 'assets', 'blank.mp4');
-            clipSource = 'local-blank';
-            console.error(`[15][${jobId}] *** FINAL BLANK fallback: using blank.mp4! ***`);
-          }
+
           usedClipPaths.push(clipPath);
 
-          // 5. SILENCE LEAD & TAIL
+          // === 5. SILENCE LEAD & TAIL ===
           const leadFile = path.join(workDir, `lead-${i + 1}.wav`);
           const tailFile = path.join(workDir, `tail-${i + 1}.wav`);
           await Promise.all([
@@ -840,7 +832,7 @@ app.post('/api/generate-video', async (req, res) => {
               ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 1.0').save(tailFile))
           ]);
 
-          // 6. CONCAT AUDIO SEGMENTS
+          // === 6. CONCAT AUDIO SEGMENTS ===
           const sceneAudioWav = path.join(workDir, `scene-audio-${i + 1}.wav`);
           const audListFile = path.join(workDir, `audlist-${i + 1}.txt`);
           fs.writeFileSync(
@@ -851,13 +843,13 @@ app.post('/api/generate-video', async (req, res) => {
             ffmpeg().input(audListFile).inputOptions('-f concat', '-safe 0').outputOptions('-c:a pcm_s16le').save(sceneAudioWav)
           );
 
-          // 7. AAC FINAL AUDIO
+          // === 7. AAC FINAL AUDIO ===
           const sceneAudioM4a = path.join(workDir, `scene-audio-${i + 1}.m4a`);
           await ffmpegPromise(() =>
             ffmpeg().input(sceneAudioWav).outputOptions('-c:a aac', '-b:a 128k').save(sceneAudioM4a)
           );
 
-          // 8. FINAL CLIP COMPOSITION
+          // === 8. FINAL CLIP COMPOSITION ===
           const sceneLen = audioDur + 1.5;
           await ffmpegPromise(() =>
             ffmpeg()
@@ -869,13 +861,30 @@ app.post('/api/generate-video', async (req, res) => {
           );
 
           scenes.push(path.join(workDir, `scene-${i + 1}.mp4`));
-          console.log(`[15][${jobId}] Scene ${i + 1} complete. Clip source: ${clipSource} | Path: ${clipPath}`);
+          console.log(`[15][${jobId}] Scene ${i + 1} complete. Clip source: ${clipSource} | Used clip: ${clipPath}`);
         } catch (sceneErr) {
-          throw new Error(`Scene ${i + 1} failed: ${sceneErr.message}`);
+          // On error: Always use fallback and continue to next scene!
+          console.error(`[15][${jobId}] Scene ${i + 1} failed: ${sceneErr.message}. Using fallback.mp4`);
+          const fallbackClip = path.join(__dirname, 'assets', 'fallback.mp4');
+          const fallbackLen = 5; // Arbitrary fallback duration
+          try {
+            await ffmpegPromise(() =>
+              ffmpeg()
+                .input(fallbackClip).inputOptions('-stream_loop', '-1')
+                .input(audioMp3).inputOptions(`-t ${fallbackLen}`)
+                .outputOptions('-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30')
+                .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
+                .save(path.join(workDir, `scene-${i + 1}.mp4`))
+            );
+            scenes.push(path.join(workDir, `scene-${i + 1}.mp4`));
+            usedClipPaths.push(fallbackClip);
+          } catch (fallbackErr) {
+            console.error(`[15][${jobId}] Fallback scene failed: ${fallbackErr.message}`);
+          }
         }
       }
 
-      // CONCATENATE ALL SCENES
+      // === CONCATENATE ALL SCENES ===
       currentStep++;
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Stitching scenes..." };
       const concatListPath = path.join(workDir, "concat.txt");
@@ -901,6 +910,7 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
+
 
 
 // ==========================================

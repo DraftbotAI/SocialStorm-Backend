@@ -675,7 +675,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 // ==========================================
-// 15. /api/generate-video ENDPOINT (BULLETPROOF, STITCHED FROM OLD + NEW)
+// 15. /api/generate-video ENDPOINT (DEBUG LOG VERSION)
 // ==========================================
 function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise timed out') {
   return new Promise((resolve, reject) => {
@@ -748,22 +748,27 @@ app.post('/api/generate-video', async (req, res) => {
           status: `Building scene ${i + 1}/${steps.length}`,
           viralTitle, viralDesc, viralTags
         };
+        console.log(`\n=========================`);
         console.log(`[15][${jobId}] Scene ${i + 1}/${steps.length} - "${sceneText}"`);
 
         try {
           // === 1. TTS AUDIO ===
           const audioMp3 = path.join(workDir, `scene-${i + 1}.mp3`);
+          console.log(`[15][${jobId}][${i + 1}] 1. About to synthesize TTS`);
           if (pollyVoices && pollyVoices.some(v => v.id === voice)) {
             await synthesizeWithPolly(sceneText, voice, audioMp3);
           } else {
             await synthesizeWithElevenLabs(sceneText, voice, audioMp3);
           }
+          console.log(`[15][${jobId}][${i + 1}] 2. TTS Done: ${audioMp3} Exists: ${fs.existsSync(audioMp3)}`);
 
           // === 2. AUDIO WAV ===
           const audioWav = audioMp3.replace('.mp3', '.wav');
+          console.log(`[15][${jobId}][${i + 1}] 3. About to convert mp3 to wav`);
           await ffmpegPromise(() =>
             ffmpeg().input(audioMp3).audioChannels(1).audioFrequency(44100).output(audioWav)
           );
+          console.log(`[15][${jobId}][${i + 1}] 4. Wav Done: ${audioWav} Exists: ${fs.existsSync(audioWav)}`);
 
           // === 3. AUDIO DURATION ===
           let audioDur = 3.5;
@@ -771,18 +776,18 @@ app.post('/api/generate-video', async (req, res) => {
             audioDur = await new Promise((resolve, reject) =>
               ffmpeg.ffprobe(audioWav, (err, info) => err ? reject(err) : resolve(info.format.duration))
             );
+            console.log(`[15][${jobId}][${i + 1}] 5. Audio duration: ${audioDur}`);
           } catch (e) {
-            console.warn(`[15][${jobId}] ffprobe error, default audio duration.`);
+            console.warn(`[15][${jobId}][${i + 1}] ffprobe error, default audio duration.`);
           }
 
           // === 4. FIND BEST CLIP (BULLETPROOF CHAIN) ===
           let clipPath = null;
           let clipSource = '';
-
-          // Try all sources in order, always log and fallback to a guaranteed .mp4
           try {
-            // 1. Try R2/local
+            console.log(`[15][${jobId}][${i + 1}] 6. About to find best video clip`);
             clipPath = await findBestClipForScene(sceneText, workDir, usedClipPaths);
+            console.log(`[15][${jobId}][${i + 1}] 7. Picked video: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
             if (clipPath && fs.existsSync(clipPath)) {
               clipSource = 'findBestClipForScene';
             } else {
@@ -793,6 +798,7 @@ app.post('/api/generate-video', async (req, res) => {
                 await downloadFromR2ToFile(key, dest);
                 if (fs.existsSync(dest)) { clipPath = dest; clipSource = 'R2-any'; break; }
               }
+              console.log(`[15][${jobId}][${i + 1}] 8. R2-any fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
             }
             // 3. Try Pexels generic (animal)
             if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PEXELS_API_KEY) {
@@ -800,6 +806,7 @@ app.post('/api/generate-video', async (req, res) => {
               if (pexelsFallback && fs.existsSync(pexelsFallback)) {
                 clipPath = pexelsFallback; clipSource = 'Pexels-fallback';
               }
+              console.log(`[15][${jobId}][${i + 1}] 9. Pexels-fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
             }
             // 4. Try Pixabay generic (animal)
             if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PIXABAY_API_KEY) {
@@ -807,24 +814,25 @@ app.post('/api/generate-video', async (req, res) => {
               if (pixabayFallback && fs.existsSync(pixabayFallback)) {
                 clipPath = pixabayFallback; clipSource = 'Pixabay-fallback';
               }
+              console.log(`[15][${jobId}][${i + 1}] 10. Pixabay-fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
             }
             // 5. Final fallback: blank/fallback
             if (!clipPath || !fs.existsSync(clipPath)) {
               clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
               clipSource = 'local-fallback';
-              console.warn(`[15][${jobId}] No clip found, using fallback.mp4`);
+              console.warn(`[15][${jobId}][${i + 1}] 11. No clip found, using fallback.mp4`);
             }
           } catch (e) {
             clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
             clipSource = 'local-fallback-catch';
-            console.warn(`[15][${jobId}] Error in clip selection: ${e.message}, using fallback.mp4`);
+            console.warn(`[15][${jobId}][${i + 1}] Error in clip selection: ${e.message}, using fallback.mp4`);
           }
-
           usedClipPaths.push(clipPath);
 
           // === 5. SILENCE LEAD & TAIL ===
           const leadFile = path.join(workDir, `lead-${i + 1}.wav`);
           const tailFile = path.join(workDir, `tail-${i + 1}.wav`);
+          console.log(`[15][${jobId}][${i + 1}] 12. Creating silence lead and tail`);
           await Promise.all([
             ffmpegPromise(() =>
               ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 0.5').save(leadFile)),
@@ -839,18 +847,21 @@ app.post('/api/generate-video', async (req, res) => {
             audListFile,
             [leadFile, audioWav, tailFile].map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
           );
+          console.log(`[15][${jobId}][${i + 1}] 13. Concatenating audio segments`);
           await ffmpegPromise(() =>
             ffmpeg().input(audListFile).inputOptions('-f concat', '-safe 0').outputOptions('-c:a pcm_s16le').save(sceneAudioWav)
           );
 
           // === 7. AAC FINAL AUDIO ===
           const sceneAudioM4a = path.join(workDir, `scene-audio-${i + 1}.m4a`);
+          console.log(`[15][${jobId}][${i + 1}] 14. Converting scene audio to AAC`);
           await ffmpegPromise(() =>
             ffmpeg().input(sceneAudioWav).outputOptions('-c:a aac', '-b:a 128k').save(sceneAudioM4a)
           );
 
           // === 8. FINAL CLIP COMPOSITION ===
           const sceneLen = audioDur + 1.5;
+          console.log(`[15][${jobId}][${i + 1}] 15. Composing final scene video, duration: ${sceneLen}, clip: ${clipPath}`);
           await ffmpegPromise(() =>
             ffmpeg()
               .input(clipPath).inputOptions('-stream_loop', '-1')
@@ -859,7 +870,7 @@ app.post('/api/generate-video', async (req, res) => {
               .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
               .save(path.join(workDir, `scene-${i + 1}.mp4`))
           );
-
+          console.log(`[15][${jobId}][${i + 1}] 16. Scene video done`);
           scenes.push(path.join(workDir, `scene-${i + 1}.mp4`));
           console.log(`[15][${jobId}] Scene ${i + 1} complete. Clip source: ${clipSource} | Used clip: ${clipPath}`);
         } catch (sceneErr) {
@@ -889,10 +900,12 @@ app.post('/api/generate-video', async (req, res) => {
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Stitching scenes..." };
       const concatListPath = path.join(workDir, "concat.txt");
       fs.writeFileSync(concatListPath, scenes.map(s => `file '${s}'`).join('\n'));
+      console.log(`[15][${jobId}] 17. Concatenating all scenes`);
       const stitchedVideoPath = path.join(workDir, 'final-stitched.mp4');
       await ffmpegPromise(() =>
         ffmpeg().input(concatListPath).inputOptions('-f concat', '-safe 0').outputOptions('-c copy').save(stitchedVideoPath)
       );
+      console.log(`[15][${jobId}] 18. All scenes concatenated`);
 
       const r2Key = `videos/${jobId}.mp4`;
       fs.copyFileSync(stitchedVideoPath, path.join(__dirname, 'tmp', `${jobId}.mp4`));

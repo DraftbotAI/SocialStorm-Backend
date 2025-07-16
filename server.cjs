@@ -431,31 +431,30 @@ app.get('/api/voices', (req, res) => {
 });
 
 // ==========================================
-// 12. /api/generate-script ENDPOINT (IMPROVED FOR VOICE NARRATION WITH HOOK + LENGTH LIMIT)
+// 12. /api/generate-script ENDPOINT (HOOK + 12 LINES + ERROR PROOF)
 // ==========================================
 app.post('/api/generate-script', async (req, res) => {
   const { idea } = req.body;
-  console.log('[12] /api/generate-script endpoint called. idea:', idea);
+  console.log('[12] /api/generate-script called. idea:', idea);
   if (!idea) {
-    console.warn('[12] /api/generate-script: Idea required');
+    console.warn('[12] No idea provided');
     return res.status(400).json({ success: false, error: 'Idea required' });
   }
+
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // Prompt now asks for a strong hook first line + max 12 lines total (~1 minute)
     const scriptPrompt = `
-Generate a YouTube Shorts script for this topic with the following rules:
-- The FIRST line must be a curiosity-piquing HOOK sentence (a question or teaser) that makes viewers want to watch, without revealing facts yet.
-- After the hook, provide up to 11 more short, punchy, voice-friendly facts or statements related to the topic.
-- Total lines should be 12 maximum.
-- No emojis, no lists, no numbers, no bullet points, just natural, crisp lines.
-- Lines must be short and easy for text-to-speech voices to read.
-- No repeating words/phrases, no "as you know", no generic filler.
-- Each line must be interesting and unique.
-Format (no headers, just raw script, one short line per line):
+Generate a viral YouTube Shorts script under 1 minute for this topic: "${idea}"
 
-THEME: ${idea}
+Instructions:
+- Start with a strong hook line that makes people want to keep watching.
+- The next 11 lines should each be a punchy, fascinating, short fact or idea.
+- Each line must stand on its own and sound natural when read aloud.
+- Do NOT use numbers, emojis, bullets, or any list format.
+- No filler words like "as you know", "interestingly", etc.
+- Just 12 powerful lines total (1 hook + 11 facts).
+- No extra formatting, no labels — just the raw script, one line per line.
 
 SCRIPT:
 `.trim();
@@ -464,30 +463,26 @@ SCRIPT:
       model: 'gpt-4o',
       messages: [{ role: 'system', content: scriptPrompt }],
       temperature: 0.92,
-      max_tokens: 450, // increased for 12 lines
+      max_tokens: 500,
     });
 
     let script = out.choices[0].message.content
-      .replace(/^[\d\-\.\*]+\s*/gm, '')      // clean numbered/bullets if any
-      .replace(/\p{Extended_Pictographic}/gu, '') // remove emojis
+      .replace(/^[\d\-\.\*]+\s*/gm, '')
+      .replace(/\p{Extended_Pictographic}/gu, '')
       .split('\n')
       .map(l => l.trim())
-      .filter(l => l.length > 2);
+      .filter(l => l.length > 2)
+      .slice(0, 12)
+      .join('\n');
 
-    // Enforce max 12 lines in case API returns more
-    if (script.length > 12) {
-      script = script.slice(0, 12);
-      console.log('[12] Script truncated to 12 lines for ~1 minute limit.');
-    }
-
-    script = script.join('\n');
     script = stripEmojis(script);
+    console.log('[12] Raw script:', script);
 
     const { viralTitle, viralDesc, viralTags } = await generateViralMetadata({
       script, topic: idea, oldTitle: '', oldDesc: ''
     });
 
-    console.log('[12] /api/generate-script: Success. Title:', viralTitle);
+    console.log('[12] Metadata success. Title:', viralTitle);
     return res.json({
       success: true,
       script,
@@ -495,12 +490,13 @@ SCRIPT:
       description: viralDesc,
       hashtags: viralTags,
       tags: viralTags,
-      oldTitle: '',
-      oldDesc: ''
     });
+
   } catch (err) {
     console.error('[12] SCRIPT ERR:', err);
-    if (!res.headersSent) return res.status(500).json({ success: false, error: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   }
 });
 

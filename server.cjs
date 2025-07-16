@@ -124,26 +124,21 @@ const s3 = new S3({
 });
 console.log('[6] Cloudflare R2 S3 client configured. Bucket:', process.env.R2_BUCKET);
 
-
-
-
-
 // ==========================================
 // 7. HELPERS, CLIP SOURCING, VOICES, LOGGING
 // ==========================================
-
-// --- REMOVED duplicate requires for axios and stringSimilarity ---
-// These are already imported once in Section 3, so no repeats here.
 
 // === String & subject helpers ===
 function stripEmojis(str) {
   if (!str) return '';
   return str.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD00-\uDDFF])/g, '');
 }
+
 function sanitizeQuery(str) {
   if (!str) return '';
   return str.replace(/[^a-zA-Z0-9 ]/g, '').toLowerCase();
 }
+
 function extractMainSubject(script) {
   if (!script || typeof script !== "string") return "video";
   const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
@@ -172,6 +167,7 @@ async function getR2ClipList(safe = false) {
     return [];
   }
 }
+
 async function downloadFromR2ToFile(r2Key, dest) {
   try {
     const { Body } = await s3.getObject({
@@ -187,226 +183,60 @@ async function downloadFromR2ToFile(r2Key, dest) {
     return null;
   }
 }
+
 async function findR2Clip(sceneText, usedClipPaths = []) {
-  try {
-    const clipList = await getR2ClipList(true);
-    const available = clipList.filter(k => !usedClipPaths.includes(k));
-    if (!available.length) return null;
-    const names = available.map(key => key.toLowerCase());
-    const mainSubject = extractMainSubject(sceneText);
-    const keywords = [mainSubject, ...sanitizeQuery(sceneText).split(' ').slice(0, 2), 'nature', 'animal', 'background'];
-    let bestKey = null, bestScore = 0;
-    for (let kw of keywords) {
-      const { bestMatch, bestMatchIndex } = stringSimilarity.findBestMatch(kw.toLowerCase(), names);
-      if (bestMatch.rating > bestScore && bestMatch.rating > 0.28) {
-        bestScore = bestMatch.rating;
-        bestKey = available[bestMatchIndex];
-      }
-    }
-    if (bestKey) {
-      const localDest = path.join(process.cwd(), 'tmp', 'r2clips', path.basename(bestKey));
-      await downloadFromR2ToFile(bestKey, localDest);
-      console.log(`[7] findR2Clip: Using R2 clip: ${bestKey}`);
-      return localDest;
-    }
-    // No strong match, fallback: just use first available!
-    const fallbackKey = available[0];
-    const localDest = path.join(process.cwd(), 'tmp', 'r2clips', path.basename(fallbackKey));
-    await downloadFromR2ToFile(fallbackKey, localDest);
-    console.warn(`[7] findR2Clip: No strong match, using first available clip: ${fallbackKey}`);
-    return localDest;
-  } catch (err) {
-    console.warn(`[7] R2 search failed: ${err.message}`);
-    return null;
-  }
+  const clipList = await getR2ClipList(true);
+  const available = clipList.filter(k => !usedClipPaths.includes(k));
+  if (!available.length) return null;
+
+  const names = available.map(key => key.toLowerCase());
+  const keywords = [extractMainSubject(sceneText), ...sanitizeQuery(sceneText).split(' ').slice(0, 2), 'nature', 'animal', 'background'];
+
+  let bestMatch = stringSimilarity.findBestMatch(keywords.join(' '), names).bestMatch;
+  const chosenKey = available[bestMatch.rating > 0.2 ? names.indexOf(bestMatch.target) : 0];
+  const localDest = path.join(process.cwd(), 'tmp', 'r2clips', path.basename(chosenKey));
+
+  await downloadFromR2ToFile(chosenKey, localDest);
+  console.log(`[7] findR2Clip: Selected R2 clip: ${chosenKey}`);
+  return localDest;
 }
 
-// --- 2. PEXELS CLIP SEARCH & DOWNLOAD ---
-async function findPexelsClip(sceneText, workDir) {
-  try {
-    const baseQuery = extractMainSubject(sceneText) || 'nature';
-    const apiKey = process.env.PEXELS_API_KEY;
-    if (!apiKey) throw new Error('Missing PEXELS_API_KEY');
-    const queries = [baseQuery];
-    if (!baseQuery.toLowerCase().includes('nature')) queries.push('nature');
-    if (!baseQuery.toLowerCase().includes('animal')) queries.push('animal');
-    let lastVideos = [];
-    for (const query of queries) {
-      const url = `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=5`;
-      console.log(`[7] findPexelsClip: Searching Pexels for query: "${query}"`);
-      const resp = await axios.get(url, { headers: { Authorization: apiKey } });
-      const videos = resp.data.videos || [];
-      lastVideos = videos.length > 0 ? videos : lastVideos;
-      if (videos.length > 0) {
-        let bestVideo = null;
-        let bestScore = 0;
-        const names = videos.map(v => (v.user?.name || '') + ' ' + (v.url || ''));
-        for (const vid of videos) {
-          const title = vid.user?.name || '';
-          const desc = vid.url || '';
-          const combined = title + " " + desc;
-          const sim = stringSimilarity.compareTwoStrings(sceneText.toLowerCase(), combined.toLowerCase());
-          if (sim > bestScore) {
-            bestScore = sim;
-            bestVideo = vid;
-          }
-        }
-        if (!bestVideo) bestVideo = videos[0];
-        const clipUrl = bestVideo.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || bestVideo.video_files[0]?.link;
-        if (clipUrl) {
-          const dest = path.join(workDir, `pexels_${Date.now()}.mp4`);
-          const writer = fs.createWriteStream(dest);
-          const response = await axios.get(clipUrl, { responseType: 'stream' });
-          await new Promise((resolve, reject) => {
-            response.data.pipe(writer);
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-          });
-          console.log(`[7] findPexelsClip: Downloaded clip for query "${query}" -> ${dest}`);
-          return dest;
-        }
-      } else {
-        console.warn(`[7] findPexelsClip: No videos found for query "${query}"`);
-      }
-    }
-    // Fallback: If any videos found at all, grab the first one
-    if (lastVideos.length > 0) {
-      const vid = lastVideos[0];
-      const clipUrl = vid.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || vid.video_files[0]?.link;
-      if (clipUrl) {
-        const dest = path.join(workDir, `pexels_fallback_${Date.now()}.mp4`);
-        const writer = fs.createWriteStream(dest);
-        const response = await axios.get(clipUrl, { responseType: 'stream' });
-        await new Promise((resolve, reject) => {
-          response.data.pipe(writer);
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-        });
-        console.warn(`[7] findPexelsClip: No strong match, using first available clip for fallback.`);
-        return dest;
-      }
-    }
-    console.warn(`[7] findPexelsClip: No video found for any query derived from "${sceneText}"`);
-    return null;
-  } catch (err) {
-    console.warn(`[7] Pexels search/download failed: ${err.message}`);
-    return null;
-  }
-}
-
-// --- 3. PIXABAY CLIP SEARCH & DOWNLOAD ---
-async function findPixabayClip(sceneText, workDir) {
-  try {
-    const query = extractMainSubject(sceneText) || 'nature';
-    const apiKey = process.env.PIXABAY_API_KEY;
-    if (!apiKey) throw new Error('Missing PIXABAY_API_KEY');
-    const url = `https://pixabay.com/api/videos/?key=${apiKey}&q=${encodeURIComponent(query)}&per_page=5&safesearch=true`;
-    console.log(`[7] findPixabayClip: Searching Pixabay for query: "${query}"`);
-    const resp = await axios.get(url);
-    const hits = resp.data.hits || [];
-    if (hits.length) {
-      let bestHit = null;
-      let bestScore = 0;
-      for (const vid of hits) {
-        const combined = (vid.tags || '') + ' ' + (vid.user || '') + ' ' + (vid.pageURL || '');
-        const sim = stringSimilarity.compareTwoStrings(sceneText.toLowerCase(), combined.toLowerCase());
-        if (sim > bestScore) {
-          bestScore = sim;
-          bestHit = vid;
-        }
-      }
-      if (!bestHit) bestHit = hits[0];
-      const sources = Object.values(bestHit.videos || {});
-      const bestSource = sources.find(s => s.url) || sources[0];
-      if (bestSource && bestSource.url) {
-        const dest = path.join(workDir, `pixabay_${Date.now()}.mp4`);
-        const writer = fs.createWriteStream(dest);
-        const response = await axios.get(bestSource.url, { responseType: 'stream' });
-        await new Promise((resolve, reject) => {
-          response.data.pipe(writer);
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-        });
-        console.log(`[7] findPixabayClip: Downloaded clip -> ${dest}`);
-        return dest;
-      }
-    }
-    // Fallback: If any hits exist, just use first one even if match weak
-    if (hits.length > 0) {
-      const vid = hits[0];
-      const sources = Object.values(vid.videos || {});
-      const bestSource = sources.find(s => s.url) || sources[0];
-      if (bestSource && bestSource.url) {
-        const dest = path.join(workDir, `pixabay_fallback_${Date.now()}.mp4`);
-        const writer = fs.createWriteStream(dest);
-        const response = await axios.get(bestSource.url, { responseType: 'stream' });
-        await new Promise((resolve, reject) => {
-          response.data.pipe(writer);
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-        });
-        console.warn(`[7] findPixabayClip: No strong match, using first available clip for fallback.`);
-        return dest;
-      }
-    }
-    console.warn(`[7] findPixabayClip: No videos found for query "${query}"`);
-    return null;
-  } catch (err) {
-    console.warn(`[7] Pixabay search/download failed: ${err.message}`);
-    return null;
-  }
-}
-
-// --- 4. Main helper: the master search pipeline (called by Section 15) ---
+// --- Main helper: ALWAYS returns best available clip ---
 async function findBestClipForScene(sceneText, workDir, usedClipPaths = []) {
-  // 1. Try R2 (Cloudflare)
+  console.log(`[7] Finding best clip for scene: "${sceneText}"`);
+
+  // 1. Cloudflare R2
   const r2Clip = await findR2Clip(sceneText, usedClipPaths);
-  if (r2Clip) return r2Clip;
+  if (r2Clip && fs.existsSync(r2Clip)) return r2Clip;
 
-  // 2. Try Pexels
+  // 2. Pexels
   const pexelsClip = await findPexelsClip(sceneText, workDir);
-  if (pexelsClip) return pexelsClip;
+  if (pexelsClip && fs.existsSync(pexelsClip)) return pexelsClip;
 
-  // 3. Try Pixabay
+  // 3. Pixabay
   const pixabayClip = await findPixabayClip(sceneText, workDir);
-  if (pixabayClip) return pixabayClip;
+  if (pixabayClip && fs.existsSync(pixabayClip)) return pixabayClip;
 
-  // 4. Fallback to blank
+  // Final safeguard: reuse any available R2 clip
+  const fallbackList = await getR2ClipList(true);
+  if (fallbackList.length > 0) {
+    const fallbackKey = fallbackList[0];
+    const localDest = path.join(workDir, `fallback_${Date.now()}.mp4`);
+    await downloadFromR2ToFile(fallbackKey, localDest);
+    console.warn(`[7] Ultimate fallback: Using any available R2 clip: ${fallbackKey}`);
+    return localDest;
+  }
+
+  // Emergency fallback: local blank
   const blankPath = path.join(__dirname, 'assets', 'blank.mp4');
-  console.warn(`[7] findBestClipForScene: Fallback to blank.mp4 for "${sceneText}"`);
+  console.error(`[7] Emergency fallback: No clips found, using blank.mp4`);
   return blankPath;
 }
 
-// ========== ALL VOICES (FULL) ==========
-const elevenProVoices = [
-  { id: "ZthjuvLPty3kTMaNKVKb", name: "Mike (Pro)", description: "ElevenLabs, Deep US Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
-  { id: "6F5Zhi321D3Oq7v1oNT4", name: "Jackson (Pro)", description: "ElevenLabs, Movie Style Narration", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
-  { id: "p2ueywPKFXYa6hdYfSIJ", name: "Tyler (Pro)", description: "ElevenLabs, US Male Friendly", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Olivia (Pro)", description: "ElevenLabs, Warm US Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
-  { id: "FUfBrNit0NNZAwb58KWH", name: "Emily (Pro)", description: "ElevenLabs, Conversational US Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
-  { id: "xctasy8XvGp2cVO9HL9k", name: "Sophia (Pro Kid)", description: "ElevenLabs, US Female Young", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
-  { id: "goT3UYdM9bhm0n2lmKQx", name: "James (Pro UK)", description: "ElevenLabs, British Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
-  { id: "19STyYD15bswVz51nqLf", name: "Amelia (Pro UK)", description: "ElevenLabs, British Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
-  { id: "2h7ex7B1yGrkcLFI8zUO", name: "Pierre (Pro FR)", description: "ElevenLabs, French Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
-  { id: "xNtG3W2oqJs0cJZuTyBc", name: "Claire (Pro FR)", description: "ElevenLabs, French Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
-  { id: "IP2syKL31S2JthzSSfZH", name: "Diego (Pro ES)", description: "ElevenLabs, Spanish Accent Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
-  { id: "WLjZnm4PkNmYtNCyiCq8", name: "Lucia (Pro ES)", description: "ElevenLabs, Spanish Accent Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
-  { id: "zA6D7RyKdc2EClouEMkP", name: "Aimee (ASMR Pro)", description: "Female British Meditation ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: true },
-  { id: "RCQHZdatZm4oG3N6Nwme", name: "Dr. Lovelace (ASMR Pro)", description: "Pro Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: true },
-  { id: "RBknfnzK8KHNwv44gIrh", name: "James Whitmore (ASMR Pro)", description: "Gentle Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "male", disabled: true },
-  { id: "GL7nH05mDrxcH1JPJK5T", name: "Aimee (ASMR Gentle)", description: "ASMR Gentle Whisper", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: true }
-];
-const pollyVoices = [
-  { id: "Matthew", name: "Matthew (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
-  { id: "Joey", name: "Joey (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
-  { id: "Brian", name: "Brian (British Male)", description: "Amazon Polly, Male, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
-  { id: "Russell", name: "Russell (Australian Male)", description: "Amazon Polly, Male, Australian English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
-  { id: "Joanna", name: "Joanna (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
-  { id: "Kimberly", name: "Kimberly (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
-  { id: "Amy", name: "Amy (British Female)", description: "Amazon Polly, Female, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
-  { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false }
-];
 console.log('[7] All helper utilities, clip finders, and voices loaded.');
+
+
+
 
 
 // ==========================================
@@ -687,7 +517,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 // ==========================================
-// 15. /api/generate-video ENDPOINT (R2 → Pexels → Pixabay → blank, FULL LOGGING)
+// 15. /api/generate-video ENDPOINT (FIXED)
 // ==========================================
 function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise timed out') {
   return new Promise((resolve, reject) => {
@@ -717,7 +547,7 @@ app.post('/api/generate-video', async (req, res) => {
 
   (async () => {
     let finished = false;
-    let watchdog = setTimeout(() => {
+    const watchdog = setTimeout(() => {
       if (!finished && progress[jobId]) {
         progress[jobId] = { percent: 100, status: "Failed: Timed out." };
         cleanupJob(jobId);
@@ -736,27 +566,16 @@ app.post('/api/generate-video', async (req, res) => {
         return;
       }
 
-      // Metadata: generate but don't block video creation
-      let viralTitle = '', viralDesc = '', viralTags = '';
-      try {
-        const meta = await generateViralMetadata(script);
-        viralTitle = meta.viralTitle || meta.title || '';
-        viralDesc = meta.viralDesc || meta.description || '';
-        viralTags = meta.viralTags || meta.tags || '';
-        console.log(`[15][${jobId}] Metadata:`, { viralTitle, viralDesc, viralTags });
-      } catch (metaErr) {
-        console.warn(`[15][${jobId}] Metadata error: ${metaErr.message}`);
-      }
-      progress[jobId].viralTitle = viralTitle;
-      progress[jobId].viralDesc  = viralDesc;
-      progress[jobId].viralTags  = viralTags;
+      const meta = await generateViralMetadata(script);
+      const { title: viralTitle, description: viralDesc, tags: viralTags } = meta;
+      console.log(`[15][${jobId}] Metadata:`, meta);
+      Object.assign(progress[jobId], { viralTitle, viralDesc, viralTags });
 
       const steps = splitScriptToScenes(script).slice(0, 20);
       const totalSteps = steps.length + 5;
       let currentStep = 0;
 
       if (!steps.length) {
-        console.error(`[15][${jobId}] No scenes found in script.`);
         throw new Error('No scenes found in script.');
       }
 
@@ -767,72 +586,53 @@ app.post('/api/generate-video', async (req, res) => {
 
       for (let i = 0; i < steps.length; i++) {
         const sceneText = steps[i].trim();
-        try {
-          currentStep++;
-          progress[jobId] = {
-            percent: Math.round((currentStep / totalSteps) * 100),
-            status: `Building scene ${i + 1}/${steps.length}`,
-            viralTitle, viralDesc, viralTags
-          };
-          console.log(`[15][${jobId}] ===== Scene ${i + 1}/${steps.length} START =====`);
-          console.log(`[15][${jobId}] Scene text: "${sceneText}"`);
+        currentStep++;
+        progress[jobId] = {
+          percent: Math.round((currentStep / totalSteps) * 100),
+          status: `Building scene ${i + 1}/${steps.length}`,
+          viralTitle, viralDesc, viralTags
+        };
+        console.log(`[15][${jobId}] Scene ${i + 1}/${steps.length} - "${sceneText}"`);
 
-          // --- 1. Generate TTS audio (Polly or ElevenLabs) ---
+        try {
           const audioMp3 = path.join(workDir, `scene-${i + 1}.mp3`);
-          if (pollyVoices.map(v => v.id).includes(voice)) {
+          if (pollyVoices.some(v => v.id === voice)) {
             await synthesizeWithPolly(sceneText, voice, audioMp3);
           } else {
             await synthesizeWithElevenLabs(sceneText, voice, audioMp3);
           }
-          console.log(`[15][${jobId}] Scene ${i + 1} TTS audio generated: ${audioMp3}`);
 
-          // Convert mp3 to wav for padding
           const audioWav = audioMp3.replace('.mp3', '.wav');
           await ffmpegPromise(() =>
-            ffmpeg()
-              .input(audioMp3)
-              .audioChannels(1)
-              .audioFrequency(44100)
-              .output(audioWav)
+            ffmpeg().input(audioMp3).audioChannels(1).audioFrequency(44100).output(audioWav)
           );
-          console.log(`[15][${jobId}] Scene ${i + 1} converted to WAV: ${audioWav}`);
 
-          // Get duration of audio wav
           let audioDur = 3.5;
           try {
             audioDur = await new Promise((resolve, reject) =>
               ffmpeg.ffprobe(audioWav, (err, info) => err ? reject(err) : resolve(info.format.duration))
             );
           } catch (e) {
-            console.warn(`[15][${jobId}] ffprobe error, defaulting audioDur to 3.5`);
+            console.warn(`[15][${jobId}] ffprobe error, default audio duration.`);
           }
-          console.log(`[15][${jobId}] Scene ${i + 1} audio duration: ${audioDur}s`);
 
-          // --- 2. Pick video clip ---
           let clipPath = await findBestClipForScene(sceneText, workDir, usedClipPaths);
+          if (!clipPath) {
+            clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
+            console.warn(`[15][${jobId}] Using ultimate fallback clip.`);
+          }
           usedClipPaths.push(clipPath);
-          console.log(`[15][${jobId}] Scene ${i + 1} video clip selected: ${clipPath}`);
 
-          // --- 3. Create lead and tail silent audio ---
           const leadFile = path.join(workDir, `lead-${i + 1}.wav`);
           const tailFile = path.join(workDir, `tail-${i + 1}.wav`);
 
-          await ffmpegPromise(() =>
-            ffmpeg()
-              .input('anullsrc=r=44100:cl=mono')
-              .inputFormat('lavfi')
-              .outputOptions(['-t 0.5'])
-              .save(leadFile)
-          );
-          await ffmpegPromise(() =>
-            ffmpeg()
-              .input('anullsrc=r=44100:cl=mono')
-              .inputFormat('lavfi')
-              .outputOptions(['-t 1.0'])
-              .save(tailFile)
-          );
+          await Promise.all([
+            ffmpegPromise(() =>
+              ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 0.5').save(leadFile)),
+            ffmpegPromise(() =>
+              ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 1.0').save(tailFile))
+          ]);
 
-          // --- 4. Concatenate lead + main audio + tail to form final scene audio ---
           const sceneAudioWav = path.join(workDir, `scene-audio-${i + 1}.wav`);
           const audListFile = path.join(workDir, `audlist-${i + 1}.txt`);
           fs.writeFileSync(
@@ -841,111 +641,56 @@ app.post('/api/generate-video', async (req, res) => {
           );
 
           await ffmpegPromise(() =>
-            ffmpeg()
-              .input(audListFile)
-              .inputOptions(['-f concat', '-safe 0'])
-              .outputOptions(['-c:a pcm_s16le'])
-              .save(sceneAudioWav)
+            ffmpeg().input(audListFile).inputOptions('-f concat', '-safe 0').outputOptions('-c:a pcm_s16le').save(sceneAudioWav)
           );
 
-          // --- 5. Convert concatenated wav to AAC (m4a) ---
           const sceneAudioM4a = path.join(workDir, `scene-audio-${i + 1}.m4a`);
           await ffmpegPromise(() =>
-            ffmpeg()
-              .input(sceneAudioWav)
-              .outputOptions(['-c:a aac', '-b:a 128k'])
-              .save(sceneAudioM4a)
+            ffmpeg().input(sceneAudioWav).outputOptions('-c:a aac', '-b:a 128k').save(sceneAudioM4a)
           );
 
-          // Scene length is audio duration plus padding
           const sceneLen = audioDur + 1.5;
 
-          // --- 6. Loop video clip and combine with scene audio (trimmed to sceneLen) ---
           await ffmpegPromise(() =>
             ffmpeg()
-              .input(clipPath)
-              .inputOptions(['-stream_loop', '-1'])
-              .input(sceneAudioM4a)
-              .inputOptions([`-t ${sceneLen}`])
-              .outputOptions([
-                '-map 0:v:0',
-                '-map 1:a:0',
-                '-c:v libx264',
-                '-c:a aac',
-                '-shortest',
-                '-r 30'
-              ])
+              .input(clipPath).inputOptions('-stream_loop', '-1')
+              .input(sceneAudioM4a).inputOptions(`-t ${sceneLen}`)
+              .outputOptions('-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30')
               .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
               .save(path.join(workDir, `scene-${i + 1}.mp4`))
           );
 
           scenes.push(path.join(workDir, `scene-${i + 1}.mp4`));
-
-          console.log(`[15][${jobId}] Scene ${i + 1} video created and synced.`);
-
-          console.log(`[15][${jobId}] ===== Scene ${i + 1}/${steps.length} COMPLETE =====`);
-        } catch (err) {
-          progress[jobId] = { percent: 100, status: "Failed: " + err.message, viralTitle, viralDesc, viralTags };
-          cleanupJob(jobId, 10 * 1000);
-          finished = true;
-          clearTimeout(watchdog);
-          console.error(`[15][${jobId}] Scene ${i + 1} error:`, err);
-          return;
+        } catch (sceneErr) {
+          throw new Error(`Scene ${i + 1} failed: ${sceneErr.message}`);
         }
       }
 
-      // --- CONCAT ALL SCENES ---
-      try {
-        currentStep++;
-        progress[jobId] = {
-          percent: Math.round((currentStep / totalSteps) * 100),
-          status: "Stitching scenes together...",
-          viralTitle, viralDesc, viralTags
-        };
-        console.log(`[15][${jobId}] Concatenating ${scenes.length} scenes...`);
-        const concatListPath = path.join(workDir, "concat.txt");
-        fs.writeFileSync(concatListPath, scenes.map(s => `file '${s}'`).join('\n'));
-        const stitchedVideoPath = path.join(workDir, 'final-stitched.mp4');
-        await ffmpegPromise(() =>
-          ffmpeg()
-            .input(concatListPath)
-            .inputOptions(['-f concat', '-safe 0'])
-            .outputOptions(['-c copy', '-y'])
-            .save(stitchedVideoPath)
-        );
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Stitching scenes..." };
+      const concatListPath = path.join(workDir, "concat.txt");
+      fs.writeFileSync(concatListPath, scenes.map(s => `file '${s}'`).join('\n'));
+      const stitchedVideoPath = path.join(workDir, 'final-stitched.mp4');
+      await ffmpegPromise(() =>
+        ffmpeg().input(concatListPath).inputOptions('-f concat', '-safe 0').outputOptions('-c copy').save(stitchedVideoPath)
+      );
 
-        // Save locally, you can swap with actual R2 upload logic later
-        const r2Key = `videos/${jobId}.mp4`;
-        fs.copyFileSync(stitchedVideoPath, path.join(__dirname, 'tmp', `${jobId}.mp4`));
-        progress[jobId] = {
-          percent: 100,
-          status: "Done",
-          key: r2Key,
-          viralTitle, viralDesc, viralTags
-        };
-        cleanupJob(jobId, 90 * 1000);
-        finished = true;
-        clearTimeout(watchdog);
-        console.log(`[15][${jobId}] VIDEO JOB COMPLETE`);
-      } catch (err) {
-        progress[jobId] = { percent: 100, status: "Failed: " + err.message, viralTitle, viralDesc, viralTags };
-        cleanupJob(jobId, 60 * 1000);
-        finished = true;
-        clearTimeout(watchdog);
-        console.error(`[15][${jobId}] Final concat/upload error:`, err);
-        return;
-      }
-    } catch (e) {
-      progress[jobId] = { percent: 100, status: "Failed: " + e.message };
-      cleanupJob(jobId, 60 * 1000);
+      const r2Key = `videos/${jobId}.mp4`;
+      fs.copyFileSync(stitchedVideoPath, path.join(__dirname, 'tmp', `${jobId}.mp4`));
+      progress[jobId] = { percent: 100, status: "Done", key: r2Key, viralTitle, viralDesc, viralTags };
+      cleanupJob(jobId, 90000);
       finished = true;
       clearTimeout(watchdog);
-      console.error(`[15][${jobId}] Fatal error in video generator:`, e);
-      return;
+      console.log(`[15][${jobId}] VIDEO JOB COMPLETE`);
+    } catch (e) {
+      progress[jobId] = { percent: 100, status: "Failed: " + e.message };
+      cleanupJob(jobId, 60000);
+      finished = true;
+      clearTimeout(watchdog);
+      console.error(`[15][${jobId}] Error:`, e);
     }
   })();
 });
-
 
 
 

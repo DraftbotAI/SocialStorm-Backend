@@ -14,7 +14,7 @@ console.log('[Pexels Helper] Dependencies loaded.');
 
 // ========== CONFIG ==========
 const STOP_WORDS = new Set([
-  'and','the','with','into','for','a','to','of','in','on','at','by','from'
+  'and','the','with','into','for','a','to','of','in','on','at','by','from','is','are','was','were','be','has','have','had'
 ]);
 const s3 = new S3Client({
   region: "auto",
@@ -55,7 +55,7 @@ async function extractMainSubject(line) {
         { role: 'system', content: "Extract the single main subject of this script in 1-2 words, lowercase, no hashtags, no punctuation, no verbs. Only return the subject." },
         { role: 'user', content: line }
       ],
-      temperature: 0.2,
+      temperature: 0.1,
       max_tokens: 8
     });
     let subject = resp.choices[0].message.content.trim().toLowerCase();
@@ -66,7 +66,7 @@ async function extractMainSubject(line) {
     return cleaned;
   } catch (err) {
     console.warn('[extractMainSubject fallback]:', err.message);
-    return sanitizeQuery(line, 2).split(' ')[0] || 'nature';
+    return sanitizeQuery(line, 3).split(' ')[0] || 'nature';
   }
 }
 
@@ -112,7 +112,7 @@ function promiseTimeout(promise, ms, msg = "Timed out") {
   ]);
 }
 
-// Fuzzy R2 finder – always returns best match, or random fallback
+// Fuzzy R2 finder – returns best match or random fallback
 async function findBestVideoFromR2(mainSubject, bucket = process.env.R2_BUCKET) {
   try {
     let continuationToken = undefined;
@@ -127,15 +127,18 @@ async function findBestVideoFromR2(mainSubject, bucket = process.env.R2_BUCKET) 
       continuationToken = resp.NextContinuationToken;
     } while (continuationToken);
 
-    if (allKeys.length === 0) return null;
+    if (allKeys.length === 0) {
+      console.warn(`[findBestVideoFromR2] No video keys found in R2 bucket.`);
+      return null;
+    }
 
-    // Fuzzy match
+    // Fuzzy match with lowered threshold for better matching on partial keywords
     const names = allKeys.map(k => k.toLowerCase());
     const best = stringSimilarity.findBestMatch(mainSubject.toLowerCase(), names);
-    if (best.bestMatch.rating > 0.13) {
+    if (best.bestMatch.rating > 0.1) {
       const key = allKeys[best.bestMatchIndex];
       const url = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucket}/${key}`;
-      console.log(`[findBestVideoFromR2] Fuzzy match "${mainSubject}" to "${key}" (score: ${best.bestMatch.rating})`);
+      console.log(`[findBestVideoFromR2] Fuzzy match "${mainSubject}" to "${key}" (score: ${best.bestMatch.rating.toFixed(2)})`);
       return url;
     }
 
@@ -150,28 +153,36 @@ async function findBestVideoFromR2(mainSubject, bucket = process.env.R2_BUCKET) 
   }
 }
 
-// Pexels main subject only
+// Pexels video search by main subject
 async function getPexelsVideo(mainSubject) {
   try {
     const resp = await promiseTimeout(
       axios.get('https://api.pexels.com/videos/search', {
         headers: { Authorization: process.env.PEXELS_API_KEY },
         params: { query: mainSubject, per_page: 8 },
-        timeout: 8000
+        timeout: 9000
       }),
-      9000,
+      10000,
       "Pexels video search timed out"
     );
     const vids = resp.data.videos || [];
     if (vids.length) {
-      shuffleArray(vids);
+      // Sort videos so the ones with portrait or near square aspect ratios come first
+      vids.sort((a, b) => {
+        const aAR = (a.width && a.height) ? a.height / a.width : 0;
+        const bAR = (b.width && b.height) ? b.height / b.width : 0;
+        // Prioritize aspect ratios close to 1 (square/portrait)
+        return Math.abs(bAR - 1) - Math.abs(aAR - 1);
+      });
       const top = vids[0];
-      const vf = (top.video_files || []).find(f => f.height / f.width > 0.98 && f.width <= 900) || (top.video_files || [])[0];
+      // Prefer HD or SD quality with vertical or square aspect ratio
+      const vf = (top.video_files || []).find(f => (f.quality === "hd" || f.quality === "sd") && f.height >= 720 && f.width <= 900) || (top.video_files || [])[0];
       if (vf && vf.link) {
         console.log(`[getPexelsVideo] Found "${mainSubject}" video: ${vf.link}`);
         return vf.link;
       }
     }
+    console.warn(`[getPexelsVideo] No suitable video found for "${mainSubject}"`);
     return null;
   } catch (err) {
     console.warn(`[getPexelsVideo] error for "${mainSubject}":`, err.message);
@@ -179,7 +190,7 @@ async function getPexelsVideo(mainSubject) {
   }
 }
 
-// Pixabay main subject only
+// Pixabay video search by main subject
 async function getPixabayVideo(mainSubject) {
   try {
     const resp = await promiseTimeout(
@@ -192,13 +203,18 @@ async function getPixabayVideo(mainSubject) {
           lang: 'en',
           video_type: 'all'
         },
-        timeout: 8000
+        timeout: 9000
       }),
-      9000,
+      10000,
       "Pixabay video search timed out"
     );
     if (resp.data && Array.isArray(resp.data.hits) && resp.data.hits.length > 0) {
-      shuffleArray(resp.data.hits);
+      // Sort hits to prioritize portrait or near-square aspect ratio
+      resp.data.hits.sort((a, b) => {
+        const aAR = (a.videos.large?.width && a.videos.large?.height) ? a.videos.large.height / a.videos.large.width : 0;
+        const bAR = (b.videos.large?.width && b.videos.large?.height) ? b.videos.large.height / b.videos.large.width : 0;
+        return Math.abs(bAR - 1) - Math.abs(aAR - 1);
+      });
       const vid = resp.data.hits[0];
       const videoUrl =
         (vid.videos.large && vid.videos.large.url) ||
@@ -209,6 +225,7 @@ async function getPixabayVideo(mainSubject) {
         return videoUrl;
       }
     }
+    console.warn(`[getPixabayVideo] No suitable video found for "${mainSubject}"`);
     return null;
   } catch (err) {
     console.warn(`[getPixabayVideo] error for "${mainSubject}":`, err.message);
@@ -234,21 +251,26 @@ function getLocalFallback() {
   return null;
 }
 
-// Generic fallback (from public domain, or throw error)
+// Generic fallback (from bundled fallback video or error)
 function getGenericFallback() {
-  // You can put a bundled default video here if you want.
   const fallback = path.join(__dirname, 'fallback.mp4');
   if (fs.existsSync(fallback)) {
     console.log(`[getGenericFallback] Using bundled fallback.mp4`);
     return fallback;
   }
-  // Final fail: nothing left.
   console.error(`[getGenericFallback] TOTAL FAIL – No video found anywhere.`);
   return null;
 }
 
-// ========== UNIVERSAL, NEVER-FAIL PICK CLIP FUNCTION ==========
+// Shuffle array utility
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
 
+// ========== UNIVERSAL, NEVER-FAIL PICK CLIP FUNCTION ==========
 async function pickClipFor(rawQuery, tempDir = TEMP_DIR, minScore = 0.13, mainSubject = '', excludeUrls = []) {
   console.log(`[pickClipFor] rawQuery="${rawQuery}"`);
 

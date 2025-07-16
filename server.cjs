@@ -623,7 +623,7 @@ app.post('/api/sparkie', async (req, res) => {
 // ==========================================
 // 14. /api/generate-thumbnails ENDPOINT (FULL LOGGING)
 // ==========================================
-const { createCanvas, registerFont } = require('canvas');
+
 app.post('/api/generate-thumbnails', async (req, res) => {
   console.log("[14] /api/generate-thumbnails endpoint called.");
   const { topic } = req.body;

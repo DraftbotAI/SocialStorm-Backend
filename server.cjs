@@ -153,13 +153,14 @@ function extractMainSubject(script) {
 // --- 1. Cloudflare R2 CLIP SEARCH & DOWNLOAD ---
 async function getR2ClipList(safe = false) {
   try {
+    // THIS is the correct prefix for your bucket structure!
     const { Contents } = await s3.listObjectsV2({
       Bucket: process.env.R2_BUCKET,
-      Prefix: 'clips/'
+      Prefix: 'socialstorm-library/'
     }).promise();
     const list = (Contents || []).map(obj => obj.Key).filter(Boolean).filter(k => k.match(/\.(mp4|mov|webm)$/));
     if (!list.length) throw new Error("No clips in R2");
-    console.log(`[7] getR2ClipList: Found ${list.length} clips in R2`);
+    console.log(`[7] getR2ClipList: Found ${list.length} clips in R2. Example:`, list[0]);
     return list;
   } catch (err) {
     if (!safe) throw err;
@@ -187,8 +188,10 @@ async function downloadFromR2ToFile(r2Key, dest) {
 async function findR2Clip(sceneText, usedClipPaths = []) {
   const clipList = await getR2ClipList(true);
   const available = clipList.filter(k => !usedClipPaths.includes(k));
-  if (!available.length) return null;
-
+  if (!available.length) {
+    console.warn('[7] findR2Clip: No available clips in R2!');
+    return null;
+  }
   const names = available.map(key => key.toLowerCase());
   const keywords = [extractMainSubject(sceneText), ...sanitizeQuery(sceneText).split(' ').slice(0, 2), 'nature', 'animal', 'background'];
   // Combine all keywords into a search string for bestMatch

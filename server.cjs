@@ -701,43 +701,46 @@ app.post('/api/generate-video', async (req, res) => {
         return;
       }
 
-      // === GENERATE VIRAL METADATA FOR ANY SCRIPT ===
+      // === GENERATE VIRAL METADATA FOR ANY SCRIPT (DECOUPLED FROM VIDEO LOGIC) ===
       let viralTitle = '', viralDesc = '', viralTags = '';
-      try {
-        const meta = await generateViralMetadata({
-          script, topic: await extractMainSubject(script), oldTitle: '', oldDesc: ''
-        });
+      generateViralMetadata({
+        script,
+        topic: await extractMainSubject(script),
+        oldTitle: '',
+        oldDesc: ''
+      }).then(meta => {
         viralTitle = meta.viralTitle;
         viralDesc = meta.viralDesc;
         viralTags = meta.viralTags;
         progress[jobId].viralTitle = viralTitle;
         progress[jobId].viralDesc = viralDesc;
         progress[jobId].viralTags = viralTags;
-      } catch (metaErr) {
+      }).catch(metaErr => {
         console.error(`[15][${jobId}] Metadata generation error:`, metaErr);
-      }
+      });
 
-      const mainSubject = await extractMainSubject(script);
-      console.log(`[15][${jobId}] Main subject:`, mainSubject);
-      if (!mainSubject) throw new Error('No main subject found for this script.');
-
-      // Allow dynamic scene count (up to 20) to support longer videos (up to 60s)
-      const steps = splitScriptToScenes(script).slice(0, 20);
-      const totalSteps = steps.length + 5;
+      // === SPLIT SCRIPT INTO SCENES (STRICTLY SCENE-BASED) ===
+      const steps = splitScriptToScenes(script).slice(0, 20); // up to 20 scenes max (~60s)
+      const totalSteps = steps.length + 5; // for progress calculation
       let currentStep = 0;
 
+      if (!steps.length) throw new Error('No scenes found in script.');
+
+      // === INIT DIRECTORIES, TRACKERS ===
       const workDir = path.join(__dirname, 'tmp', uuidv4());
       fs.mkdirSync(workDir, { recursive: true });
       const scenes = [];
       const usedUrls = new Set();
       const usedIds = new Set();
+
+      // Fallbacks for clip search (if no match found)
       const fallbackQueries = [
         "nature", "background", "city", "abstract", "travel", "people", "pattern", "wallpaper"
       ];
 
       let mediaFailCount = 0;
 
-      // Helper: synthesize TTS with Polly or ElevenLabs
+      // --- Helper: synthesize TTS with Polly or ElevenLabs ---
       async function synthesizeTTS(text, voiceId, outFile) {
         const pollyVoiceIds = pollyVoices.map(v => v.id);
         if (pollyVoiceIds.includes(voiceId)) {
@@ -751,7 +754,7 @@ app.post('/api/generate-video', async (req, res) => {
             const data = await polly.synthesizeSpeech(params).promise();
             if (!data.AudioStream) throw new Error('No AudioStream from Polly');
             await fs.promises.writeFile(outFile, data.AudioStream);
-            console.log(`[15][${jobId}] Polly TTS done for text: "${text}"`);
+            console.log(`[15][${jobId}] Polly TTS done for: "${text}"`);
           } catch (err) {
             console.error(`[15][${jobId}] Polly TTS error:`, err);
             throw new Error(`Polly TTS error: ${err.message}`);
@@ -764,7 +767,7 @@ app.post('/api/generate-video', async (req, res) => {
               { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY }, responseType: 'arraybuffer' }
             );
             fs.writeFileSync(outFile, ttsRes.data);
-            console.log(`[15][${jobId}] ElevenLabs TTS done for text: "${text}"`);
+            console.log(`[15][${jobId}] ElevenLabs TTS done for: "${text}"`);
           } catch (err) {
             console.error(`[15][${jobId}] ElevenLabs TTS error:`, err);
             throw new Error(`ElevenLabs TTS error: ${err.message}`);
@@ -772,8 +775,9 @@ app.post('/api/generate-video', async (req, res) => {
         }
       }
 
-      // === MAIN SCENE LOOP ===
+      // ========== MAIN SCENE-BY-SCENE LINEAR LOOP ==========
       for (let i = 0; i < steps.length; i++) {
+        const sceneText = steps[i].trim();
         try {
           currentStep++;
           progress[jobId] = {
@@ -782,9 +786,80 @@ app.post('/api/generate-video', async (req, res) => {
             viralTitle, viralDesc, viralTags
           };
           console.log(`[15][${jobId}] ===== Scene ${i + 1}/${steps.length} START =====`);
+          console.log(`[15][${jobId}] Scene text: "${sceneText}"`);
 
-          // ... [The rest of your full, original scene logic remains, every line as in your real code.] ...
+          // --- 1. Generate TTS audio for this scene ---
+          const audioPath = path.join(workDir, `scene-${i + 1}.mp3`);
+          await synthesizeTTS(sceneText, voice, audioPath);
+          console.log(`[15][${jobId}] Scene ${i + 1} TTS audio generated: ${audioPath}`);
 
+          // --- 2. Find/choose a video clip for this scene (decoupled from metadata) ---
+          let clipPath = null;
+          let foundClip = false;
+          let searchTries = 0;
+          let searchTerm = sceneText;
+
+          // Try: local library → Pexels → Pixabay → fallback query
+          // 1. Local search (user’s own video vault logic here)
+          try {
+            clipPath = await findLocalClipForScene(sceneText); // implement this function for your system
+            if (clipPath) foundClip = true;
+          } catch (e) {
+            console.warn(`[15][${jobId}] No local clip found for scene: "${sceneText}"`);
+          }
+
+          // 2. If not found, try Pexels
+          if (!foundClip) {
+            try {
+              clipPath = await getClipFromPexels(sceneText);
+              if (clipPath) foundClip = true;
+            } catch (e) {
+              console.warn(`[15][${jobId}] No Pexels clip found for scene: "${sceneText}"`);
+            }
+          }
+
+          // 3. If not found, try Pixabay
+          if (!foundClip) {
+            try {
+              clipPath = await getClipFromPixabay(sceneText);
+              if (clipPath) foundClip = true;
+            } catch (e) {
+              console.warn(`[15][${jobId}] No Pixabay clip found for scene: "${sceneText}"`);
+            }
+          }
+
+          // 4. If all fails, use a fallback generic search
+          if (!foundClip) {
+            try {
+              let fallbackTerm = fallbackQueries[i % fallbackQueries.length];
+              clipPath = await getClipFromPexels(fallbackTerm);
+              if (clipPath) foundClip = true;
+              else throw new Error('No fallback clip found');
+            } catch (e) {
+              console.error(`[15][${jobId}] No fallback clip found for scene: "${sceneText}"`);
+              mediaFailCount++;
+              throw new Error(`No video clip found for scene: "${sceneText}"`);
+            }
+          }
+
+          console.log(`[15][${jobId}] Scene ${i + 1} video clip selected: ${clipPath}`);
+
+          // --- 3. Combine audio & video into a scene file ---
+          const sceneOutPath = path.join(workDir, `scene-${i + 1}.mp4`);
+          await ffmpegPromise(() =>
+            ffmpeg()
+              .input(clipPath)
+              .input(audioPath)
+              .outputOptions([
+                '-c:v libx264', '-preset veryfast', '-crf 22',
+                '-map 0:v:0', '-map 1:a:0',
+                '-shortest', '-y'
+              ])
+              .save(sceneOutPath)
+          );
+          console.log(`[15][${jobId}] Scene ${i + 1} mp4 built: ${sceneOutPath}`);
+
+          scenes.push(sceneOutPath);
           console.log(`[15][${jobId}] ===== Scene ${i + 1}/${steps.length} COMPLETE =====`);
         } catch (err) {
           console.error(`[15][${jobId}] Scene ${i + 1} error:`, err);
@@ -796,14 +871,61 @@ app.post('/api/generate-video', async (req, res) => {
         }
       }
 
-      // TODO: Keep your existing OUTRO, CONCAT, WATERMARK, UPLOAD code here!
-      // You can also wrap any long ffmpeg calls in ffmpegPromise as above.
+      // ========== CONCAT ALL SCENES TO FINAL VIDEO ==========
+      try {
+        currentStep++;
+        progress[jobId] = {
+          percent: Math.round((currentStep / totalSteps) * 100),
+          status: "Stitching scenes together...",
+          viralTitle, viralDesc, viralTags
+        };
+        console.log(`[15][${jobId}] Concatenating ${scenes.length} scenes...`);
 
-      progress[jobId] = { percent: 100, status: "Done", viralTitle, viralDesc, viralTags };
-      cleanupJob(jobId, 90 * 1000);
-      finished = true;
-      clearTimeout(watchdog);
-      console.log(`[15][${jobId}] VIDEO JOB COMPLETE`);
+        const concatListPath = path.join(workDir, "concat.txt");
+        fs.writeFileSync(concatListPath, scenes.map(s => `file '${s}'`).join('\n'));
+
+        const stitchedVideoPath = path.join(workDir, 'final-stitched.mp4');
+        await ffmpegPromise(() =>
+          ffmpeg()
+            .input(concatListPath)
+            .inputOptions(['-f concat', '-safe 0'])
+            .outputOptions(['-c copy', '-y'])
+            .save(stitchedVideoPath)
+        );
+        console.log(`[15][${jobId}] Scenes stitched: ${stitchedVideoPath}`);
+
+        // --- TODO: Add outro, watermark, overlays here if needed ---
+
+        // ========== UPLOAD TO R2 ==========
+        currentStep++;
+        progress[jobId] = {
+          percent: Math.round((currentStep / totalSteps) * 100),
+          status: "Uploading final video...",
+          viralTitle, viralDesc, viralTags
+        };
+        const r2Key = `videos/${jobId}.mp4`;
+        await uploadFileToR2(stitchedVideoPath, r2Key);
+        console.log(`[15][${jobId}] Video uploaded to R2 as: ${r2Key}`);
+
+        progress[jobId] = {
+          percent: 100,
+          status: "Done",
+          key: r2Key,
+          viralTitle, viralDesc, viralTags
+        };
+
+        cleanupJob(jobId, 90 * 1000);
+        finished = true;
+        clearTimeout(watchdog);
+        console.log(`[15][${jobId}] VIDEO JOB COMPLETE`);
+      } catch (err) {
+        console.error(`[15][${jobId}] Final concat/upload error:`, err);
+        progress[jobId] = { percent: 100, status: "Failed: " + err.message, viralTitle, viralDesc, viralTags };
+        cleanupJob(jobId, 60 * 1000);
+        finished = true;
+        clearTimeout(watchdog);
+        return;
+      }
 
     } catch (e) {
       console.error(`[15][${jobId}] Fatal error in video generator:`, e);
@@ -815,6 +937,7 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
+
 
 
 // ==========================================

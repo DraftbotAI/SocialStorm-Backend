@@ -91,9 +91,6 @@ console.log('[6] Cloudflare R2 S3 client configured. Bucket:', process.env.R2_BU
 // 7. HELPERS
 // ==========================================
 const stringSimilarity = require('string-similarity');
-const fs = require('fs');
-const path = require('path');
-const axios = require('axios');
 
 const R2_CLIP_PREFIX = 'clips/'; // adjust if your R2 videos are under another path
 const R2_CACHE_FILE = path.join(__dirname, 'cache', 'r2-clip-list.json');

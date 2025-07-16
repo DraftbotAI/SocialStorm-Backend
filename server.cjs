@@ -435,44 +435,66 @@ app.get('/api/voices', (req, res) => {
 // ==========================================
 
 app.post('/api/generate-script', async (req, res) => {
-  const idea = (req.body.idea || "").trim();
-  console.log("[/api/generate-script] Incoming idea:", idea);
+  const ideaRaw = req.body.idea;
+  console.log("[/api/generate-script] Request received.");
 
-  if (!idea) {
-    console.log("[/api/generate-script] ❌ No idea provided.");
-    return res.status(400).json({ success: false, error: "No idea provided" });
+  // Validate input
+  if (typeof ideaRaw !== "string" || !ideaRaw.trim()) {
+    console.warn("[/api/generate-script] ❌ Invalid or missing 'idea' parameter.");
+    return res.status(400).json({ success: false, error: "Invalid or missing 'idea' parameter." });
   }
+  const idea = ideaRaw.trim();
+  console.log(`[/api/generate-script] Processing idea: "${idea}"`);
 
   try {
-    const hookPrompt = `Write a viral short-form video script for the topic: "${idea}". 
-Make sure each sentence is on its own line. Hook the viewer in the first line.
-Keep it concise and engaging — under 60 seconds total. Format:\n\nLine 1\nLine 2\n...`;
+    // Construct prompt with clear instructions and fallback hints
+    const hookPrompt = `Write a viral short-form video script for the topic: "${idea}".\n` +
+      `Each sentence must be on its own line.\n` +
+      `Start with a strong hook sentence.\n` +
+      `Keep it punchy, engaging, and suitable for TikTok or YouTube Shorts.\n` +
+      `Limit the script to under 60 seconds total.\n` +
+      `Format:\n\nLine 1\nLine 2\n...`;
 
+    // Call OpenAI chat completion
     const response = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
-        { role: "system", content: "You write punchy short-form scripts for TikTok/YouTube Shorts." },
+        { role: "system", content: "You write punchy short-form video scripts for social media." },
         { role: "user", content: hookPrompt }
       ],
-      temperature: 0.9,
+      temperature: 0.85,
+      max_tokens: 500,
+      n: 1,
     });
 
-    let script = response.choices?.[0]?.message?.content?.trim() || "";
-    console.log("[/api/generate-script] ✍️ Raw script output:\n", script);
+    // Defensive checks for response structure
+    if (!response || !response.choices || !response.choices[0] || !response.choices[0].message) {
+      throw new Error("Invalid OpenAI response structure.");
+    }
 
-    // Clean + limit to ~20 lines max
-    script = script
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(line => line && line.length > 0)
-      .slice(0, 20)
-      .join('\n');
+    let script = response.choices[0].message.content.trim();
 
-    if (!script) throw new Error("Script generation failed");
+    // Sanity check on script output
+    if (!script || script.length < 10) {
+      throw new Error("OpenAI returned an empty or too-short script.");
+    }
 
+    console.log("[/api/generate-script] Raw script output:\n", script);
+
+    // Split lines, trim, filter empty, limit to max 20 lines for safety
+    let lines = script.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+    if (lines.length === 0) throw new Error("No valid lines found in script output.");
+    if (lines.length > 20) {
+      console.log(`[/api/generate-script] Script too long (${lines.length} lines). Trimming to 20.`);
+      lines = lines.slice(0, 20);
+    }
+    script = lines.join('\n');
+
+    // Call viral metadata generator with script - assume it never throws
     const viralMeta = await generateViralMetadata(script);
 
-    console.log("[/api/generate-script] ✅ Success. Returning script and metadata.");
+    console.log("[/api/generate-script] Script generation successful. Returning response.");
+
     return res.json({
       success: true,
       script,
@@ -480,11 +502,15 @@ Keep it concise and engaging — under 60 seconds total. Format:\n\nLine 1\nLine
       description: viralMeta.description || "",
       tags: viralMeta.tags || "#shorts",
     });
-  } catch (err) {
-    console.error("[/api/generate-script] ❌ Error:", err);
-    return res.status(500).json({ success: false, error: "Failed to generate script" });
+  } catch (error) {
+    console.error("[/api/generate-script] Error during generation:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to generate script. Please try again later."
+    });
   }
 });
+
 
 
 // ==========================================

@@ -678,7 +678,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 // ==========================================
-// 15. /api/generate-video ENDPOINT (DEBUG LOG VERSION)
+// 15. /api/generate-video ENDPOINT (DEBUG LOG VERSION, CONCATS FIXED)
 // ==========================================
 function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise timed out') {
   return new Promise((resolve, reject) => {
@@ -852,7 +852,7 @@ app.post('/api/generate-video', async (req, res) => {
           );
           console.log(`[15][${jobId}][${i + 1}] 13. Concatenating audio segments`);
           await ffmpegPromise(() =>
-            ffmpeg().input(audListFile).inputOptions('-f concat', '-safe 0').outputOptions('-c:a pcm_s16le').save(sceneAudioWav)
+            ffmpeg().input(audListFile).input('-f', 'concat').input('-safe', '0').outputOptions('-c:a pcm_s16le').save(sceneAudioWav)
           );
 
           // === 7. AAC FINAL AUDIO ===
@@ -906,7 +906,12 @@ app.post('/api/generate-video', async (req, res) => {
       console.log(`[15][${jobId}] 17. Concatenating all scenes`);
       const stitchedVideoPath = path.join(workDir, 'final-stitched.mp4');
       await ffmpegPromise(() =>
-        ffmpeg().input(concatListPath).inputOptions('-f concat', '-safe 0').outputOptions('-c copy').save(stitchedVideoPath)
+        ffmpeg()
+          .input(concatListPath)
+          .input('-f', 'concat')
+          .input('-safe', '0')
+          .outputOptions('-c', 'copy')
+          .save(stitchedVideoPath)
       );
       console.log(`[15][${jobId}] 18. All scenes concatenated`);
 
@@ -926,7 +931,6 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
-
 
 
 // ==========================================

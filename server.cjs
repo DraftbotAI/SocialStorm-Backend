@@ -66,7 +66,7 @@ console.log('[3] AWS Polly client configured.');
 // 4. PROGRESS TRACKING MAP & CLEANUP
 // ==========================================
 
-const progress = {};
+const progressMap = {};
 const JOB_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
@@ -76,10 +76,10 @@ const JOB_TTL_MS = 5 * 60 * 1000; // 5 minutes
  * @param {number} delay - Delay in milliseconds before cleanup (default 5 minutes)
  */
 function cleanupJob(jobId, delay = JOB_TTL_MS) {
-  console.log(`[4] Scheduling cleanup for job ${jobId} in ${delay/1000}s`);
+  console.log(`[4] Scheduling cleanup for job ${jobId} in ${delay / 1000}s`);
   setTimeout(() => {
-    if (progress[jobId]) {
-      delete progress[jobId];
+    if (progressMap[jobId]) {
+      delete progressMap[jobId];
       console.log(`[4] Cleaned up job progress: ${jobId}`);
     } else {
       console.log(`[4] Job ${jobId} already cleaned or missing.`);
@@ -87,8 +87,7 @@ function cleanupJob(jobId, delay = JOB_TTL_MS) {
   }, delay);
 }
 
-module.exports = { progress, cleanupJob };
-
+module.exports = { progressMap, cleanupJob };
 
 
 
@@ -677,6 +676,15 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 // ==========================================
+// (Before Section 15) — Helper Aliases for Consistency
+// ==========================================
+
+// Make sure these exist elsewhere in your file or imported modules:
+const parseScriptToScenes = typeof splitScriptToScenes === 'function' ? splitScriptToScenes : () => [];
+const findMatchingClip = typeof findBestClipForScene === 'function' ? findBestClipForScene : async () => null;
+// NOTE: generateSceneAudio, combineAudioAndClip, assembleFinalVideo, uploadVideoToR2 must be defined somewhere!
+
+// ==========================================
 // 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
 // ==========================================
 
@@ -720,6 +728,7 @@ app.post('/api/generate-video', async (req, res) => {
         // 3a. Generate audio
         let audioPath;
         try {
+          if (typeof generateSceneAudio !== 'function') throw new Error("generateSceneAudio not implemented!");
           audioPath = await generateSceneAudio(sceneText, voice); // Should return a path
           if (!audioPath) throw new Error("Audio path not returned");
           console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Audio generated at ${audioPath}`);
@@ -732,6 +741,7 @@ app.post('/api/generate-video', async (req, res) => {
         // 3b. Select video clip (cloud > local > Pexels)
         let videoPath;
         try {
+          if (typeof findMatchingClip !== 'function') throw new Error("findMatchingClip not implemented!");
           videoPath = await findMatchingClip(sceneText); // Should return a path
           if (!videoPath) throw new Error("No video path returned");
           console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Video found at ${videoPath}`);
@@ -744,6 +754,7 @@ app.post('/api/generate-video', async (req, res) => {
         // 3c. Combine audio and video for scene
         let sceneOutput;
         try {
+          if (typeof combineAudioAndClip !== 'function') throw new Error("combineAudioAndClip not implemented!");
           sceneOutput = await combineAudioAndClip(audioPath, videoPath); // Should return a path
           if (!sceneOutput) throw new Error("Scene output path missing");
           console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Scene created at ${sceneOutput}`);
@@ -772,6 +783,7 @@ app.post('/api/generate-video', async (req, res) => {
     // 4. Concat all scenes
     let finalVideoPath = null;
     try {
+      if (typeof assembleFinalVideo !== 'function') throw new Error("assembleFinalVideo not implemented!");
       progressMap[progressKey] = { percent: 82, status: "Concatenating scenes…" };
       finalVideoPath = await assembleFinalVideo(sceneClips); // Should return final video path
       if (!finalVideoPath) throw new Error("Final video concat failed");
@@ -788,6 +800,7 @@ app.post('/api/generate-video', async (req, res) => {
     // 6. Upload to Cloudflare R2 (or wherever)
     let videoKey = null;
     try {
+      if (typeof uploadVideoToR2 !== 'function') throw new Error("uploadVideoToR2 not implemented!");
       progressMap[progressKey] = { percent: 89, status: "Uploading…" };
       videoKey = await uploadVideoToR2(finalVideoPath); // Should return unique key
       if (!videoKey) throw new Error("Upload failed");
@@ -812,13 +825,12 @@ app.post('/api/generate-video', async (req, res) => {
 });
 
 
-
 // ==========================================
-// 16. PROGRESS POLLING ENDPOINT
+// 16. PROGRESS POLLING ENDPOINT (FIXED TO USE progressMap)
 // ==========================================
 app.get('/api/progress/:jobId', (req, res) => {
   const jobId = req.params.jobId;
-  const job = progress[jobId];
+  const job = progressMap[jobId];
   if (!job) {
     console.warn('[16] /api/progress: Job not found or expired for', jobId);
     return res.json({ percent: 100, status: 'Failed: Job not found or expired.' });
@@ -826,6 +838,7 @@ app.get('/api/progress/:jobId', (req, res) => {
   console.log('[16] /api/progress:', jobId, job);
   res.json(job);
 });
+
 
 
 

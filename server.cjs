@@ -882,10 +882,22 @@ app.post('/api/generate-video', async (req, res) => {
           const fallbackClip = path.join(__dirname, 'assets', 'fallback.mp4');
           const fallbackLen = 5; // Arbitrary fallback duration
           try {
+            // Make sure fallback audio is valid or generate silent audio fallback if missing
+            let fallbackAudio = null;
+            if (typeof audioMp3 === 'string' && fs.existsSync(audioMp3)) {
+              fallbackAudio = audioMp3;
+              console.warn(`[15][${jobId}] Fallback using existing audioMp3: ${fallbackAudio}`);
+            } else {
+              fallbackAudio = path.join(workDir, `silent-fallback-${i + 1}.wav`);
+              await ffmpegPromise(() =>
+                ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 2').save(fallbackAudio)
+              );
+              console.warn(`[15][${jobId}] Fallback synthesized silent audio: ${fallbackAudio}`);
+            }
             await ffmpegPromise(() =>
               ffmpeg()
                 .input(fallbackClip).inputOptions('-stream_loop', '-1')
-                .input(audioMp3).inputOptions(`-t ${fallbackLen}`)
+                .input(fallbackAudio).inputOptions(`-t ${fallbackLen}`)
                 .outputOptions('-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30')
                 .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
                 .save(path.join(workDir, `scene-${i + 1}.mp4`))
@@ -931,7 +943,6 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
-
 
 // ==========================================
 // 16. PROGRESS POLLING ENDPOINT

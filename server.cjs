@@ -209,7 +209,12 @@ async function findR2Clip(sceneText, usedClipPaths = []) {
       console.log(`[7] findR2Clip: Using R2 clip: ${bestKey}`);
       return localDest;
     }
-    return null;
+    // No strong match, fallback: just use first available!
+    const fallbackKey = available[0];
+    const localDest = path.join(process.cwd(), 'tmp', 'r2clips', path.basename(fallbackKey));
+    await downloadFromR2ToFile(fallbackKey, localDest);
+    console.warn(`[7] findR2Clip: No strong match, using first available clip: ${fallbackKey}`);
+    return localDest;
   } catch (err) {
     console.warn(`[7] R2 search failed: ${err.message}`);
     return null;
@@ -217,31 +222,22 @@ async function findR2Clip(sceneText, usedClipPaths = []) {
 }
 
 // --- 2. PEXELS CLIP SEARCH & DOWNLOAD ---
-// Improved to better handle queries and selection with fallback and expanded query logic
 async function findPexelsClip(sceneText, workDir) {
   try {
     const baseQuery = extractMainSubject(sceneText) || 'nature';
     const apiKey = process.env.PEXELS_API_KEY;
     if (!apiKey) throw new Error('Missing PEXELS_API_KEY');
-
-    // Build multiple queries for fallback attempts
     const queries = [baseQuery];
-    // Add some fallback related keywords heuristically
-    if (!baseQuery.toLowerCase().includes('nature')) {
-      queries.push('nature');
-    }
-    if (!baseQuery.toLowerCase().includes('animal')) {
-      queries.push('animal');
-    }
-
+    if (!baseQuery.toLowerCase().includes('nature')) queries.push('nature');
+    if (!baseQuery.toLowerCase().includes('animal')) queries.push('animal');
+    let lastVideos = [];
     for (const query of queries) {
       const url = `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=5`;
       console.log(`[7] findPexelsClip: Searching Pexels for query: "${query}"`);
       const resp = await axios.get(url, { headers: { Authorization: apiKey } });
       const videos = resp.data.videos || [];
+      lastVideos = videos.length > 0 ? videos : lastVideos;
       if (videos.length > 0) {
-        // Attempt to pick the clip best matching the sceneText keywords
-        // Score clips based on text similarity with video title and tags if available
         let bestVideo = null;
         let bestScore = 0;
         const names = videos.map(v => (v.user?.name || '') + ' ' + (v.url || ''));
@@ -255,7 +251,7 @@ async function findPexelsClip(sceneText, workDir) {
             bestVideo = vid;
           }
         }
-        if (!bestVideo) bestVideo = videos[0]; // fallback to first if no score
+        if (!bestVideo) bestVideo = videos[0];
         const clipUrl = bestVideo.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || bestVideo.video_files[0]?.link;
         if (clipUrl) {
           const dest = path.join(workDir, `pexels_${Date.now()}.mp4`);
@@ -271,6 +267,23 @@ async function findPexelsClip(sceneText, workDir) {
         }
       } else {
         console.warn(`[7] findPexelsClip: No videos found for query "${query}"`);
+      }
+    }
+    // Fallback: If any videos found at all, grab the first one
+    if (lastVideos.length > 0) {
+      const vid = lastVideos[0];
+      const clipUrl = vid.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || vid.video_files[0]?.link;
+      if (clipUrl) {
+        const dest = path.join(workDir, `pexels_fallback_${Date.now()}.mp4`);
+        const writer = fs.createWriteStream(dest);
+        const response = await axios.get(clipUrl, { responseType: 'stream' });
+        await new Promise((resolve, reject) => {
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+        console.warn(`[7] findPexelsClip: No strong match, using first available clip for fallback.`);
+        return dest;
       }
     }
     console.warn(`[7] findPexelsClip: No video found for any query derived from "${sceneText}"`);
@@ -292,7 +305,6 @@ async function findPixabayClip(sceneText, workDir) {
     const resp = await axios.get(url);
     const hits = resp.data.hits || [];
     if (hits.length) {
-      // Choose clip with best matching URL or tags if available
       let bestHit = null;
       let bestScore = 0;
       for (const vid of hits) {
@@ -318,9 +330,26 @@ async function findPixabayClip(sceneText, workDir) {
         console.log(`[7] findPixabayClip: Downloaded clip -> ${dest}`);
         return dest;
       }
-    } else {
-      console.warn(`[7] findPixabayClip: No videos found for query "${query}"`);
     }
+    // Fallback: If any hits exist, just use first one even if match weak
+    if (hits.length > 0) {
+      const vid = hits[0];
+      const sources = Object.values(vid.videos || {});
+      const bestSource = sources.find(s => s.url) || sources[0];
+      if (bestSource && bestSource.url) {
+        const dest = path.join(workDir, `pixabay_fallback_${Date.now()}.mp4`);
+        const writer = fs.createWriteStream(dest);
+        const response = await axios.get(bestSource.url, { responseType: 'stream' });
+        await new Promise((resolve, reject) => {
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+        console.warn(`[7] findPixabayClip: No strong match, using first available clip for fallback.`);
+        return dest;
+      }
+    }
+    console.warn(`[7] findPixabayClip: No videos found for query "${query}"`);
     return null;
   } catch (err) {
     console.warn(`[7] Pixabay search/download failed: ${err.message}`);

@@ -5,6 +5,7 @@ require('dotenv').config();
 const axios = require('axios');
 const stringSimilarity = require('string-similarity');
 const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+console.log('[1] Dependencies loaded, environment configured.');
 
 // =============================
 // SECTION 2: STOP WORDS FOR QUERY CLEANUP
@@ -13,13 +14,15 @@ const STOP_WORDS = new Set([
   'and','the','with','into','for','a','to','of','in','on','at','by','from'
 ]);
 function sanitizeQuery(raw, maxWords = 10) {
-  return raw
+  const cleaned = raw
     .replace(/["“”‘’.,!?;:]/g, '')
     .split(/\s+/)
     .map(w => w.trim())
     .filter(w => w && !STOP_WORDS.has(w.toLowerCase()))
     .slice(0, maxWords)
     .join(' ');
+  console.log(`[2] sanitizeQuery("${raw}", ${maxWords}) -> "${cleaned}"`);
+  return cleaned;
 }
 
 // =============================
@@ -27,7 +30,10 @@ function sanitizeQuery(raw, maxWords = 10) {
 // =============================
 function normalizeUrl(url) {
   if (!url || typeof url !== 'string') return '';
-  return url.trim().toLowerCase().replace(/\/+$/, '');
+  const n = url.trim().toLowerCase().replace(/\/+$/, '');
+  // No need to log every call, but can uncomment for deep bughunting
+  // console.log(`[3] normalizeUrl: "${url}" => "${n}"`);
+  return n;
 }
 
 // =============================
@@ -38,6 +44,7 @@ function shuffleArray(arr) {
     const j = Math.floor(Math.random() * (i+1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+  // Don't log every shuffle (too noisy)
   return arr;
 }
 
@@ -45,7 +52,7 @@ function shuffleArray(arr) {
 // SECTION 5: GPT-POWERED KEYWORD EXTRACTOR
 // =============================
 async function getSearchKeywords(line) {
-  // Hard timeout: 7 seconds
+  console.log(`[5] getSearchKeywords called for line: "${line}"`);
   const promise = (async () => {
     try {
       const { OpenAI } = require('openai');
@@ -59,15 +66,22 @@ async function getSearchKeywords(line) {
         temperature: 0.1
       });
       let text = resp.choices[0].message.content.trim();
+      console.log(`[5] getSearchKeywords (OpenAI result): "${text}"`);
       return text.replace(/\.$/, '');
     } catch (err) {
+      console.warn(`[5] getSearchKeywords error, fallback to sanitizeQuery:`, err.message);
       return sanitizeQuery(line, 5);
     }
   })();
-  return Promise.race([
+  const result = await Promise.race([
     promise,
-    new Promise(resolve => setTimeout(() => resolve(sanitizeQuery(line, 5)), 7000))
+    new Promise(resolve => setTimeout(() => {
+      console.warn('[5] getSearchKeywords timeout, using sanitizeQuery fallback.');
+      resolve(sanitizeQuery(line, 5));
+    }, 7000))
   ]);
+  console.log(`[5] getSearchKeywords final: "${result}"`);
+  return result;
 }
 
 // =============================
@@ -76,7 +90,10 @@ async function getSearchKeywords(line) {
 function promiseTimeout(promise, ms, msg = "Timed out") {
   return Promise.race([
     promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))
+    new Promise((_, reject) => setTimeout(() => {
+      console.warn(`[6] Promise timed out after ${ms}ms: ${msg}`);
+      reject(new Error(msg));
+    }, ms))
   ]);
 }
 
@@ -89,7 +106,9 @@ function isMotivationalQuery(text, mainSubject = '') {
     'inspire','confidence','success','achieve','goal','goals','positive','self love','self improvement','overcome','gratitude','believe','focus','power','dream','dreams'
   ];
   const lc = text.toLowerCase() + ' ' + (mainSubject || '').toLowerCase();
-  return MOTIVATIONAL_WORDS.some(w => lc.includes(w));
+  const found = MOTIVATIONAL_WORDS.some(w => lc.includes(w));
+  if (found) console.log(`[7] isMotivationalQuery: TRUE for "${text}" (mainSubject="${mainSubject}")`);
+  return found;
 }
 
 // =============================
@@ -97,7 +116,7 @@ function isMotivationalQuery(text, mainSubject = '') {
 // =============================
 const s3 = new S3Client({
   region: "auto",
-  endpoint: process.env.R2_ENDPOINT, // e.g. https://<accountid>.r2.cloudflarestorage.com
+  endpoint: process.env.R2_ENDPOINT,
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
@@ -105,13 +124,16 @@ const s3 = new S3Client({
 });
 
 async function findVideosByTopic(topic, limit = 3, bucket = process.env.R2_BUCKET) {
+  console.log(`[8] findVideosByTopic: topic="${topic}", limit=${limit}`);
   const keyword = topic.toLowerCase().replace(/[^a-z0-9_]/gi, "_");
   let results = [];
   let continuationToken = undefined;
   const prefix = keyword + '/'; // e.g. "animals/"
+  let folderTries = 0, flatTries = 0;
 
   // 1. Try folder match (e.g., "animals/")
   do {
+    folderTries++;
     const resp = await s3.send(new ListObjectsV2Command({
       Bucket: bucket,
       Prefix: prefix,
@@ -119,13 +141,16 @@ async function findVideosByTopic(topic, limit = 3, bucket = process.env.R2_BUCKE
     }));
     const hits = (resp.Contents || [])
       .filter(obj =>
-        /\.(mp4|mov|webm|mkv)$/i.test(obj.Key) // Only video files
+        /\.(mp4|mov|webm|mkv)$/i.test(obj.Key)
       )
       .map(obj =>
         `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucket}/${obj.Key}`
       );
     results.push(...hits);
     continuationToken = resp.NextContinuationToken;
+    if (hits.length) {
+      console.log(`[8] findVideosByTopic: folder match found (${hits.length} in try ${folderTries}):`, hits);
+    }
   } while (results.length < limit && continuationToken);
 
   // 2. If not enough, scan the bucket for filenames matching the keyword (slower!)
@@ -133,6 +158,7 @@ async function findVideosByTopic(topic, limit = 3, bucket = process.env.R2_BUCKE
     let moreResults = [];
     let token = undefined;
     do {
+      flatTries++;
       const resp = await s3.send(new ListObjectsV2Command({
         Bucket: bucket,
         ContinuationToken: token
@@ -147,10 +173,14 @@ async function findVideosByTopic(topic, limit = 3, bucket = process.env.R2_BUCKE
         );
       moreResults.push(...hits);
       token = resp.NextContinuationToken;
+      if (hits.length) {
+        console.log(`[8] findVideosByTopic: flat match found (${hits.length} in try ${flatTries}):`, hits);
+      }
     } while (moreResults.length < limit - results.length && token);
     results.push(...moreResults.slice(0, limit - results.length));
   }
 
+  console.log(`[8] findVideosByTopic: Returning ${results.length} results for "${topic}"`);
   return results.slice(0, limit);
 }
 
@@ -158,6 +188,7 @@ async function findVideosByTopic(topic, limit = 3, bucket = process.env.R2_BUCKE
 // SECTION 9: MAIN CLIP PICKER (LIBRARY -> PEXELS -> PIXABAY)
 // =============================
 async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSubject = '', excludeUrls = []) {
+  console.log(`[9] pickClipFor called: rawQuery="${rawQuery}", mainSubject="${mainSubject}", exclude=${excludeUrls.length}`);
   if (!rawQuery) throw new Error('pickClipFor: query is required');
   if (!mainSubject) throw new Error('pickClipFor: mainSubject is required');
   excludeUrls = excludeUrls.map(u => normalizeUrl(u));
@@ -169,6 +200,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
     .map(k => k.trim().toLowerCase())
     .filter(Boolean);
   let mainQuery = `${mainSubject} ${keywordsArr.join(' ')}`.trim();
+  console.log(`[9] pickClipFor: keywordsRaw="${keywordsRaw}", mainQuery="${mainQuery}"`);
 
   // Search specificity: most-specific → least-specific
   let searchVariants = [
@@ -176,12 +208,14 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
     ...(keywordsArr.length >= 1 ? keywordsArr.map(kw => `${mainSubject} ${kw}`) : []),
     mainSubject
   ].filter((v, i, arr) => v && arr.indexOf(v) === i);
+  console.log(`[9] pickClipFor: searchVariants=`, searchVariants);
 
   // ===== 1) CHECK CLOUD LIBRARY FIRST =====
   for (const variant of searchVariants) {
     try {
       const cloudMatches = await findVideosByTopic(variant, 1);
       if (cloudMatches.length) {
+        console.log(`[9] pickClipFor: Cloud library match for "${variant}":`, cloudMatches[0]);
         return {
           type: 'video',
           url: cloudMatches[0],
@@ -191,12 +225,14 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
         };
       }
     } catch (err) {
+      console.warn(`[9] pickClipFor: Error searching cloud library for "${variant}":`, err.message);
       continue;
     }
   }
 
   // ===== 2) SPECIAL LOGIC FOR MOTIVATIONAL =====
   if (isMotivationalQuery(rawQuery, mainSubject)) {
+    console.log(`[9] pickClipFor: Detected motivational query, using motivational themes.`);
     const motivationalThemes = [
       "inspiring people", "crowd cheering", "audience clapping", "mountain sunrise", "running on beach",
       "reaching summit", "woman smiling confidence", "nature sunrise", "happy people outdoors", "achievement", "success", "celebrating goal",
@@ -225,6 +261,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
           const vf = (top.video_files || []).find(f => f.height / f.width > 0.98 && f.width <= 800)
             || (top.video_files || [])[0];
           if (vf && vf.link) {
+            console.log(`[9] pickClipFor: Motivational Pexels video found: ${vf.link}`);
             return {
               type: 'video',
               url: vf.link,
@@ -235,6 +272,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
           }
         }
       } catch (err) {
+        console.warn(`[9] pickClipFor: Motivational Pexels video error:`, err.message);
         continue;
       }
     }
@@ -255,6 +293,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
           shuffleArray(pics);
           const best = pics[0];
           if (best && best.src && best.src.large) {
+            console.log(`[9] pickClipFor: Motivational Pexels photo found: ${best.src.large}`);
             return {
               type: 'photo',
               url: best.src.large,
@@ -265,6 +304,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
           }
         }
       } catch (err) {
+        console.warn(`[9] pickClipFor: Motivational Pexels photo error:`, err.message);
         continue;
       }
     }
@@ -292,7 +332,6 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
               Array.isArray(v.tags) ? v.tags.join(' ') : '',
               v.description || ''
             ].join(' ');
-            // Vertical-ness boost: prefer vertical
             const vf = (v.video_files || []).find(f => f.height / f.width > 1.1 && f.width <= 800);
             const fileToUse = vf || (v.video_files || []).reduce((max, f) => f.width > max.width ? f : max, v.video_files[0]);
             const scoreBase = stringSimilarity.compareTwoStrings(meta.toLowerCase(), rawQuery.toLowerCase());
@@ -305,15 +344,14 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
             };
           })
           .filter(v => v.bestFile && v.bestFile.link && !excludeUrls.includes(v.normUrl));
-        // Sort: high score, vertical, width
         choices.sort((a, b) =>
           b.score - a.score ||
           (b.bestFile.height / b.bestFile.width > 1 ? 1 : -1) - (a.bestFile.height / a.bestFile.width > 1 ? 1 : -1) ||
           (b.bestFile.width - a.bestFile.width)
         );
-        // Only accept vertical or square for Shorts!
         const top = choices.find(c => c.bestFile.height / c.bestFile.width >= 0.98) || choices[0];
         if (top && top.score >= minScore) {
+          console.log(`[9] pickClipFor: Pexels video found: ${top.bestFile.link} (score: ${top.score})`);
           return {
             type: 'video',
             url: top.bestFile.link,
@@ -324,6 +362,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
         }
       }
     } catch (err) {
+      console.warn(`[9] pickClipFor: Pexels video error for "${query}":`, err.message);
       continue;
     }
   }
@@ -353,14 +392,12 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
               (vid.videos.large && vid.videos.large.url) ||
               (vid.videos.medium && vid.videos.medium.url) ||
               (vid.videos.tiny && vid.videos.tiny.url) || '';
-            // Prefer vertical
             const isVertical = vid.videos.large && vid.videos.large.height / vid.videos.large.width > 1.05;
             const scoreBase = stringSimilarity.compareTwoStrings(meta, rawQuery.toLowerCase());
             const score = scoreBase + (isVertical ? 0.2 : 0);
             return { ...vid, score, videoUrl, normUrl: normalizeUrl(videoUrl) };
           })
           .filter(v => v.videoUrl && !excludeUrls.includes(v.normUrl));
-        // Prefer vertical, then best score
         scored.sort((a, b) =>
           b.score - a.score ||
           ((b.videos.large?.height / b.videos.large?.width) - (a.videos.large?.height / a.videos.large?.width)) ||
@@ -368,6 +405,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
         );
         const top = scored.find(c => c.videos.large?.height / c.videos.large?.width > 0.98) || scored[0];
         if (top) {
+          console.log(`[9] pickClipFor: Pixabay video found: ${top.videoUrl} (score: ${top.score})`);
           return {
             type: 'video',
             url: top.videoUrl,
@@ -378,12 +416,13 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
         }
       }
     } catch (err) {
+      console.warn(`[9] pickClipFor: Pixabay video error for "${query}":`, err.message);
       continue;
     }
   }
 
   // ===== 5) TOTAL FAIL-SAFE =====
-  // If *everything* fails, return null to let the server generate a fallback color/black video.
+  console.error(`[9] pickClipFor: TOTAL FAIL — no video/photo found for "${rawQuery}" (mainSubject="${mainSubject}")`);
   return null;
 }
 
@@ -391,3 +430,4 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
 // SECTION 10: EXPORT
 // =============================
 module.exports = { pickClipFor };
+console.log('[10] Exported pickClipFor function (module.exports)');

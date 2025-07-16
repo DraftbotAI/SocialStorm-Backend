@@ -779,46 +779,54 @@ app.post('/api/generate-video', async (req, res) => {
           let clipPath = null;
           let clipSource = '';
           try {
+            console.log(`[15][${jobId}] Looking for best clip for: "${sceneText}"`);
             clipPath = await findBestClipForScene(sceneText, workDir, usedClipPaths);
             if (clipPath && fs.existsSync(clipPath)) {
               clipSource = 'findBestClipForScene';
+              console.log(`[15][${jobId}] Clip found via findBestClipForScene: ${clipPath}`);
             }
           } catch (e) {
             console.warn(`[15][${jobId}] findBestClipForScene error: ${e.message}`);
             clipPath = null;
           }
-          // If nothing found, try fallback to any R2, Pexels, Pixabay, or fallback asset
+
+          // 4.1 If nothing found, try fallback to ANY R2, Pexels, Pixabay, or fallback asset
           if (!clipPath || !fs.existsSync(clipPath)) {
-            // Try all R2
+            // Try ALL R2
             const r2List = await getR2ClipList(true);
             for (let key of r2List) {
-              const dest = path.join(workDir, `r2_any_${Date.now()}.mp4`);
+              const dest = path.join(workDir, `r2_any_${Date.now()}_${Math.random().toString(36).slice(2)}.mp4`);
               await downloadFromR2ToFile(key, dest);
-              if (fs.existsSync(dest)) { clipPath = dest; clipSource = 'R2-any'; break; }
+              if (fs.existsSync(dest)) {
+                clipPath = dest; clipSource = 'R2-any'; 
+                console.warn(`[15][${jobId}] Used random R2 fallback: ${dest}`);
+                break;
+              }
             }
           }
           if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PEXELS_API_KEY) {
-            // Try Pexels generic
             try {
               const pexelsFallback = await findPexelsClip('animal', workDir);
               if (pexelsFallback && fs.existsSync(pexelsFallback)) {
                 clipPath = pexelsFallback; clipSource = 'Pexels-fallback';
+                console.warn(`[15][${jobId}] Used Pexels generic fallback: ${pexelsFallback}`);
               }
             } catch { }
           }
           if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PIXABAY_API_KEY) {
-            // Try Pixabay generic
             try {
               const pixabayFallback = await findPixabayClip('animal', workDir);
               if (pixabayFallback && fs.existsSync(pixabayFallback)) {
                 clipPath = pixabayFallback; clipSource = 'Pixabay-fallback';
+                console.warn(`[15][${jobId}] Used Pixabay generic fallback: ${pixabayFallback}`);
               }
             } catch { }
           }
+          // FINAL ULTIMATE fallback
           if (!clipPath || !fs.existsSync(clipPath)) {
-            clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
-            clipSource = 'local-fallback';
-            console.warn(`[15][${jobId}] No clip found, using ultimate fallback.mp4`);
+            clipPath = path.join(__dirname, 'assets', 'blank.mp4');
+            clipSource = 'local-blank';
+            console.error(`[15][${jobId}] *** FINAL BLANK fallback: using blank.mp4! ***`);
           }
           usedClipPaths.push(clipPath);
 
@@ -861,7 +869,7 @@ app.post('/api/generate-video', async (req, res) => {
           );
 
           scenes.push(path.join(workDir, `scene-${i + 1}.mp4`));
-          console.log(`[15][${jobId}] Scene ${i + 1} complete. Clip source: ${clipSource}`);
+          console.log(`[15][${jobId}] Scene ${i + 1} complete. Clip source: ${clipSource} | Path: ${clipPath}`);
         } catch (sceneErr) {
           throw new Error(`Scene ${i + 1} failed: ${sceneErr.message}`);
         }
@@ -893,7 +901,6 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
-
 
 
 // ==========================================

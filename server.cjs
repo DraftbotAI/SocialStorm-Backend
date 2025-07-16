@@ -675,8 +675,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
   return res.json({ success: true, thumbnails });
 });
 
-
-
 // ==========================================
 // 15. /api/generate-video ENDPOINT (DEBUG LOG VERSION, CONCATS FIXED)
 // ==========================================
@@ -745,126 +743,135 @@ app.post('/api/generate-video', async (req, res) => {
 
       for (let i = 0; i < steps.length; i++) {
         const sceneText = steps[i].trim();
-        currentStep++;
-        progress[jobId] = {
-          percent: Math.round((currentStep / totalSteps) * 100),
-          status: `Building scene ${i + 1}/${steps.length}`,
-          viralTitle, viralDesc, viralTags
-        };
-        console.log(`\n=========================`);
-        console.log(`[15][${jobId}] Scene ${i + 1}/${steps.length} - "${sceneText}"`);
-
         try {
-          // === 1. TTS AUDIO ===
+          console.log(`[15][${jobId}] Starting scene ${i + 1} / ${steps.length}`);
+
+          currentStep++;
+          progress[jobId] = {
+            percent: Math.round((currentStep / totalSteps) * 100),
+            status: `Building scene ${i + 1}/${steps.length}`,
+            viralTitle, viralDesc, viralTags
+          };
+
+          // 1. TTS Audio generation
           const audioMp3 = path.join(workDir, `scene-${i + 1}.mp3`);
-          console.log(`[15][${jobId}][${i + 1}] 1. About to synthesize TTS`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] Generating TTS audio...`);
           if (pollyVoices && pollyVoices.some(v => v.id === voice)) {
             await synthesizeWithPolly(sceneText, voice, audioMp3);
           } else {
             await synthesizeWithElevenLabs(sceneText, voice, audioMp3);
           }
-          console.log(`[15][${jobId}][${i + 1}] 2. TTS Done: ${audioMp3} Exists: ${fs.existsSync(audioMp3)}`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] TTS audio done.`);
 
-          // === 2. AUDIO WAV ===
+          // 2. Convert mp3 to wav
           const audioWav = audioMp3.replace('.mp3', '.wav');
-          console.log(`[15][${jobId}][${i + 1}] 3. About to convert mp3 to wav`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] Converting mp3 to wav...`);
           await ffmpegPromise(() =>
             ffmpeg().input(audioMp3).audioChannels(1).audioFrequency(44100).output(audioWav)
           );
-          console.log(`[15][${jobId}][${i + 1}] 4. Wav Done: ${audioWav} Exists: ${fs.existsSync(audioWav)}`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] mp3 to wav done.`);
 
-          // === 3. AUDIO DURATION ===
+          // 3. Audio duration
           let audioDur = 3.5;
           try {
             audioDur = await new Promise((resolve, reject) =>
               ffmpeg.ffprobe(audioWav, (err, info) => err ? reject(err) : resolve(info.format.duration))
             );
-            console.log(`[15][${jobId}][${i + 1}] 5. Audio duration: ${audioDur}`);
+            console.log(`[15][${jobId}][Scene ${i + 1}] Audio duration: ${audioDur}`);
           } catch (e) {
-            console.warn(`[15][${jobId}][${i + 1}] ffprobe error, default audio duration.`);
+            console.warn(`[15][${jobId}][Scene ${i + 1}] ffprobe error, default duration used.`);
           }
 
-          // === 4. FIND BEST CLIP (BULLETPROOF CHAIN) ===
+          // 4. Find best clip
           let clipPath = null;
           let clipSource = '';
+          console.log(`[15][${jobId}][Scene ${i + 1}] Finding best clip...`);
           try {
-            console.log(`[15][${jobId}][${i + 1}] 6. About to find best video clip`);
             clipPath = await findBestClipForScene(sceneText, workDir, usedClipPaths);
-            console.log(`[15][${jobId}][${i + 1}] 7. Picked video: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
-            if (clipPath && fs.existsSync(clipPath)) {
-              clipSource = 'findBestClipForScene';
+            if (!clipPath || !fs.existsSync(clipPath)) {
+              console.warn(`[15][${jobId}][Scene ${i + 1}] No clip found via findBestClipForScene.`);
             } else {
-              // 2. Try ANY R2
-              const r2List = await getR2ClipList(true);
-              for (let key of r2List) {
-                const dest = path.join(workDir, `r2_any_${Date.now()}.mp4`);
-                await downloadFromR2ToFile(key, dest);
-                if (fs.existsSync(dest)) { clipPath = dest; clipSource = 'R2-any'; break; }
-              }
-              console.log(`[15][${jobId}][${i + 1}] 8. R2-any fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
+              clipSource = 'findBestClipForScene';
+              console.log(`[15][${jobId}][Scene ${i + 1}] Clip found: ${clipPath}`);
             }
-            // 3. Try Pexels generic (animal)
+          } catch (clipErr) {
+            console.error(`[15][${jobId}][Scene ${i + 1}] Error finding clip: ${clipErr.message}`);
+          }
+
+          // Fallbacks if clip not found
+          if (!clipPath || !fs.existsSync(clipPath)) {
+            // Try any R2 clip fallback
+            const r2List = await getR2ClipList(true);
+            for (let key of r2List) {
+              const dest = path.join(workDir, `r2_any_${Date.now()}.mp4`);
+              await downloadFromR2ToFile(key, dest);
+              if (fs.existsSync(dest)) { clipPath = dest; clipSource = 'R2-any'; break; }
+            }
+            console.log(`[15][${jobId}][Scene ${i + 1}] R2-any fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
+
+            // Try Pexels fallback
             if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PEXELS_API_KEY) {
               const pexelsFallback = await findPexelsClip('animal', workDir);
               if (pexelsFallback && fs.existsSync(pexelsFallback)) {
                 clipPath = pexelsFallback; clipSource = 'Pexels-fallback';
               }
-              console.log(`[15][${jobId}][${i + 1}] 9. Pexels-fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
+              console.log(`[15][${jobId}][Scene ${i + 1}] Pexels-fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
             }
-            // 4. Try Pixabay generic (animal)
+
+            // Try Pixabay fallback
             if ((!clipPath || !fs.existsSync(clipPath)) && process.env.PIXABAY_API_KEY) {
               const pixabayFallback = await findPixabayClip('animal', workDir);
               if (pixabayFallback && fs.existsSync(pixabayFallback)) {
                 clipPath = pixabayFallback; clipSource = 'Pixabay-fallback';
               }
-              console.log(`[15][${jobId}][${i + 1}] 10. Pixabay-fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
+              console.log(`[15][${jobId}][Scene ${i + 1}] Pixabay-fallback: ${clipPath} Exists: ${clipPath && fs.existsSync(clipPath)}`);
             }
-            // 5. Final fallback: blank/fallback
+
+            // Final fallback
             if (!clipPath || !fs.existsSync(clipPath)) {
               clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
               clipSource = 'local-fallback';
-              console.warn(`[15][${jobId}][${i + 1}] 11. No clip found, using fallback.mp4`);
+              console.warn(`[15][${jobId}][${i + 1}] No clip found, using fallback.mp4`);
             }
-          } catch (e) {
-            clipPath = path.join(__dirname, 'assets', 'fallback.mp4');
-            clipSource = 'local-fallback-catch';
-            console.warn(`[15][${jobId}][${i + 1}] Error in clip selection: ${e.message}, using fallback.mp4`);
           }
           usedClipPaths.push(clipPath);
 
-          // === 5. SILENCE LEAD & TAIL ===
+          // 5. Silence lead & tail
           const leadFile = path.join(workDir, `lead-${i + 1}.wav`);
           const tailFile = path.join(workDir, `tail-${i + 1}.wav`);
-          console.log(`[15][${jobId}][${i + 1}] 12. Creating silence lead and tail`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] Creating silence lead and tail...`);
           await Promise.all([
             ffmpegPromise(() =>
               ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 0.5').save(leadFile)),
             ffmpegPromise(() =>
               ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 1.0').save(tailFile))
           ]);
+          console.log(`[15][${jobId}][Scene ${i + 1}] Silence lead/tail done.`);
 
-          // === 6. CONCAT AUDIO SEGMENTS ===
+          // 6. Concatenate audio segments
           const sceneAudioWav = path.join(workDir, `scene-audio-${i + 1}.wav`);
           const audListFile = path.join(workDir, `audlist-${i + 1}.txt`);
           fs.writeFileSync(
             audListFile,
             [leadFile, audioWav, tailFile].map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
           );
-          console.log(`[15][${jobId}][${i + 1}] 13. Concatenating audio segments`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] Concatenating audio segments...`);
           await ffmpegPromise(() =>
             ffmpeg().input(audListFile).input('-f', 'concat').input('-safe', '0').outputOptions('-c:a pcm_s16le').save(sceneAudioWav)
           );
+          console.log(`[15][${jobId}][Scene ${i + 1}] Audio concatenation done.`);
 
-          // === 7. AAC FINAL AUDIO ===
+          // 7. AAC final audio
           const sceneAudioM4a = path.join(workDir, `scene-audio-${i + 1}.m4a`);
-          console.log(`[15][${jobId}][${i + 1}] 14. Converting scene audio to AAC`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] Converting to AAC audio...`);
           await ffmpegPromise(() =>
             ffmpeg().input(sceneAudioWav).outputOptions('-c:a aac', '-b:a 128k').save(sceneAudioM4a)
           );
+          console.log(`[15][${jobId}][Scene ${i + 1}] AAC conversion done.`);
 
-          // === 8. FINAL CLIP COMPOSITION ===
+          // 8. Compose final clip
           const sceneLen = audioDur + 1.5;
-          console.log(`[15][${jobId}][${i + 1}] 15. Composing final scene video, duration: ${sceneLen}, clip: ${clipPath}`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] Composing final clip, duration: ${sceneLen}`);
           await ffmpegPromise(() =>
             ffmpeg()
               .input(clipPath).inputOptions('-stream_loop', '-1')
@@ -873,37 +880,39 @@ app.post('/api/generate-video', async (req, res) => {
               .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
               .save(path.join(workDir, `scene-${i + 1}.mp4`))
           );
-          console.log(`[15][${jobId}][${i + 1}] 16. Scene video done`);
+          console.log(`[15][${jobId}][Scene ${i + 1}] Final clip done.`);
           scenes.push(path.join(workDir, `scene-${i + 1}.mp4`));
-          console.log(`[15][${jobId}] Scene ${i + 1} complete. Clip source: ${clipSource} | Used clip: ${clipPath}`);
+          console.log(`[15][${jobId}] Scene ${i + 1} complete.`);
         } catch (sceneErr) {
-          // On error: Always use fallback and continue to next scene!
-          console.error(`[15][${jobId}] Scene ${i + 1} failed: ${sceneErr.message}. Using fallback.mp4`);
-          const fallbackClip = path.join(__dirname, 'assets', 'fallback.mp4');
-          const fallbackLen = 5; // Arbitrary fallback duration
+          console.error(`[15][${jobId}] Scene ${i + 1} processing failed: ${sceneErr.message}. Using fallback.mp4`);
+
+          // Use fallback clip for this scene
           try {
-            // Make sure fallback audio is valid or generate silent audio fallback if missing
-            let fallbackAudio = null;
-            if (typeof audioMp3 === 'string' && fs.existsSync(audioMp3)) {
-              fallbackAudio = audioMp3;
-              console.warn(`[15][${jobId}] Fallback using existing audioMp3: ${fallbackAudio}`);
-            } else {
-              fallbackAudio = path.join(workDir, `silent-fallback-${i + 1}.wav`);
+            const fallbackClip = path.join(__dirname, 'assets', 'fallback.mp4');
+            const fallbackLen = 5; // seconds
+            const fallbackAudioMp3 = path.join(workDir, `fallback-${i + 1}.mp3`);
+
+            // Generate fallback audio (silence)
+            if (!fs.existsSync(fallbackAudioMp3)) {
               await ffmpegPromise(() =>
-                ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t 2').save(fallbackAudio)
+                ffmpeg().input('anullsrc=r=44100:cl=mono').inputFormat('lavfi').outputOptions('-t', `${fallbackLen}`).save(fallbackAudioMp3)
               );
-              console.warn(`[15][${jobId}] Fallback synthesized silent audio: ${fallbackAudio}`);
             }
+
+            // Compose fallback video with silence or fallback audio
+            const fallbackScenePath = path.join(workDir, `scene-${i + 1}.mp4`);
             await ffmpegPromise(() =>
               ffmpeg()
                 .input(fallbackClip).inputOptions('-stream_loop', '-1')
-                .input(fallbackAudio).inputOptions(`-t ${fallbackLen}`)
+                .input(fallbackAudioMp3).inputOptions(`-t ${fallbackLen}`)
                 .outputOptions('-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30')
                 .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
-                .save(path.join(workDir, `scene-${i + 1}.mp4`))
+                .save(fallbackScenePath)
             );
-            scenes.push(path.join(workDir, `scene-${i + 1}.mp4`));
+
+            scenes.push(fallbackScenePath);
             usedClipPaths.push(fallbackClip);
+            console.log(`[15][${jobId}] Fallback scene for scene ${i + 1} created.`);
           } catch (fallbackErr) {
             console.error(`[15][${jobId}] Fallback scene failed: ${fallbackErr.message}`);
           }
@@ -915,7 +924,7 @@ app.post('/api/generate-video', async (req, res) => {
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Stitching scenes..." };
       const concatListPath = path.join(workDir, "concat.txt");
       fs.writeFileSync(concatListPath, scenes.map(s => `file '${s}'`).join('\n'));
-      console.log(`[15][${jobId}] 17. Concatenating all scenes`);
+      console.log(`[15][${jobId}] Concatenating all scenes`);
       const stitchedVideoPath = path.join(workDir, 'final-stitched.mp4');
       await ffmpegPromise(() =>
         ffmpeg()
@@ -925,7 +934,7 @@ app.post('/api/generate-video', async (req, res) => {
           .outputOptions('-c', 'copy')
           .save(stitchedVideoPath)
       );
-      console.log(`[15][${jobId}] 18. All scenes concatenated`);
+      console.log(`[15][${jobId}] All scenes concatenated`);
 
       const r2Key = `videos/${jobId}.mp4`;
       fs.copyFileSync(stitchedVideoPath, path.join(__dirname, 'tmp', `${jobId}.mp4`));
@@ -943,6 +952,9 @@ app.post('/api/generate-video', async (req, res) => {
     }
   })();
 });
+
+
+
 
 // ==========================================
 // 16. PROGRESS POLLING ENDPOINT

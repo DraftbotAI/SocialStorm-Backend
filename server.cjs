@@ -98,7 +98,6 @@ console.log('[5] Express app initialized. PORT:', PORT);
 // ==========================================
 // 6. CLOUD R2 CLIENT CONFIGURATION
 // ==========================================
-const AWS = require('aws-sdk');
 const { S3, Endpoint } = AWS;
 const s3 = new S3({
   endpoint: new Endpoint(process.env.R2_ENDPOINT),
@@ -108,6 +107,7 @@ const s3 = new S3({
   region: 'us-east-1',
 });
 console.log('[6] Cloudflare R2 S3 client configured. Bucket:', process.env.R2_BUCKET);
+
 
 
 

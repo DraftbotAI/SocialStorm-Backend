@@ -191,17 +191,146 @@ async function findR2Clip(sceneText, usedClipPaths = []) {
 
   const names = available.map(key => key.toLowerCase());
   const keywords = [extractMainSubject(sceneText), ...sanitizeQuery(sceneText).split(' ').slice(0, 2), 'nature', 'animal', 'background'];
-
-  let bestMatch = stringSimilarity.findBestMatch(keywords.join(' '), names).bestMatch;
+  // Combine all keywords into a search string for bestMatch
+  const { bestMatch } = stringSimilarity.findBestMatch(keywords.join(' '), names);
   const chosenKey = available[bestMatch.rating > 0.2 ? names.indexOf(bestMatch.target) : 0];
   const localDest = path.join(process.cwd(), 'tmp', 'r2clips', path.basename(chosenKey));
-
   await downloadFromR2ToFile(chosenKey, localDest);
   console.log(`[7] findR2Clip: Selected R2 clip: ${chosenKey}`);
   return localDest;
 }
 
-// --- Main helper: ALWAYS returns best available clip ---
+// --- 2. PEXELS CLIP SEARCH & DOWNLOAD ---
+async function findPexelsClip(sceneText, workDir) {
+  try {
+    const baseQuery = extractMainSubject(sceneText) || 'nature';
+    const apiKey = process.env.PEXELS_API_KEY;
+    if (!apiKey) throw new Error('Missing PEXELS_API_KEY');
+    const queries = [baseQuery];
+    if (!baseQuery.toLowerCase().includes('nature')) queries.push('nature');
+    if (!baseQuery.toLowerCase().includes('animal')) queries.push('animal');
+    let lastVideos = [];
+    for (const query of queries) {
+      const url = `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=5`;
+      console.log(`[7] findPexelsClip: Searching Pexels for query: "${query}"`);
+      const resp = await axios.get(url, { headers: { Authorization: apiKey } });
+      const videos = resp.data.videos || [];
+      lastVideos = videos.length > 0 ? videos : lastVideos;
+      if (videos.length > 0) {
+        let bestVideo = null;
+        let bestScore = 0;
+        for (const vid of videos) {
+          const combined = (vid.user?.name || '') + ' ' + (vid.url || '');
+          const sim = stringSimilarity.compareTwoStrings(sceneText.toLowerCase(), combined.toLowerCase());
+          if (sim > bestScore) {
+            bestScore = sim;
+            bestVideo = vid;
+          }
+        }
+        if (!bestVideo) bestVideo = videos[0];
+        const clipUrl = bestVideo.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || bestVideo.video_files[0]?.link;
+        if (clipUrl) {
+          const dest = path.join(workDir, `pexels_${Date.now()}.mp4`);
+          const writer = fs.createWriteStream(dest);
+          const response = await axios.get(clipUrl, { responseType: 'stream' });
+          await new Promise((resolve, reject) => {
+            response.data.pipe(writer);
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+          });
+          console.log(`[7] findPexelsClip: Downloaded clip for query "${query}" -> ${dest}`);
+          return dest;
+        }
+      }
+    }
+    if (lastVideos.length > 0) {
+      const vid = lastVideos[0];
+      const clipUrl = vid.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || vid.video_files[0]?.link;
+      if (clipUrl) {
+        const dest = path.join(workDir, `pexels_fallback_${Date.now()}.mp4`);
+        const writer = fs.createWriteStream(dest);
+        const response = await axios.get(clipUrl, { responseType: 'stream' });
+        await new Promise((resolve, reject) => {
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+        console.warn(`[7] findPexelsClip: No strong match, using first available clip for fallback.`);
+        return dest;
+      }
+    }
+    console.warn(`[7] findPexelsClip: No video found for any query derived from "${sceneText}"`);
+    return null;
+  } catch (err) {
+    console.warn(`[7] Pexels search/download failed: ${err.message}`);
+    return null;
+  }
+}
+
+// --- 3. PIXABAY CLIP SEARCH & DOWNLOAD ---
+async function findPixabayClip(sceneText, workDir) {
+  try {
+    const query = extractMainSubject(sceneText) || 'nature';
+    const apiKey = process.env.PIXABAY_API_KEY;
+    if (!apiKey) throw new Error('Missing PIXABAY_API_KEY');
+    const url = `https://pixabay.com/api/videos/?key=${apiKey}&q=${encodeURIComponent(query)}&per_page=5&safesearch=true`;
+    console.log(`[7] findPixabayClip: Searching Pixabay for query: "${query}"`);
+    const resp = await axios.get(url);
+    const hits = resp.data.hits || [];
+    if (hits.length) {
+      let bestHit = null;
+      let bestScore = 0;
+      for (const vid of hits) {
+        const combined = (vid.tags || '') + ' ' + (vid.user || '') + ' ' + (vid.pageURL || '');
+        const sim = stringSimilarity.compareTwoStrings(sceneText.toLowerCase(), combined.toLowerCase());
+        if (sim > bestScore) {
+          bestScore = sim;
+          bestHit = vid;
+        }
+      }
+      if (!bestHit) bestHit = hits[0];
+      const sources = Object.values(bestHit.videos || {});
+      const bestSource = sources.find(s => s.url) || sources[0];
+      if (bestSource && bestSource.url) {
+        const dest = path.join(workDir, `pixabay_${Date.now()}.mp4`);
+        const writer = fs.createWriteStream(dest);
+        const response = await axios.get(bestSource.url, { responseType: 'stream' });
+        await new Promise((resolve, reject) => {
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+        console.log(`[7] findPixabayClip: Downloaded clip -> ${dest}`);
+        return dest;
+      }
+    }
+    // Fallback
+    if (hits.length > 0) {
+      const vid = hits[0];
+      const sources = Object.values(vid.videos || {});
+      const bestSource = sources.find(s => s.url) || sources[0];
+      if (bestSource && bestSource.url) {
+        const dest = path.join(workDir, `pixabay_fallback_${Date.now()}.mp4`);
+        const writer = fs.createWriteStream(dest);
+        const response = await axios.get(bestSource.url, { responseType: 'stream' });
+        await new Promise((resolve, reject) => {
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+        console.warn(`[7] findPixabayClip: No strong match, using first available clip for fallback.`);
+        return dest;
+      }
+    }
+    console.warn(`[7] findPixabayClip: No videos found for query "${query}"`);
+    return null;
+  } catch (err) {
+    console.warn(`[7] Pixabay search/download failed: ${err.message}`);
+    return null;
+  }
+}
+
+// --- 4. Main helper: ALWAYS returns best available clip ---
 async function findBestClipForScene(sceneText, workDir, usedClipPaths = []) {
   console.log(`[7] Finding best clip for scene: "${sceneText}"`);
 
@@ -233,9 +362,38 @@ async function findBestClipForScene(sceneText, workDir, usedClipPaths = []) {
   return blankPath;
 }
 
+// ========== ALL VOICES (FULL) ==========
+const elevenProVoices = [
+  { id: "ZthjuvLPty3kTMaNKVKb", name: "Mike (Pro)", description: "ElevenLabs, Deep US Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
+  { id: "6F5Zhi321D3Oq7v1oNT4", name: "Jackson (Pro)", description: "ElevenLabs, Movie Style Narration", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
+  { id: "p2ueywPKFXYa6hdYfSIJ", name: "Tyler (Pro)", description: "ElevenLabs, US Male Friendly", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Olivia (Pro)", description: "ElevenLabs, Warm US Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
+  { id: "FUfBrNit0NNZAwb58KWH", name: "Emily (Pro)", description: "ElevenLabs, Conversational US Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
+  { id: "xctasy8XvGp2cVO9HL9k", name: "Sophia (Pro Kid)", description: "ElevenLabs, US Female Young", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
+  { id: "goT3UYdM9bhm0n2lmKQx", name: "James (Pro UK)", description: "ElevenLabs, British Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
+  { id: "19STyYD15bswVz51nqLf", name: "Amelia (Pro UK)", description: "ElevenLabs, British Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
+  { id: "2h7ex7B1yGrkcLFI8zUO", name: "Pierre (Pro FR)", description: "ElevenLabs, French Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
+  { id: "xNtG3W2oqJs0cJZuTyBc", name: "Claire (Pro FR)", description: "ElevenLabs, French Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
+  { id: "IP2syKL31S2JthzSSfZH", name: "Diego (Pro ES)", description: "ElevenLabs, Spanish Accent Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: true },
+  { id: "WLjZnm4PkNmYtNCyiCq8", name: "Lucia (Pro ES)", description: "ElevenLabs, Spanish Accent Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: true },
+  { id: "zA6D7RyKdc2EClouEMkP", name: "Aimee (ASMR Pro)", description: "Female British Meditation ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: true },
+  { id: "RCQHZdatZm4oG3N6Nwme", name: "Dr. Lovelace (ASMR Pro)", description: "Pro Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: true },
+  { id: "RBknfnzK8KHNwv44gIrh", name: "James Whitmore (ASMR Pro)", description: "Gentle Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "male", disabled: true },
+  { id: "GL7nH05mDrxcH1JPJK5T", name: "Aimee (ASMR Gentle)", description: "ASMR Gentle Whisper", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: true }
+];
+
+const pollyVoices = [
+  { id: "Matthew", name: "Matthew (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Joey", name: "Joey (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Brian", name: "Brian (British Male)", description: "Amazon Polly, Male, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Russell", name: "Russell (Australian Male)", description: "Amazon Polly, Male, Australian English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Joanna", name: "Joanna (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Kimberly", name: "Kimberly (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Amy", name: "Amy (British Female)", description: "Amazon Polly, Female, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false }
+];
+
 console.log('[7] All helper utilities, clip finders, and voices loaded.');
-
-
 
 
 

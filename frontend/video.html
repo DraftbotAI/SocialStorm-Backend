@@ -15,7 +15,6 @@
   <title>Create Video - SocialStorm AI</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background: #fff;
@@ -24,10 +23,8 @@
       display: flex;
       flex-direction: column;
     }
-
     a { text-decoration: none; color: inherit; }
     ul { list-style: none; }
-
     nav {
       position: sticky;
       top: 0;
@@ -40,13 +37,11 @@
       min-height: 80px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.14);
     }
-
     .nav-logo {
       display: flex;
       align-items: center;
       cursor: pointer;
     }
-
     .nav-logo img {
       height: 200px;
       width: auto;
@@ -57,13 +52,11 @@
       margin-bottom: -24px;
       margin-top: -24px;
     }
-
     .nav-links {
       display: flex;
       gap: 2rem;
       align-items: center;
     }
-
     .nav-links li a {
       color: #fff;
       font-weight: 700;
@@ -71,7 +64,6 @@
       letter-spacing: 0.03em;
       transition: color 0.2s;
     }
-
     .nav-links li a:hover,
     .nav-links li[aria-current="page"] a {
       color: #00e0fe;
@@ -87,8 +79,6 @@
       margin-left: 1.5rem;
     }
     .btn-primary:hover { background: #00b3c4; }
-
-    /* Hamburger */
     .hamburger {
       display: none;
       flex-direction: column;
@@ -119,7 +109,6 @@
     .hamburger.active span:nth-child(3) {
       transform: translateY(-8px) rotate(-45deg);
     }
-
     .mobile-nav {
       display: none;
       flex-direction: column;
@@ -157,7 +146,6 @@
       margin-left: 0;
       margin-top: 1.2rem;
     }
-
     @media (max-width: 850px) {
       .nav-logo img { height: 68px; }
       nav { min-height: 68px; }
@@ -173,7 +161,6 @@
     @media (max-width: 480px) {
       .mobile-nav { padding: 1rem 1rem 1.5rem 1rem; }
     }
-
     main.page-content {
       flex: 1 0 auto;
       width: 100%;
@@ -208,7 +195,6 @@
     }
     textarea:focus, select:focus, input:focus { border-color: #00b3c4; }
     #scriptTextarea { height: 240px; resize: vertical; }
-
     .btn {
       background: #00e0fe;
       color: #10141a;
@@ -225,7 +211,6 @@
     }
     .btn:hover { background: #00b3c4; color: #fff; }
     .btn:disabled { background: #a9e6f7; color: #444; cursor: not-allowed; }
-
     .guidance-tip {
       font-size: 1.02rem;
       color: #007fa3;
@@ -248,9 +233,7 @@
       letter-spacing: 0.04em;
       vertical-align: middle;
     }
-
     #metaDataBox { margin-top: 18px; width: 100%; }
-
     .video-container {
       display: flex;
       justify-content: center;
@@ -288,10 +271,8 @@
       width: 100%;
       word-break: break-word;
     }
-
     #downloadBtn { display: none; margin-bottom: 1rem; }
     #shareBtn { display: none; margin-bottom: 1rem; }
-
     #progressBarWrap {
       width: 100%;
       background: #e6f2fa;
@@ -301,7 +282,6 @@
       box-shadow: 0 2px 12px #00e0fe33;
       display: none;
     }
-
     #progressBar {
       height: 100%;
       background: linear-gradient(90deg,#00e0fe,#00b3c4 85%);
@@ -351,7 +331,6 @@
     }
     .copy-btn:hover { background: #d4f1ff; }
     .copy-btn.copied { color: #008000; background: #c9f7d2; }
-
     .branding-toggle-row {
       display: flex;
       align-items: center;
@@ -374,7 +353,6 @@
     input:checked + .slider { background-color: #00e0fe; }
     input:checked + .slider:before { transform: translateX(20px); background: #e6f2fa; }
     .branding-label { font-size:1rem; font-weight:600; color:#0a2342; margin-right:10px; user-select:none; }
-
     #thumbnail-upsell {
       margin: 2.4rem 0 0 0;
       width: 100%;
@@ -445,7 +423,6 @@
       margin-top: 1.1rem;
       border: 2px solid #00e0fe11;
     }
-
     #chatbot-bubble {
       position: fixed;
       bottom: 26px;
@@ -640,7 +617,6 @@
   <!-- SECTION 6: JAVASCRIPT LOGIC -->
   <!-- ============================= -->
   <script>
-    // ========== Robust Logging Helpers ==========
     function log(...args) { try { console.log('[LOG]', ...args); } catch(_){} }
     function logWarn(...args) { try { console.warn('[WARN]', ...args); } catch(_){} }
     function logError(...args) { try { console.error('[ERROR]', ...args); } catch(_){} }
@@ -658,7 +634,6 @@
       }
     });
 
-    // --- User status (set these values according to your session logic) ---
     const isPaidUser = false;
     const isOverLimit = false;
     const isProUser = false;
@@ -680,7 +655,6 @@
       log('UI', 'updateGenerateVideoBtnState', { scriptVal, isOverLimit, disabled: btn.disabled });
     }
 
-    // --- Voice selection and preview logic ---
     let voices = [];
     let selectedVoice = null;
 
@@ -741,7 +715,6 @@
       log('VOICES', 'Preview played', selectedVoice);
     });
 
-    // --- Animate status for script generation ---
     let genStatusTimer = null;
 
     function startGenStatusAnimation() {
@@ -763,7 +736,6 @@
       log('SCRIPT', 'Status animation stopped');
     }
 
-    // --- Script and video generation ---
     document.getElementById('generateScriptBtn').onclick = async () => {
       const idea = document.getElementById('ideaInput').value.trim();
       const out  = document.getElementById('output');
@@ -976,14 +948,12 @@
       }
     };
 
-    // Helper to sanitize filename from idea input
     function makeFileNameFromIdea() {
       let idea = document.getElementById('ideaInput').value.trim();
       if (!idea) idea = "SocialStormAI-Video";
       return idea.replace(/[^\w\s\-]/gi,'').replace(/\s+/g,'-').substring(0,32) + ".mp4";
     }
 
-    // --- Download Button Logic ---
     document.getElementById('downloadBtn').onclick = async () => {
       const player = document.getElementById('videoPlayer');
       const out    = document.getElementById('output');
@@ -993,8 +963,6 @@
         downloadBtn.disabled = true;
         downloadBtn.textContent = "Preparing…";
         const videoUrl = player.src;
-
-        // Mobile devices: try Web Share API
         const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
         if (isMobile && navigator.canShare && navigator.canShare({ files: [] })) {
           try {
@@ -1016,8 +984,6 @@
             logWarn('DOWNLOAD', 'Web Share API failed, fallback to download.', shareErr);
           }
         }
-
-        // Default download for desktop or fallback
         const resp = await fetch(videoUrl);
         if (!resp.ok) throw new Error("Download failed.");
         const blob = await resp.blob();
@@ -1042,7 +1008,6 @@
       }
     };
 
-    // --- Share Button Logic ---
     document.getElementById('shareBtn').onclick = async () => {
       const player = document.getElementById('videoPlayer');
       const url = player.src;
@@ -1058,7 +1023,6 @@
       window.location.href = mailtoLink;
     };
 
-    // --- Show Thumbnail Upsell Logic ---
     function showThumbUpsell() {
       if (isProUser) {
         document.getElementById('thumbIncluded').style.display = 'block';
@@ -1071,7 +1035,6 @@
       log('THUMBNAIL', 'Thumbnail upsell displayed');
     }
 
-    // --- Sparkie bot logic ---
     function setupSparkie() {
       const bub = document.getElementById('chatbot-bubble');
       bub.onclick = function() {
@@ -1084,6 +1047,5 @@
   <footer>
     &copy; 2025 SocialStorm AI. Built for creators who want to win.
   </footer>
-
 </body>
 </html>

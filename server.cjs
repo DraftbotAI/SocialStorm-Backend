@@ -5,6 +5,9 @@ const { createCanvas, loadImage, registerFont } = require('canvas');
 const JSZip = require('jszip');
 console.log('[1] Canvas and JSZip modules loaded.');
 
+
+
+
 // ==========================================
 // 2. DIRECTORY DEBUGGING (DEV ONLY)
 // ==========================================
@@ -17,6 +20,9 @@ if (fs.existsSync(path.join(__dirname, 'frontend'))) {
 } else {
   console.log('[2] No frontend folder found!');
 }
+
+
+
 
 // ==========================================
 // 3. ENVIRONMENT & DEPENDENCY SETUP
@@ -52,6 +58,9 @@ AWS.config.update({
 const polly = new AWS.Polly();
 console.log('[3] AWS Polly client configured.');
 
+
+
+
 // ==========================================
 // 4. PROGRESS TRACKING MAP
 // ==========================================
@@ -64,6 +73,8 @@ function cleanupJob(jobId, delay = JOB_TTL_MS) {
   }, delay);
   console.log(`[4] Scheduled cleanup for job ${jobId} in ${delay/1000}s`);
 }
+
+
 
 // ==========================================
 // 5. EXPRESS APP INITIALIZATION
@@ -81,9 +92,13 @@ app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voic
 const PORT = process.env.PORT || 3000;
 console.log('[5] Express app initialized. PORT:', PORT);
 
+
+
+
 // ==========================================
 // 6. CLOUD R2 CLIENT CONFIGURATION
 // ==========================================
+const AWS = require('aws-sdk');
 const { S3, Endpoint } = AWS;
 const s3 = new S3({
   endpoint: new Endpoint(process.env.R2_ENDPOINT),
@@ -94,9 +109,17 @@ const s3 = new S3({
 });
 console.log('[6] Cloudflare R2 S3 client configured. Bucket:', process.env.R2_BUCKET);
 
+
+
+
 // ==========================================
-// 7. HELPERS, VOICES, AND LOGGING (INLINE, FULLY MODULAR)
+// 7. HELPERS, CLIP SOURCING, VOICES, LOGGING
 // ==========================================
+
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const stringSimilarity = require('string-similarity'); // Ensure in package.json!
 
 // === String & subject helpers ===
 function stripEmojis(str) {
@@ -118,14 +141,14 @@ function extractMainSubject(script) {
   return "video";
 }
 
-// === FULL CLIP LOGIC: R2, PEXELS, PIXABAY, LOCAL FALLBACK ===
+// --- 1. Cloudflare R2 CLIP SEARCH & DOWNLOAD ---
 async function getR2ClipList(safe = false) {
   try {
     const { Contents } = await s3.listObjectsV2({
       Bucket: process.env.R2_BUCKET,
       Prefix: 'clips/'
     }).promise();
-    const list = (Contents || []).map(obj => obj.Key).filter(Boolean);
+    const list = (Contents || []).map(obj => obj.Key).filter(Boolean).filter(k => k.match(/\.(mp4|mov|webm)$/));
     if (!list.length) throw new Error("No clips in R2");
     console.log(`[7] getR2ClipList: Found ${list.length} in R2`);
     return list;
@@ -150,47 +173,120 @@ async function downloadFromR2ToFile(r2Key, dest) {
     return null;
   }
 }
-
-// TODO: Inline your Pexels/Pixabay logic here if you want that live in the file
-
-async function findBestClipForScene(sceneText, workDir, usedClips = []) {
-  // 1. R2 Cloudflare search (fuzzy match)
+async function findR2Clip(sceneText, usedClipPaths = []) {
   try {
     const clipList = await getR2ClipList(true);
-    const names = clipList.map(key => key.toLowerCase());
+    const available = clipList.filter(k => !usedClipPaths.includes(k));
+    if (!available.length) return null;
+    const names = available.map(key => key.toLowerCase());
     const mainSubject = extractMainSubject(sceneText);
     const keywords = [mainSubject, ...sanitizeQuery(sceneText).split(' ').slice(0,2), 'nature', 'animal', 'background'];
+    let bestKey = null, bestScore = 0;
     for (let kw of keywords) {
-      const best = stringSimilarity.findBestMatch(kw.toLowerCase(), names);
-      if (best.bestMatch.rating > 0.28) {
-        const key = clipList[best.bestMatchIndex];
-        if (usedClips.includes(key)) continue;
-        const localDest = path.join(workDir, path.basename(key));
-        await downloadFromR2ToFile(key, localDest);
-        console.log(`[7] findBestClipForScene: Using R2 clip: ${key}`);
-        return localDest;
+      const { bestMatch, bestMatchIndex } = stringSimilarity.findBestMatch(kw.toLowerCase(), names);
+      if (bestMatch.rating > bestScore && bestMatch.rating > 0.28) {
+        bestScore = bestMatch.rating;
+        bestKey = available[bestMatchIndex];
       }
     }
+    if (bestKey) {
+      const localDest = path.join(process.cwd(), 'tmp', 'r2clips', path.basename(bestKey));
+      await downloadFromR2ToFile(bestKey, localDest);
+      console.log(`[7] findR2Clip: Using R2 clip: ${bestKey}`);
+      return localDest;
+    }
+    return null;
   } catch (err) {
     console.warn(`[7] R2 search failed: ${err.message}`);
+    return null;
   }
-  // 2. Local fallback (if no cloud)
+}
+
+// --- 2. PEXELS CLIP SEARCH & DOWNLOAD ---
+async function findPexelsClip(sceneText, workDir) {
   try {
-    const localFallbackDir = path.join(__dirname, 'clips');
-    if (fs.existsSync(localFallbackDir)) {
-      const files = fs.readdirSync(localFallbackDir).filter(f => f.endsWith('.mp4'));
-      if (files.length) {
-        const chosen = files[Math.floor(Math.random() * files.length)];
-        console.log(`[7] findBestClipForScene: Using local fallback: ${chosen}`);
-        return path.join(localFallbackDir, chosen);
+    const query = extractMainSubject(sceneText) || 'nature';
+    const apiKey = process.env.PEXELS_API_KEY;
+    if (!apiKey) throw new Error('Missing PEXELS_API_KEY');
+    const url = `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=3`;
+    const resp = await axios.get(url, { headers: { Authorization: apiKey } });
+    const videos = resp.data.videos;
+    if (videos && videos.length) {
+      const vid = videos[0]; // Take the top result for now
+      const clipUrl = vid.video_files.find(f => f.quality === "hd" || f.quality === "sd")?.link || vid.video_files[0]?.link;
+      if (clipUrl) {
+        const dest = path.join(workDir, `pexels_${Date.now()}.mp4`);
+        const writer = fs.createWriteStream(dest);
+        const response = await axios.get(clipUrl, { responseType: 'stream' });
+        await new Promise((resolve, reject) => {
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+        console.log(`[7] findPexelsClip: Downloaded ${clipUrl} -> ${dest}`);
+        return dest;
       }
     }
+    console.warn(`[7] findPexelsClip: No video found for "${query}"`);
+    return null;
   } catch (err) {
-    console.warn(`[7] Local fallback search failed: ${err.message}`);
+    console.warn(`[7] Pexels search/download failed: ${err.message}`);
+    return null;
   }
-  // 3. Final fail
-  console.error(`[7] findBestClipForScene: FAILED for scene: "${sceneText}"`);
-  return null;
+}
+
+// --- 3. PIXABAY CLIP SEARCH & DOWNLOAD ---
+async function findPixabayClip(sceneText, workDir) {
+  try {
+    const query = extractMainSubject(sceneText) || 'nature';
+    const apiKey = process.env.PIXABAY_API_KEY;
+    if (!apiKey) throw new Error('Missing PIXABAY_API_KEY');
+    const url = `https://pixabay.com/api/videos/?key=${apiKey}&q=${encodeURIComponent(query)}&per_page=3&safesearch=true`;
+    const resp = await axios.get(url);
+    const hits = resp.data.hits;
+    if (hits && hits.length) {
+      const vid = hits[0];
+      const sources = Object.values(vid.videos || {});
+      const bestSource = sources.find(s => s.url) || sources[0];
+      if (bestSource && bestSource.url) {
+        const dest = path.join(workDir, `pixabay_${Date.now()}.mp4`);
+        const writer = fs.createWriteStream(dest);
+        const response = await axios.get(bestSource.url, { responseType: 'stream' });
+        await new Promise((resolve, reject) => {
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+        console.log(`[7] findPixabayClip: Downloaded ${bestSource.url} -> ${dest}`);
+        return dest;
+      }
+    }
+    console.warn(`[7] findPixabayClip: No video found for "${query}"`);
+    return null;
+  } catch (err) {
+    console.warn(`[7] Pixabay search/download failed: ${err.message}`);
+    return null;
+  }
+}
+
+// --- 4. Main helper: the master search pipeline (called by Section 15) ---
+async function findBestClipForScene(sceneText, workDir, usedClipPaths = []) {
+  // 1. Try R2 (Cloudflare)
+  const r2Clip = await findR2Clip(sceneText, usedClipPaths);
+  if (r2Clip) return r2Clip;
+
+  // 2. Try Pexels
+  const pexelsClip = await findPexelsClip(sceneText, workDir);
+  if (pexelsClip) return pexelsClip;
+
+  // 3. Try Pixabay
+  const pixabayClip = await findPixabayClip(sceneText, workDir);
+  if (pixabayClip) return pixabayClip;
+
+  // 4. Fallback to blank
+  const blankPath = path.join(__dirname, 'assets', 'blank.mp4');
+  console.warn(`[7] findBestClipForScene: Fallback to blank.mp4 for "${sceneText}"`);
+  return blankPath;
 }
 
 // ========== ALL VOICES (FULL) ==========
@@ -222,7 +318,15 @@ const pollyVoices = [
   { id: "Amy", name: "Amy (British Female)", description: "Amazon Polly, Female, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
   { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false }
 ];
-console.log('[7] All helper utilities and voices defined.');
+console.log('[7] All helper utilities, clip finders, and voices loaded.');
+
+// === PACKAGE REQUIREMENTS ===
+// Make sure these are in your package.json dependencies:
+// "axios": "^1.6.0",
+// "string-similarity": "^4.0.4"
+
+
+
 // ==========================================
 // 8. VIRAL METADATA ENGINE (FULL LOGGING)
 // ==========================================
@@ -292,6 +396,9 @@ function splitScriptToScenes(script) {
   return scenes;
 }
 
+
+
+
 // ==========================================
 // 10. ELEVENLABS & POLLY TTS SYNTHESIZER (FULL LOGGING)
 // ==========================================
@@ -338,6 +445,9 @@ async function synthesizeWithPolly(text, voice, outFile) {
   });
 }
 
+
+
+
 // ==========================================
 // 11. /api/voices ENDPOINT (FULL LOGGING)
 // ==========================================
@@ -346,6 +456,9 @@ app.get('/api/voices', (req, res) => {
   const mappedCustomVoices = [...pollyVoices, ...elevenProVoices];
   res.json({ success: true, voices: mappedCustomVoices });
 });
+
+
+
 
 // ==========================================
 // 12. /api/generate-script ENDPOINT
@@ -423,6 +536,9 @@ Final sentence.
   }
 });
 
+
+
+
 // ==========================================
 // 13. SPARKIE (IDEA GENERATOR) ENDPOINT (FULL LOGGING)
 // ==========================================
@@ -450,6 +566,9 @@ app.post('/api/sparkie', async (req, res) => {
     return res.status(500).json({ success: false, error: e.message });
   }
 });
+
+
+
 
 // ==========================================
 // 14. /api/generate-thumbnails ENDPOINT (FULL LOGGING)
@@ -484,8 +603,12 @@ app.post('/api/generate-thumbnails', async (req, res) => {
   }
   return res.json({ success: true, thumbnails });
 });
+
+
+
+
 // ==========================================
-// 15. /api/generate-video ENDPOINT (FULL LOGGING, BULLETPROOF)
+// 15. /api/generate-video ENDPOINT (R2 → Pexels → Pixabay → blank, FULL LOGGING)
 // ==========================================
 function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise timed out') {
   return new Promise((resolve, reject) => {
@@ -505,6 +628,53 @@ function ffmpegPromise(setupFn, timeoutMs = 120000, errMsg = 'ffmpegPromise time
       if (!settled) { settled = true; clearTimeout(timer); reject(e); }
     });
   });
+}
+
+// --- NEW CLIP FINDER ---
+async function findBestClipForScene(sceneText, workDir, usedClipPaths) {
+  // 1. Try Cloudflare R2 first
+  try {
+    const clipPathR2 = await findR2Clip(sceneText, usedClipPaths);
+    if (clipPathR2) {
+      console.log(`[15] [CLIP] Found R2 match: ${clipPathR2}`);
+      return clipPathR2;
+    } else {
+      console.warn(`[15] [CLIP] No R2 match for: "${sceneText}"`);
+    }
+  } catch (err) {
+    console.warn(`[15] [CLIP] R2 search error: ${err.message}`);
+  }
+
+  // 2. Try Pexels API next
+  try {
+    const clipPathPexels = await findPexelsClip(sceneText, workDir);
+    if (clipPathPexels) {
+      console.log(`[15] [CLIP] Found Pexels match: ${clipPathPexels}`);
+      return clipPathPexels;
+    } else {
+      console.warn(`[15] [CLIP] No Pexels match for: "${sceneText}"`);
+    }
+  } catch (err) {
+    console.warn(`[15] [CLIP] Pexels search error: ${err.message}`);
+  }
+
+  // 3. Try Pixabay last
+  try {
+    const clipPathPixabay = await findPixabayClip(sceneText, workDir);
+    if (clipPathPixabay) {
+      console.log(`[15] [CLIP] Found Pixabay match: ${clipPathPixabay}`);
+      return clipPathPixabay;
+    } else {
+      console.warn(`[15] [CLIP] No Pixabay match for: "${sceneText}"`);
+    }
+  } catch (err) {
+    console.warn(`[15] [CLIP] Pixabay search error: ${err.message}`);
+  }
+
+  // 4. Fallback to blank.mp4
+  const blankPath = path.join(__dirname, 'assets', 'blank.mp4');
+  console.warn(`[15] [CLIP] Fallback: using blank.mp4 for "${sceneText}"`);
+  return blankPath;
 }
 
 app.post('/api/generate-video', async (req, res) => {
@@ -585,22 +755,8 @@ app.post('/api/generate-video', async (req, res) => {
           }
           console.log(`[15][${jobId}] Scene ${i + 1} TTS audio generated: ${audioPath}`);
 
-          // --- 2. Pick video clip (fallback to blank) ---
+          // --- 2. Pick video clip ---
           let clipPath = await findBestClipForScene(sceneText, workDir, usedClipPaths);
-          if (!clipPath) {
-            // Fallback to a 2s black video (will be created if missing)
-            clipPath = path.join(__dirname, 'assets', 'blank.mp4');
-            if (!fs.existsSync(clipPath)) {
-              await ffmpegPromise(() =>
-                ffmpeg()
-                  .input('color=black:s=1280x720:d=2')
-                  .inputFormat('lavfi')
-                  .outputOptions(['-c:v libx264', '-t 2', '-pix_fmt yuv420p'])
-                  .save(clipPath)
-              );
-            }
-            console.warn(`[15][${jobId}] No matching clip, used blank.`);
-          }
           usedClipPaths.push(clipPath);
           console.log(`[15][${jobId}] Scene ${i + 1} video clip selected: ${clipPath}`);
 
@@ -681,6 +837,9 @@ app.post('/api/generate-video', async (req, res) => {
   })();
 });
 
+
+
+
 // ==========================================
 // 16. PROGRESS POLLING ENDPOINT
 // ==========================================
@@ -694,6 +853,8 @@ app.get('/api/progress/:jobId', (req, res) => {
   console.log('[16] /api/progress:', jobId, job);
   res.json(job);
 });
+
+
 
 // ==========================================
 // 17. GENERATE VOICE PREVIEWS ENDPOINT
@@ -727,6 +888,8 @@ app.post('/api/generate-voice-previews', async (req, res) => {
   }
 });
 
+
+
 // ==========================================
 // 18. SERVE VIDEOS FROM LOCAL TMP (PROD: SWAP TO R2)
 // ==========================================
@@ -749,6 +912,8 @@ app.get('/video/videos/:key', async (req, res) => {
     .pipe(res);
 });
 
+
+
 // ==========================================
 // 19. PRETTY URLs FOR .HTML PAGES
 // ==========================================
@@ -762,6 +927,8 @@ app.get('/*.html', (req, res) => {
     res.status(404).send('Not found');
   }
 });
+
+
 
 // ==========================================
 // 20. 404 HTML FALLBACK FOR SPA (NOT API)
@@ -783,12 +950,16 @@ app.get('*', (req, res) => {
   }
 });
 
+
+
 // ==========================================
 // 21. LAUNCH SERVER
 // ==========================================
 app.listen(PORT, '0.0.0.0', () =>
   console.log(`[21] 🚀 Server listening on port ${PORT} (http://localhost:${PORT})`)
 );
+
+
 
 // ==========================================
 // END OF FILE

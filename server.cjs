@@ -24,7 +24,6 @@ const ffmpegPath = require('ffmpeg-static');
 const ffmpeg = require('fluent-ffmpeg');
 const { pickClipFor } = require('./pexels-helper.cjs');
 const { OpenAI } = require('openai');
-const textToSpeech = require('@google-cloud/text-to-speech');
 const util = require('util');
 
 ffmpeg.setFfmpegPath(ffmpegPath);

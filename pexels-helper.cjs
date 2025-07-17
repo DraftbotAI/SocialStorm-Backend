@@ -123,7 +123,9 @@ async function findBestVideoFromR2(mainSubject, bucket = process.env.R2_BUCKET) 
         Bucket: bucket,
         ContinuationToken: continuationToken
       }));
-      const keys = (resp.Contents || []).filter(obj => /\.(mp4|mov|webm|mkv)$/i.test(obj.Key)).map(obj => obj.Key);
+      const keys = (resp.Contents || [])
+        .filter(obj => /\.(mp4|mov|webm|mkv)$/i.test(obj.Key))  // Ensure we’re only looking at video files
+        .map(obj => obj.Key);  // Get the filenames of the videos
       allKeys.push(...keys);
       continuationToken = resp.NextContinuationToken;
     } while (continuationToken);
@@ -134,10 +136,11 @@ async function findBestVideoFromR2(mainSubject, bucket = process.env.R2_BUCKET) 
     }
 
     // Fuzzy match with lowered threshold for better matching on partial keywords
-    const names = allKeys.map(k => k.toLowerCase());
-    const best = stringSimilarity.findBestMatch(mainSubject.toLowerCase(), names);
-    if (best.bestMatch.rating > 0.1) {
-      const key = allKeys[best.bestMatchIndex];
+    const names = allKeys.map(k => k.toLowerCase());  // Normalize file names
+    const best = stringSimilarity.findBestMatch(mainSubject.toLowerCase(), names);  // Find the best match
+
+    if (best.bestMatch.rating > 0.1) {  // Set a threshold for a good match
+      const key = allKeys[best.bestMatchIndex];  // Use the best matched video
       const url = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucket}/${key}`;
       console.log(`[findBestVideoFromR2] Fuzzy match "${mainSubject}" to "${key}" (score: ${best.bestMatch.rating.toFixed(2)})`);
       return url;

@@ -194,49 +194,6 @@ async function getPexelsVideo(mainSubject) {
   }
 }
 
-// Pixabay video search by main subject
-async function getPixabayVideo(mainSubject) {
-  try {
-    const resp = await promiseTimeout(
-      axios.get('https://pixabay.com/api/videos/', {
-        params: {
-          key: process.env.PIXABAY_API_KEY,
-          q: mainSubject,
-          safesearch: true,
-          per_page: 8,
-          lang: 'en',
-          video_type: 'all'
-        },
-        timeout: 9000
-      }),
-      10000,
-      "Pixabay video search timed out"
-    );
-    if (resp.data && Array.isArray(resp.data.hits) && resp.data.hits.length > 0) {
-      // Sort hits to prioritize portrait or near-square aspect ratio
-      resp.data.hits.sort((a, b) => {
-        const aAR = (a.videos.large?.width && a.videos.large?.height) ? a.videos.large.height / a.videos.large.width : 0;
-        const bAR = (b.videos.large?.width && b.videos.large?.height) ? b.videos.large.height / b.videos.large.width : 0;
-        return Math.abs(bAR - 1) - Math.abs(aAR - 1);
-      });
-      const vid = resp.data.hits[0];
-      const videoUrl =
-        (vid.videos.large && vid.videos.large.url) ||
-        (vid.videos.medium && vid.videos.medium.url) ||
-        (vid.videos.tiny && vid.videos.tiny.url) || '';
-      if (videoUrl) {
-        console.log(`[getPixabayVideo] Found "${mainSubject}" video: ${videoUrl}`);
-        return videoUrl;
-      }
-    }
-    console.warn(`[getPixabayVideo] No suitable video found for "${mainSubject}"`);
-    return null;
-  } catch (err) {
-    console.warn(`[getPixabayVideo] error for "${mainSubject}":`, err.message);
-    return null;
-  }
-}
-
 // Local fallback (random mp4 from /clips)
 function getLocalFallback() {
   try {

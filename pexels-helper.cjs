@@ -12,7 +12,7 @@ const crypto = require('crypto');
 
 console.log('[Pexels Helper] Dependencies loaded.');
 
-// ========== CONFIG ========== 
+// ========== CONFIG ==========
 const STOP_WORDS = new Set([
   'and', 'the', 'with', 'into', 'for', 'a', 'to', 'of', 'in', 'on', 'at', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'has', 'have', 'had'
 ]);
@@ -33,7 +33,6 @@ const TEMP_DIR = path.join(__dirname, 'tmp');
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 // ========== HELPERS ==========
-
 function sanitizeQuery(raw, maxWords = 10) {
   const cleaned = raw
     .replace(/["“”‘’.,!?;:]/g, '')
@@ -247,7 +246,7 @@ function shuffleArray(arr) {
   }
 }
 
-// ========== UNIVERSAL, NEVER-FAIL PICK CLIP FUNCTION ========== 
+// ========== UNIVERSAL, NEVER-FAIL PICK CLIP FUNCTION ==========
 async function pickClipFor(rawQuery, tempDir = TEMP_DIR, minScore = 0.13, mainSubject = '', excludeUrls = []) {
   console.log(`[pickClipFor] rawQuery="${rawQuery}"`);
 
@@ -319,12 +318,11 @@ async function pickClipFor(rawQuery, tempDir = TEMP_DIR, minScore = 0.13, mainSu
     };
   }
 
-  
   // 6. Nothing worked (should never reach here)
   console.error(`[pickClipFor] TOTAL FAIL — No video found for "${rawQuery}" (subject="${subject}")`);
   return null;
 }
 
-// ========== EXPORT ========== 
+// ========== EXPORT ==========
 module.exports = { pickClipFor };
 console.log('[Pexels Helper] Exported pickClipFor function.');

@@ -9,7 +9,6 @@ if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
   console.log('[WARNING] No frontend folder found!');
 }
 
-
 // ==== SECTION 2: ENVIRONMENT & DEPENDENCY SETUP ====
 console.log('[DEBUG] Entered SECTION 2: ENVIRONMENT & DEPENDENCY SETUP');
 require('dotenv').config();
@@ -29,7 +28,6 @@ const util = require('util');
 ffmpeg.setFfmpegPath(ffmpegPath);
 console.log('[DEBUG] All dependencies loaded successfully');
 
-
 // ==== SECTION 3: PROGRESS TRACKING MAP ====
 console.log('[DEBUG] Entered SECTION 3: PROGRESS TRACKING MAP');
 const progress = {};
@@ -39,7 +37,6 @@ function cleanupJob(jobId, delay = JOB_TTL_MS) {
   console.log('[DEBUG] Cleaning up job:', jobId);
   setTimeout(() => { delete progress[jobId]; console.log('[DEBUG] Job cleaned up:', jobId); }, delay);
 }
-
 
 // ==== SECTION 4: EXPRESS APP INITIALIZATION ====
 console.log('[DEBUG] Entered SECTION 4: EXPRESS APP INITIALIZATION');
@@ -58,15 +55,12 @@ app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voic
 const PORT = process.env.PORT || 8080;
 console.log('[DEBUG] Express app initialized on port:', PORT);
 
-
 // ==== SECTION 5: HEALTH CHECK ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 5: HEALTH CHECK ENDPOINT');
 app.get('/health', (req, res) => {
   console.log('[DEBUG] Health check received');
   res.status(200).send('OK');
 });
-
-
 
 // ==== SECTION 6: CLOUD R2 CLIENT CONFIGURATION ====
 console.log('[DEBUG] Entered SECTION 6: CLOUD R2 CLIENT CONFIGURATION');
@@ -80,42 +74,45 @@ const s3 = new S3({
 });
 console.log('[DEBUG] Cloud R2 client initialized');
 
-
-
-// ==== SECTION 7: HELPERS ==== 
+// ==== SECTION 7: HELPERS ====
 console.log('[DEBUG] Entered SECTION 7: HELPERS');
+
+// Download file helper
+async function downloadToFile(url, outPath) {
+  const writer = fs.createWriteStream(outPath);
+  const response = await axios.get(url, { responseType: 'stream' });
+  return new Promise((resolve, reject) => {
+    response.data.pipe(writer);
+    let error = null;
+    writer.on('error', err => {
+      error = err;
+      writer.close();
+      reject(err);
+    });
+    writer.on('close', () => {
+      if (!error) resolve();
+    });
+  });
+}
 
 // Function to pick clips from CloudR2 first, then fallback to Pexels and Pixabay
 async function pickClipForCloudR2(script, usedUrls = []) {
   console.log('[DEBUG] Checking Cloud R2 for clips...');
-  
-  // Check Cloud R2 first
   const r2Clips = await s3.listObjectsV2({
     Bucket: process.env.R2_BUCKET,
-    Prefix: 'socialstorm-library/', // Cloud R2 folder for video clips
+    Prefix: 'socialstorm-library/',
   }).promise();
 
   const availableClips = r2Clips.Contents.filter(item => item.Key.endsWith('.mp4'));
-
   if (availableClips.length > 0) {
     console.log('[DEBUG] Found clip in Cloud R2:', availableClips[0].Key);
     const selectedClip = availableClips[0];
-    
-    // Return only the URL string and id (not the whole object)
     return { url: `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${selectedClip.Key}`, id: selectedClip.Key };
   }
-
   console.log('[DEBUG] No clips found in Cloud R2, falling back to Pexels');
-  
-  // If no clips found, fallback to Pexels
-  return pickClipFor(script, usedUrls); // Fallback to Pexels helper function
+  return pickClipFor(script, usedUrls);
 }
 
-// The pickClipFor function is already imported from pexels-helper.cjs
-// No need to redeclare it here again
-// const { pickClipFor } = require('./pexels-helper.cjs'); // Keep this import and don't redeclare pickClipFor again
-
-// Helper functions for sanitizing input or removing emojis from text
 function stripEmojis(str) {
   if (!str) return '';
   return str.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD00-\uDDFF])/g, '');
@@ -134,10 +131,8 @@ function extractMainSubject(script) {
       return line;
     }
   }
-  return lines[0]; // Fallback
+  return lines[0];
 }
-
-
 
 // ==== SECTION 8: VIRAL METADATA ENGINE ====
 console.log('[DEBUG] Entered SECTION 8: VIRAL METADATA ENGINE');
@@ -199,27 +194,18 @@ function splitScriptToScenes(script) {
     .filter(line => line.length > 1);
 }
 
-
-// ==== SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT ==== 
+// ==== SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT ====
 console.log('[DEBUG] Entered SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT');
 
-// No longer using Google TTS, now using Polly
 let pollyClient;
-
 try {
   console.log('[DEBUG] Initializing Polly client');
-  // Initialize Polly client
   const polly = new AWS.Polly({ region: 'us-east-1' });
-  pollyClient = polly; // Assign Polly client
+  pollyClient = polly;
   console.log('[DEBUG] Polly client initialized');
 } catch (e) {
   console.error('[ERROR] Could not initialize Polly client:', e);
 }
-
-// Ensure that no Google TTS-related logic remains
-// All references to Google TTS should now be removed.
-
-
 
 // ==== SECTION 11: POLLY TTS SYNTHESIZER ====
 console.log('[DEBUG] Entered SECTION 11: POLLY TTS SYNTHESIZER');
@@ -239,7 +225,6 @@ async function synthesizeWithPolly(text, voice = 'Matthew', outPath) {
     console.log('[DEBUG] Speech synthesized successfully. Writing MP3...');
     await util.promisify(fs.writeFile)(mp3Path, data.AudioStream);
 
-    // Convert MP3 to WAV format using ffmpeg
     const wavPath = mp3Path.replace('.mp3', '.wav');
     console.log('[DEBUG] Converting MP3 to WAV...');
     await new Promise((resolve, reject) => {
@@ -259,7 +244,6 @@ async function synthesizeWithPolly(text, voice = 'Matthew', outPath) {
     throw new Error("Failed to synthesize speech using Polly.");
   }
 }
-
 
 // ==== SECTION 12: VOICES (REFRESHED LIST) ====
 console.log('[DEBUG] Entered SECTION 12: VOICES (REFRESHED LIST)');
@@ -295,14 +279,12 @@ const pollyVoices = [
 
 console.log('[DEBUG] Voices list loaded:', { elevenProVoices, pollyVoices });
 
-
 // ==== SECTION 13: /api/voices ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 13: /api/voices ENDPOINT');
 app.get('/api/voices', (req, res) => {
   console.log('[DEBUG] Fetching available voices');
   res.json({ success: true, voices: [...pollyVoices, ...elevenProVoices] });
 });
-
 
 // ==== SECTION 14: /api/generate-script ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 14: /api/generate-script ENDPOINT');
@@ -366,7 +348,6 @@ SCRIPT:
   }
 });
 
-
 // ==== SECTION 15: /api/generate-video ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
 app.post('/api/generate-video', (req, res) => {
@@ -375,7 +356,6 @@ app.post('/api/generate-video', (req, res) => {
   console.log('[DEBUG] Job started:', jobId);
   res.json({ jobId });
 
-  // All async logic MUST be wrapped in this async function:
   (async () => {
     let finished = false;
     const watchdog = setTimeout(() => {
@@ -466,19 +446,25 @@ app.post('/api/generate-video', (req, res) => {
               throw new Error(`Failed to get media for scene ${i + 1} after many attempts.`);
             }
             const fallbackClip = path.join(workDir, `fallback-${idx}.mp4`);
-            await ffmpeg()
-              .input(`color=black:s=720x1280:d=${audioDur + 1.5}`)
-              .inputFormat('lavfi')
-              .output(fallbackClip)
-              .on('end', () => {})
-              .on('error', err => { throw err; })
-              .run();
+            await new Promise((resolve, reject) => {
+              ffmpeg()
+                .input(`color=black:s=720x1280:d=${audioDur + 1.5}`)
+                .inputFormat('lavfi')
+                .output(fallbackClip)
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
+            });
 
-            await ffmpeg()
-              .input(fallbackClip)
-              .input(wavFile)
-              .outputOptions(['-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest'])
-              .save(sceneFile);
+            await new Promise((resolve, reject) => {
+              ffmpeg()
+                .input(fallbackClip)
+                .input(wavFile)
+                .outputOptions(['-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest'])
+                .save(sceneFile)
+                .on('end', resolve)
+                .on('error', reject);
+            });
 
             scenes.push(sceneFile);
             continue;
@@ -491,22 +477,30 @@ app.post('/api/generate-video', (req, res) => {
 
           // --- ENCODE AUDIO TO M4A FOR FINAL SCENE ---
           const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
-          await ffmpeg()
-            .input(wavFile)
-            .outputOptions(['-c:a aac', '-b:a 128k'])
-            .save(sceneAudio);
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input(wavFile)
+              .outputOptions(['-c:a aac', '-b:a 128k'])
+              .save(sceneAudio)
+              .on('end', resolve)
+              .on('error', reject);
+          });
 
           const sceneLen = audioDur + 1.5;
 
           // --- STITCH AUDIO + VIDEO ---
-          await ffmpeg()
-            .input(mediaPath)
-            .inputOptions(['-stream_loop', '-1'])
-            .input(sceneAudio)
-            .inputOptions([`-t ${sceneLen}`])
-            .outputOptions(['-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30'])
-            .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
-            .save(sceneFile);
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input(mediaPath)
+              .inputOptions(['-stream_loop', '-1'])
+              .input(sceneAudio)
+              .inputOptions([`-t ${sceneLen}`])
+              .outputOptions(['-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30'])
+              .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
+              .save(sceneFile)
+              .on('end', resolve)
+              .on('error', reject);
+          });
 
           scenes.push(sceneFile);
 
@@ -521,81 +515,6 @@ app.post('/api/generate-video', (req, res) => {
       }
 
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
-      console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');
-      currentStep++;
-      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
-
-      const listFile = path.join(workDir, 'list.txt');
-      fs.writeFileSync(
-        listFile,
-        scenes.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
-      );
-      const concatFile = path.join(workDir, 'concat.mp4');
-
-      await new Promise((resolve, reject) => {
-        ffmpeg()
-          .input(listFile)
-          .inputOptions(['-f concat', '-safe 0'])
-          .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
-          .save(concatFile)
-          .on('end', resolve)
-          .on('error', reject);
-      });
-
-      const final = path.join(workDir, 'final.mp4');
-      let useWatermark = !(paidUser && removeWatermark);
-
-      if (useWatermark) {
-        const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
-        await new Promise((resolve, reject) => {
-          ffmpeg()
-            .input(concatFile)
-            .input(watermarkPath)
-            .complexFilter([
-              '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];' +
-              '[0:v][wm]overlay=W-w-20:H-h-20'
-            ])
-            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
-            .save(final)
-            .on('end', resolve)
-            .on('error', reject);
-        });
-      } else {
-        fs.copyFileSync(concatFile, final);
-      }
-
-      currentStep++;
-      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
-      const key = `videos/${uuidv4()}.mp4`;
-      await s3.upload({
-        Bucket: process.env.R2_BUCKET,
-        Key: key,
-        Body: fs.createReadStream(final),
-        ContentType: 'video/mp4',
-        ACL: 'public-read'
-      }).promise();
-
-      progress[jobId] = { percent: 100, status: "Done", key };
-      cleanupJob(jobId, 90 * 1000);
-      finished = true;
-      clearTimeout(watchdog);
-
-    } catch (err) {
-      console.error('[ERROR] Fatal error in video generator:', err);
-      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
-      cleanupJob(jobId, 60 * 1000);
-      finished = true;
-      clearTimeout(watchdog);
-      return;
-    }
-  })(); // END ASYNC IIFE
-});
-
-console.log('[DEBUG] Video generation route set up successfully');
-
-
-      // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
-      console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');
       currentStep++;
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
 
@@ -664,86 +583,7 @@ console.log('[DEBUG] Video generation route set up successfully');
     }
   })();
 });
-
 console.log('[DEBUG] Video generation route set up successfully');
-
-
-
-
-
-      // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
-      console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');
-      currentStep++;
-      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
-
-      const listFile = path.join(workDir, 'list.txt');
-      fs.writeFileSync(
-        listFile,
-        scenes.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
-      );
-      const concatFile = path.join(workDir, 'concat.mp4');
-
-      await new Promise((resolve, reject) => {
-        ffmpeg()
-          .input(listFile)
-          .inputOptions(['-f concat', '-safe 0'])
-          .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
-          .save(concatFile)
-          .on('end', resolve)
-          .on('error', reject);
-      });
-
-      const final = path.join(workDir, 'final.mp4');
-      let useWatermark = !(paidUser && removeWatermark);
-
-      if (useWatermark) {
-        const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
-        await new Promise((resolve, reject) => {
-          ffmpeg()
-            .input(concatFile)
-            .input(watermarkPath)
-            .complexFilter([
-              '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];' +
-              '[0:v][wm]overlay=W-w-20:H-h-20'
-            ])
-            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
-            .save(final)
-            .on('end', resolve)
-            .on('error', reject);
-        });
-      } else {
-        fs.copyFileSync(concatFile, final);
-      }
-
-      currentStep++;
-      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
-      const key = `videos/${uuidv4()}.mp4`;
-      await s3.upload({
-        Bucket: process.env.R2_BUCKET,
-        Key: key,
-        Body: fs.createReadStream(final),
-        ContentType: 'video/mp4',
-        ACL: 'public-read'
-      }).promise();
-
-      progress[jobId] = { percent: 100, status: "Done", key };
-      cleanupJob(jobId, 90 * 1000);
-      finished = true;
-      clearTimeout(watchdog);
-
-    } catch (err) {
-      console.error('[ERROR] Fatal error in video generator:', err);
-      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
-      cleanupJob(jobId, 60 * 1000);
-      finished = true;
-      clearTimeout(watchdog);
-      return;
-    }
-  })();
-});
-
-console.log('[DEBUG] Video generation route set up successfully');
-
 
 // ==== SECTION 18: PROGRESS POLLING ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 18: PROGRESS POLLING ENDPOINT');
@@ -757,27 +597,19 @@ app.get('/api/progress/:jobId', (req, res) => {
   res.json(job);
 });
 
-
 // ==== SECTION 19: GENERATE VOICE PREVIEWS ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 19: GENERATE VOICE PREVIEWS ENDPOINT');
 app.post('/api/generate-voice-previews', async (req, res) => {
   const sampleText = "This is a sample of my voice.";
   console.log('[DEBUG] Generating voice previews for all voices');
   try {
-    for (const v of googleFreeVoices) {
-      const filePath = path.join(__dirname, 'frontend', 'voice-previews', `sample_${v.id}.mp3`);
-      if (!fs.existsSync(filePath)) {
-        await synthesizeWithGoogleTTS(sampleText, v.id, filePath);
-        console.log('[DEBUG] Generated preview for', v.name);
-      }
-    }
-    res.json({ success: true, message: "Google voice previews generated." });
+    // If you want to support Google/other voices, add the TTS logic here.
+    res.json({ success: true, message: "Voice previews generated (placeholder)." });
   } catch (err) {
     console.error('[ERROR] Failed to generate voice previews:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 // ==== SECTION 20: SPARKIE (IDEA GENERATOR) ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 20: SPARKIE (IDEA GENERATOR) ENDPOINT');
@@ -806,7 +638,6 @@ app.post('/api/sparkie', async (req, res) => {
   }
 });
 
-
 // ==== SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2 (streaming, download, range support) ====
 console.log('[DEBUG] Entered SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2');
 app.get('/video/videos/:key', async (req, res) => {
@@ -821,7 +652,7 @@ app.get('/video/videos/:key', async (req, res) => {
     const total = headData.ContentLength;
     const range = req.headers.range;
     res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Access-Control-Allow-Origin', '*'); // CORS for video
+    res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
@@ -856,7 +687,6 @@ app.get('/video/videos/:key', async (req, res) => {
       }).createReadStream();
 
       res.setHeader('Content-Type', 'video/mp4');
-      // The below header helps trigger download reliably on mobile/tablet/desktop
       res.setHeader('Content-Disposition', 'attachment; filename="socialstorm-video.mp4"');
       res.setHeader('Content-Length', total);
 
@@ -873,7 +703,6 @@ app.get('/video/videos/:key', async (req, res) => {
   }
 });
 
-
 // ==== SECTION 22: 404 HTML FALLBACK FOR SPA (not API) ====
 console.log('[DEBUG] Entered SECTION 22: 404 HTML FALLBACK FOR SPA');
 app.get('*', (req, res) => {
@@ -888,7 +717,6 @@ app.get('*', (req, res) => {
     res.status(404).json({ error: 'Not found.' });
   }
 });
-
 
 // ==== SECTION 23: LAUNCH SERVER ====
 console.log('[DEBUG] Entered SECTION 23: LAUNCH SERVER');

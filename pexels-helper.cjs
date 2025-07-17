@@ -34,7 +34,14 @@ fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 // ========== HELPERS ==========
 
-// Sanitize query raw text to avoid stop words and non-necessary characters
+// Helper to ensure we are always working with an array of URLs
+function ensureArray(url) {
+  if (Array.isArray(url)) return url;
+  console.log(`[ensureArray] Wrapped single URL in an array: ${url}`);
+  return [url]; // Wrap the single URL into an array if it's not already an array
+}
+
+// Sanitize query to clean it up and make it more usable
 function sanitizeQuery(raw, maxWords = 10) {
   const cleaned = raw
     .replace(/["“”‘’.,!?;:]/g, '')
@@ -43,14 +50,16 @@ function sanitizeQuery(raw, maxWords = 10) {
     .filter(w => w && !STOP_WORDS.has(w.toLowerCase()))
     .slice(0, maxWords)
     .join(' ');
+  console.log(`[sanitizeQuery] Cleaned query: "${cleaned}"`);
   return cleaned;
 }
 
-// Extract the main subject from the given text
+// Extract main subject from the script using OpenAI API
 async function extractMainSubject(line) {
   try {
     const { OpenAI } = require('openai');
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    console.log(`[extractMainSubject] Extracting main subject from: "${line}"`);
     const resp = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [
@@ -64,20 +73,19 @@ async function extractMainSubject(line) {
     if (subject.includes('\n')) subject = subject.split('\n')[0].trim();
     const cleaned = subject.replace(/[^a-z0-9 ]+/gi, '').trim();
     if (!cleaned) throw new Error("No subject found");
-    console.log(`[extractMainSubject] "${cleaned}"`);
+    console.log(`[extractMainSubject] Extracted subject: "${cleaned}"`);
     return cleaned;
   } catch (err) {
     console.warn('[extractMainSubject fallback]:', err.message);
-    return sanitizeQuery(line, 3).split(' ')[0] || 'nature';
+    const fallback = sanitizeQuery(line, 3).split(' ')[0] || 'nature';
+    console.log(`[extractMainSubject] Falling back to: "${fallback}"`);
+    return fallback;
   }
 }
 
 // Download remote videos to local temp files and return an array of local paths
 async function downloadToLocal(urls, workDir = TEMP_DIR) {
-  if (!Array.isArray(urls)) {
-    console.warn("[downloadToLocal] Expected an array of URLs, but received a single string. Wrapping the string in an array.");
-    urls = [urls]; // Wrap the single URL into an array if a string is passed
-  }
+  urls = ensureArray(urls);  // Ensure we are working with an array of URLs
 
   const downloadedPaths = [];
 
@@ -93,6 +101,7 @@ async function downloadToLocal(urls, workDir = TEMP_DIR) {
     }
 
     try {
+      console.log(`[downloadToLocal] Downloading video from: ${url} to: ${dest}`);
       const response = await axios({
         url,
         method: 'GET',

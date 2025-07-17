@@ -675,10 +675,12 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 // ...end of Section 14...
+
 // ==========================================
 // Defensive Helper Aliases for Consistency (goes before Section 15)
 // ==========================================
 
+// Always checks global.<funcname> so there's NO ReferenceError even if not defined yet.
 const parseScriptToScenes = (typeof global.splitScriptToScenes === 'function')
   ? global.splitScriptToScenes
   : (script) => (typeof script === 'string' && script.trim()) ? script.split('\n').filter(Boolean) : [];

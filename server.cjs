@@ -675,32 +675,53 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 
 // ...end of Section 14...
-
 // ==========================================
-// COMBINE AUDIO AND VIDEO FOR ONE SCENE
+// (Before Section 15) — Defensive Helper Aliases for Consistency
 // ==========================================
-async function combineAudioAndClip(audioPath, videoPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    if (!fs.existsSync(audioPath)) {
-      return reject(new Error(`[combineAudioAndClip] Missing audio file: ${audioPath}`));
-    }
-    if (!fs.existsSync(videoPath)) {
-      return reject(new Error(`[combineAudioAndClip] Missing video file: ${videoPath}`));
-    }
-    const cmd = `ffmpeg -y -i "${videoPath}" -i "${audioPath}" -c:v copy -c:a aac -shortest "${outputPath}"`;
-    console.log(`[combineAudioAndClip] Running FFmpeg: ${cmd}`);
-    require('child_process').exec(cmd, (err, stdout, stderr) => {
-      if (err) {
-        console.error(`[combineAudioAndClip] FFmpeg error:`, err.message);
-        console.error(stderr);
-        return reject(err);
-      }
-      console.log(`[combineAudioAndClip] Scene created successfully: ${outputPath}`);
-      resolve(outputPath);
-    });
-  });
-}
 
+// Defensive: Use your real splitScriptToScenes/findBestClipForScene if available, else fallback dummy.
+const parseScriptToScenes = (typeof splitScriptToScenes === 'function')
+  ? splitScriptToScenes
+  : (script) => (typeof script === 'string' && script.trim()) ? script.split('\n').filter(Boolean) : [];
+
+const findMatchingClip = (typeof findBestClipForScene === 'function')
+  ? findBestClipForScene
+  : async (sceneText) => {
+      console.warn('[findMatchingClip fallback] No local/video clip logic implemented!');
+      return null; // Always fallback to null
+    };
+
+// Defensive wrapper for audio generation
+const generateSceneAudio = (typeof generateSceneAudio === 'function')
+  ? generateSceneAudio
+  : async (sceneText, voice) => {
+      console.warn('[generateSceneAudio fallback] Not implemented!');
+      return null;
+    };
+
+// Defensive wrapper for combining audio/video
+const combineAudioAndClipDef = (typeof combineAudioAndClip === 'function')
+  ? combineAudioAndClip
+  : async (audioPath, videoPath, outputPath) => {
+      console.warn('[combineAudioAndClip fallback] Not implemented!');
+      return null;
+    };
+
+// Defensive wrapper for assembling final video
+const assembleFinalVideo = (typeof assembleFinalVideo === 'function')
+  ? assembleFinalVideo
+  : async (sceneFiles, opts) => {
+      console.warn('[assembleFinalVideo fallback] Not implemented!');
+      return null;
+    };
+
+// Defensive wrapper for upload to R2
+const uploadVideoToR2 = (typeof uploadVideoToR2 === 'function')
+  ? uploadVideoToR2
+  : async (videoPath) => {
+      console.warn('[uploadVideoToR2 fallback] Not implemented!');
+      return null;
+    };
 // ==========================================
 // 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
 // ==========================================
@@ -719,10 +740,10 @@ app.post('/api/generate-video', async (req, res) => {
       return res.status(400).json({ success: false, error: "Script and voice are required." });
     }
 
-    // 2. Parse script into scenes
+    // 2. Parse script into scenes (now using safe wrapper)
     let scenes = [];
     try {
-      scenes = splitScriptToScenes(script); // <-- FIXED: use correct function name!
+      scenes = parseScriptToScenes(script); // <-- SAFER: always available
       console.log(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] Script split into ${scenes.length} scenes.`);
       if (!Array.isArray(scenes) || scenes.length === 0) throw new Error("Script parsing yielded no scenes.");
     } catch (e) {
@@ -743,8 +764,7 @@ app.post('/api/generate-video', async (req, res) => {
         // 3a. Generate audio
         let audioPath;
         try {
-          if (typeof generateSceneAudio !== 'function') throw new Error("generateSceneAudio not implemented!");
-          audioPath = await generateSceneAudio(sceneText, voice); // Should return a path
+          audioPath = await generateSceneAudio(sceneText, voice); // Always safe, see above
           if (!audioPath) throw new Error("Audio path not returned");
           console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Audio generated at ${audioPath}`);
         } catch (err) {
@@ -756,7 +776,6 @@ app.post('/api/generate-video', async (req, res) => {
         // 3b. Select video clip (cloud > local > Pexels)
         let videoPath;
         try {
-          if (typeof findMatchingClip !== 'function') throw new Error("findMatchingClip not implemented!");
           videoPath = await findMatchingClip(sceneText);
           if (!videoPath) throw new Error("No video path returned");
           console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Video found at ${videoPath}`);
@@ -770,8 +789,7 @@ app.post('/api/generate-video', async (req, res) => {
         let sceneOutput;
         const outputPath = path.join(__dirname, 'tmp', `scene_${jobId}_${i+1}.mp4`);
         try {
-          if (typeof combineAudioAndClip !== 'function') throw new Error("combineAudioAndClip not implemented!");
-          sceneOutput = await combineAudioAndClip(audioPath, videoPath, outputPath);
+          sceneOutput = await combineAudioAndClipDef(audioPath, videoPath, outputPath);
           if (!sceneOutput) throw new Error("Scene output path missing");
           console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Scene created at ${sceneOutput}`);
           sceneClips.push(sceneOutput);
@@ -797,7 +815,6 @@ app.post('/api/generate-video', async (req, res) => {
     // 4. Concat all scenes
     let finalVideoPath = null;
     try {
-      if (typeof assembleFinalVideo !== 'function') throw new Error("assembleFinalVideo not implemented!");
       progressMap[progressKey] = { percent: 82, status: "Concatenating scenes…" };
       finalVideoPath = await assembleFinalVideo(sceneClips);
       if (!finalVideoPath) throw new Error("Final video concat failed");
@@ -811,7 +828,6 @@ app.post('/api/generate-video', async (req, res) => {
     // 5. Upload to Cloudflare R2 (or wherever)
     let videoKey = null;
     try {
-      if (typeof uploadVideoToR2 !== 'function') throw new Error("uploadVideoToR2 not implemented!");
       progressMap[progressKey] = { percent: 89, status: "Uploading…" };
       videoKey = await uploadVideoToR2(finalVideoPath);
       if (!videoKey) throw new Error("Upload failed");

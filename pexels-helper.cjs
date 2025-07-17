@@ -1,22 +1,21 @@
 // =============================
-// PEXELS HELPER – BULLETPROOF EDITION
+// REWRITTEN PEXELS HELPER – CLEANED UP VERSION
 // =============================
 
 require('dotenv').config();
 const axios = require('axios');
-const stringSimilarity = require('string-similarity');
 const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const stringSimilarity = require('string-similarity');
 
-console.log('[Pexels Helper] Dependencies loaded.');
+const STOP_WORDS = new Set(['and', 'the', 'with', 'into', 'for', 'a', 'to', 'of', 'in', 'on', 'at', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'has', 'have', 'had']);
 
-// ========== CONFIG ==========
-const STOP_WORDS = new Set([
-  'and', 'the', 'with', 'into', 'for', 'a', 'to', 'of', 'in', 'on', 'at', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'has', 'have', 'had'
-]);
+const LOCAL_CLIP_DIR = path.join(__dirname, 'clips');
+const TEMP_DIR = path.join(__dirname, 'tmp');
 
+// Setup for Cloud R2 (local library)
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT,
@@ -26,16 +25,12 @@ const s3 = new S3Client({
   }
 });
 
-const LOCAL_CLIP_DIR = path.join(__dirname, 'clips');
-const TEMP_DIR = path.join(__dirname, 'tmp');
-
 // Ensure tmp directory exists
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-// ========== HELPERS ==========
+// Helper functions
 function sanitizeQuery(raw, maxWords = 10) {
-  const cleaned = raw
-    .replace(/["“”‘’.,!?;:]/g, '')
+  const cleaned = raw.replace(/["“”‘’.,!?;:]/g, '')
     .split(/\s+/)
     .map(w => w.trim())
     .filter(w => w && !STOP_WORDS.has(w.toLowerCase()))
@@ -44,41 +39,14 @@ function sanitizeQuery(raw, maxWords = 10) {
   return cleaned;
 }
 
-// Extract main subject with fallback
-async function extractMainSubject(line) {
-  try {
-    const { OpenAI } = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const resp = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: "Extract the single main subject of this script in 1-2 words, lowercase, no hashtags, no punctuation, no verbs. Only return the subject." },
-        { role: 'user', content: line }
-      ],
-      temperature: 0.1,
-      max_tokens: 8
-    });
-    let subject = resp.choices[0].message.content.trim().toLowerCase();
-    if (subject.includes('\n')) subject = subject.split('\n')[0].trim();
-    const cleaned = subject.replace(/[^a-z0-9 ]+/gi, '').trim();
-    if (!cleaned) throw new Error("No subject found");
-    console.log(`[extractMainSubject] "${cleaned}"`);
-    return cleaned;
-  } catch (err) {
-    console.warn('[extractMainSubject fallback]:', err.message);
-    return sanitizeQuery(line, 3).split(' ')[0] || 'nature';
-  }
-}
-
-// Download remote videos to local temp files and return an array of local paths
+// Function to download multiple URLs to local
 async function downloadToLocal(urls, workDir = TEMP_DIR) {
   if (!Array.isArray(urls)) {
     console.warn("[downloadToLocal] Expected an array of URLs, but received a single string. Wrapping the string in an array.");
-    urls = [urls]; // Wrap the single URL into an array if a string is passed
+    urls = [urls]; // Convert single URL to array
   }
 
   const downloadedPaths = [];
-
   for (let url of urls) {
     const hash = crypto.createHash('md5').update(url).digest('hex').slice(0, 10);
     const fileName = `remote_${hash}_${Date.now()}.mp4`;
@@ -117,18 +85,7 @@ async function downloadToLocal(urls, workDir = TEMP_DIR) {
   return downloadedPaths;
 }
 
-// Promise timeout
-function promiseTimeout(promise, ms, msg = "Timed out") {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => {
-      console.warn(`[promiseTimeout] Timed out after ${ms}ms: ${msg}`);
-      reject(new Error(msg));
-    }, ms))
-  ]);
-}
-
-// Fuzzy R2 finder – returns best match or random fallback
+// Fuzzy R2 Finder (Prioritize R2 first)
 async function findBestVideoFromR2(mainSubject, bucket = process.env.R2_BUCKET) {
   try {
     let continuationToken = undefined;
@@ -138,9 +95,11 @@ async function findBestVideoFromR2(mainSubject, bucket = process.env.R2_BUCKET) 
         Bucket: bucket,
         ContinuationToken: continuationToken
       }));
+
       const keys = (resp.Contents || [])
-        .filter(obj => /\.(mp4|mov|webm|mkv)$/i.test(obj.Key))  // Ensure we’re only looking at video files
-        .map(obj => obj.Key);  // Get the filenames of the videos
+        .filter(obj => /\.(mp4|mov|webm|mkv)$/i.test(obj.Key)) // Filter video files only
+        .map(obj => obj.Key); // Extract file names
+
       allKeys.push(...keys);
       continuationToken = resp.NextContinuationToken;
     } while (continuationToken);
@@ -150,91 +109,66 @@ async function findBestVideoFromR2(mainSubject, bucket = process.env.R2_BUCKET) 
       return null;
     }
 
-    // Fuzzy match with lowered threshold for better matching on partial keywords
-    const names = allKeys.map(k => k.toLowerCase());  // Normalize file names
-    const best = stringSimilarity.findBestMatch(mainSubject.toLowerCase(), names);  // Find the best match
-
-    if (best.bestMatch.rating > 0.1) {  // Set a threshold for a good match
-      const key = allKeys[best.bestMatchIndex];  // Use the best matched video
+    // Perform fuzzy search and return best match or fallback
+    const names = allKeys.map(k => k.toLowerCase());
+    const best = stringSimilarity.findBestMatch(mainSubject.toLowerCase(), names);
+    if (best.bestMatch.rating > 0.1) {
+      const key = allKeys[best.bestMatchIndex];
       const url = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucket}/${key}`;
-      console.log(`[findBestVideoFromR2] Fuzzy match "${mainSubject}" to "${key}" (score: ${best.bestMatch.rating.toFixed(2)})`);
+      console.log(`[findBestVideoFromR2] Fuzzy match: ${mainSubject} -> ${key}`);
       return url;
     }
 
-    // Otherwise, random fallback
     const fallbackKey = allKeys[Math.floor(Math.random() * allKeys.length)];
     const fallbackUrl = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucket}/${fallbackKey}`;
-    console.log(`[findBestVideoFromR2] No good match, using random fallback: ${fallbackKey}`);
+    console.log(`[findBestVideoFromR2] No good match, using fallback: ${fallbackKey}`);
     return fallbackUrl;
   } catch (err) {
-    console.warn(`[findBestVideoFromR2] error:`, err.message);
+    console.error("[findBestVideoFromR2] Error:", err);
     return null;
   }
 }
 
-// Pexels video search by main subject
+// Pexels video search
 async function getPexelsVideo(mainSubject) {
   try {
-    const resp = await promiseTimeout(
-      axios.get('https://api.pexels.com/videos/search', {
-        headers: { Authorization: process.env.PEXELS_API_KEY },
-        params: { query: mainSubject, per_page: 8 },
-        timeout: 9000
-      }),
-      10000,
-      "Pexels video search timed out"
-    );
+    const resp = await axios.get('https://api.pexels.com/videos/search', {
+      headers: { Authorization: process.env.PEXELS_API_KEY },
+      params: { query: mainSubject, per_page: 8 },
+      timeout: 10000
+    });
+
     const vids = resp.data.videos || [];
     if (vids.length) {
-      // Sort videos so the ones with portrait or near square aspect ratios come first
-      vids.sort((a, b) => {
-        const aAR = (a.width && a.height) ? a.height / a.width : 0;
-        const bAR = (b.width && b.height) ? b.height / b.width : 0;
-        // Prioritize aspect ratios close to 1 (square/portrait)
-        return Math.abs(bAR - 1) - Math.abs(aAR - 1);
-      });
+      vids.sort((a, b) => (a.height / a.width) - (b.height / b.width));
       const top = vids[0];
-      // Prefer HD or SD quality with vertical or square aspect ratio
-      const vf = (top.video_files || []).find(f => (f.quality === "hd" || f.quality === "sd") && f.height >= 720 && f.width <= 900) || (top.video_files || [])[0];
+      const vf = top.video_files.find(f => (f.quality === "hd" || f.quality === "sd") && f.height >= 720 && f.width <= 900) || top.video_files[0];
       if (vf && vf.link) {
-        console.log(`[getPexelsVideo] Found "${mainSubject}" video: ${vf.link}`);
+        console.log(`[getPexelsVideo] Found video: ${vf.link}`);
         return vf.link;
       }
     }
-    console.warn(`[getPexelsVideo] No suitable video found for "${mainSubject}"`);
+    console.warn(`[getPexelsVideo] No video found for ${mainSubject}`);
     return null;
   } catch (err) {
-    console.warn(`[getPexelsVideo] error for "${mainSubject}":`, err.message);
+    console.error(`[getPexelsVideo] Error for ${mainSubject}:`, err);
     return null;
   }
 }
 
-// Local fallback (random mp4 from /clips)
+// Fallback to local videos if needed
 function getLocalFallback() {
   try {
-    if (fs.existsSync(LOCAL_CLIP_DIR)) {
-      const files = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
-      if (files.length) {
-        shuffleArray(files);
-        const fallbackPath = path.join(LOCAL_CLIP_DIR, files[0]);
-        console.log(`[getLocalFallback] Using local fallback: ${fallbackPath}`);
-        return fallbackPath;
-      }
+    const files = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
+    if (files.length) {
+      shuffleArray(files);
+      const fallbackPath = path.join(LOCAL_CLIP_DIR, files[0]);
+      console.log(`[getLocalFallback] Using local fallback: ${fallbackPath}`);
+      return fallbackPath;
     }
   } catch (err) {
-    console.warn(`[getLocalFallback] search failed:`, err.message);
+    console.warn("[getLocalFallback] Error:", err);
   }
-  return null;
-}
-
-// Generic fallback (from bundled fallback video or error)
-function getGenericFallback() {
-  const fallback = path.join(__dirname, 'fallback.mp4');
-  if (fs.existsSync(fallback)) {
-    console.log(`[getGenericFallback] Using bundled fallback.mp4`);
-    return fallback;
-  }
-  console.error(`[getGenericFallback] TOTAL FAIL – No video found anywhere.`);
   return null;
 }
 
@@ -246,83 +180,30 @@ function shuffleArray(arr) {
   }
 }
 
-// ========== UNIVERSAL, NEVER-FAIL PICK CLIP FUNCTION ==========
-async function pickClipFor(rawQuery, tempDir = TEMP_DIR, minScore = 0.13, mainSubject = '', excludeUrls = []) {
-  console.log(`[pickClipFor] rawQuery="${rawQuery}"`);
-
-  // Extract main subject (always, never skip)
-  let subject = mainSubject;
-  if (!subject) subject = await extractMainSubject(rawQuery);
+// Main function to pick a clip
+async function pickClipFor(rawQuery, tempDir = TEMP_DIR, minScore = 0.1, mainSubject = '') {
+  let subject = mainSubject || await extractMainSubject(rawQuery);
   if (!subject) subject = 'nature';
 
-  // 1. R2 library first
   let r2Url = await findBestVideoFromR2(subject);
   if (r2Url) {
     const localPath = await downloadToLocal(r2Url, tempDir);
-    if (localPath) {
-      return {
-        type: 'video',
-        url: localPath,
-        originalUrl: r2Url,
-        source: 'cloud_library'
-      };
-    }
-    // If download failed, continue to next source
+    if (localPath) return { type: 'video', url: localPath, source: 'cloud_library' };
   }
 
-  // 2. Pexels next
   let pexelsUrl = await getPexelsVideo(subject);
   if (pexelsUrl) {
     const localPath = await downloadToLocal(pexelsUrl, tempDir);
-    if (localPath) {
-      return {
-        type: 'video',
-        url: localPath,
-        originalUrl: pexelsUrl,
-        source: 'pexels'
-      };
-    }
+    if (localPath) return { type: 'video', url: localPath, source: 'pexels' };
   }
 
-  // 3. Pixabay last
-  let pixabayUrl = await getPixabayVideo(subject);
-  if (pixabayUrl) {
-    const localPath = await downloadToLocal(pixabayUrl, tempDir);
-    if (localPath) {
-      return {
-        type: 'video',
-        url: localPath,
-        originalUrl: pixabayUrl,
-        source: 'pixabay'
-      };
-    }
-  }
-
-  // 4. Local fallback dir
   const localFallback = getLocalFallback();
-  if (localFallback) {
-    return {
-      type: 'video',
-      url: localFallback,
-      source: 'local_fallback'
-    };
-  }
+  if (localFallback) return { type: 'video', url: localFallback, source: 'local_fallback' };
 
-  // 5. Generic fallback (should always exist)
-  const genericFallback = getGenericFallback();
-  if (genericFallback) {
-    return {
-      type: 'video',
-      url: genericFallback,
-      source: 'generic_fallback'
-    };
-  }
-
-  // 6. Nothing worked (should never reach here)
-  console.error(`[pickClipFor] TOTAL FAIL — No video found for "${rawQuery}" (subject="${subject}")`);
+  console.error("[pickClipFor] No video found.");
   return null;
 }
 
-// ========== EXPORT ==========
+// Export for use
 module.exports = { pickClipFor };
 console.log('[Pexels Helper] Exported pickClipFor function.');

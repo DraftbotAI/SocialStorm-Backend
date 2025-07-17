@@ -369,13 +369,13 @@ SCRIPT:
 
 // ==== SECTION 15: /api/generate-video ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
-
-app.post('/api/generate-video', async (req, res) => {
+app.post('/api/generate-video', (req, res) => {
   const jobId = uuidv4();
   progress[jobId] = { percent: 0, status: 'starting' };
   console.log('[DEBUG] Job started:', jobId);
   res.json({ jobId });
 
+  // All async logic MUST be wrapped in this async function:
   (async () => {
     let finished = false;
     const watchdog = setTimeout(() => {
@@ -398,7 +398,6 @@ app.post('/api/generate-video', async (req, res) => {
     let script = '';
 
     try {
-      // === INPUTS ===
       ({ script, voice, removeWatermark, paidUser } = req.body);
       if (!script || !voice) {
         progress[jobId] = { percent: 100, status: 'Failed: script & voice required' };
@@ -485,25 +484,10 @@ app.post('/api/generate-video', async (req, res) => {
             continue;
           }
 
-          usedUrls.add(mediaObj.originalUrl || mediaObj.url);
-
-          // ---- ERR_INVALID_URL FIX STARTS HERE ----
-          let ext;
-          if (mediaObj.url.startsWith('http')) {
-            ext = path.extname(new URL(mediaObj.url).pathname);
-          } else {
-            ext = path.extname(mediaObj.url);
-          }
+          usedUrls.add(mediaObj.originalUrl);
+          const ext = path.extname(new URL(mediaObj.url).pathname);
           const mediaPath = clipBase + ext;
-
-          if (mediaObj.url.startsWith('http')) {
-            await downloadToFile(mediaObj.url, mediaPath);
-          } else {
-            if (mediaObj.url !== mediaPath) {
-              fs.copyFileSync(mediaObj.url, mediaPath);
-            }
-          }
-          // ---- ERR_INVALID_URL FIX ENDS HERE ----
+          await downloadToFile(mediaObj.url, mediaPath);
 
           // --- ENCODE AUDIO TO M4A FOR FINAL SCENE ---
           const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
@@ -535,6 +519,80 @@ app.post('/api/generate-video', async (req, res) => {
           return;
         }
       }
+
+      // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
+      console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
+
+      const listFile = path.join(workDir, 'list.txt');
+      fs.writeFileSync(
+        listFile,
+        scenes.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+      );
+      const concatFile = path.join(workDir, 'concat.mp4');
+
+      await new Promise((resolve, reject) => {
+        ffmpeg()
+          .input(listFile)
+          .inputOptions(['-f concat', '-safe 0'])
+          .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+          .save(concatFile)
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      const final = path.join(workDir, 'final.mp4');
+      let useWatermark = !(paidUser && removeWatermark);
+
+      if (useWatermark) {
+        const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(concatFile)
+            .input(watermarkPath)
+            .complexFilter([
+              '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];' +
+              '[0:v][wm]overlay=W-w-20:H-h-20'
+            ])
+            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+            .save(final)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+      } else {
+        fs.copyFileSync(concatFile, final);
+      }
+
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
+      const key = `videos/${uuidv4()}.mp4`;
+      await s3.upload({
+        Bucket: process.env.R2_BUCKET,
+        Key: key,
+        Body: fs.createReadStream(final),
+        ContentType: 'video/mp4',
+        ACL: 'public-read'
+      }).promise();
+
+      progress[jobId] = { percent: 100, status: "Done", key };
+      cleanupJob(jobId, 90 * 1000);
+      finished = true;
+      clearTimeout(watchdog);
+
+    } catch (err) {
+      console.error('[ERROR] Fatal error in video generator:', err);
+      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
+      cleanupJob(jobId, 60 * 1000);
+      finished = true;
+      clearTimeout(watchdog);
+      return;
+    }
+  })(); // END ASYNC IIFE
+});
+
+console.log('[DEBUG] Video generation route set up successfully');
+
 
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
       console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');

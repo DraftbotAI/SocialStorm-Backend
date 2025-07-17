@@ -1,16 +1,17 @@
-// ==========================================
-// 1) ENVIRONMENT & DEPENDENCY SETUP
-// ==========================================
-
+// ==== SECTION 1: DIRECTORY DEBUGGING (Safe to comment out in prod) ====
+console.log('[DEBUG] Entered SECTION 1: DIRECTORY DEBUGGING');
 console.log('Working directory:', __dirname);
 console.log('Files/folders here:', require('fs').readdirSync(__dirname));
+
 if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
   console.log('Frontend folder contents:', require('fs').readdirSync(require('path').join(__dirname, 'frontend')));
 } else {
-  console.log('No frontend folder found!');
+  console.log('[WARNING] No frontend folder found!');
 }
 
-// Initialize environment variables and dependencies
+
+// ==== SECTION 2: ENVIRONMENT & DEPENDENCY SETUP ====
+console.log('[DEBUG] Entered SECTION 2: ENVIRONMENT & DEPENDENCY SETUP');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -23,29 +24,52 @@ const ffmpegPath = require('ffmpeg-static');
 const ffmpeg = require('fluent-ffmpeg');
 const { pickClipFor } = require('./pexels-helper.cjs');
 const { OpenAI } = require('openai');
+const textToSpeech = require('@google-cloud/text-to-speech');
 const util = require('util');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
+console.log('[DEBUG] All dependencies loaded successfully');
 
-// ==========================================
-// 2) EXPRESS APP INITIALIZATION
-// ==========================================
 
+// ==== SECTION 3: PROGRESS TRACKING MAP ====
+console.log('[DEBUG] Entered SECTION 3: PROGRESS TRACKING MAP');
+const progress = {};
+const JOB_TTL_MS = 5 * 60 * 1000;
+
+function cleanupJob(jobId, delay = JOB_TTL_MS) {
+  console.log('[DEBUG] Cleaning up job:', jobId);
+  setTimeout(() => { delete progress[jobId]; console.log('[DEBUG] Job cleaned up:', jobId); }, delay);
+}
+
+
+// ==== SECTION 4: EXPRESS APP INITIALIZATION ====
+console.log('[DEBUG] Entered SECTION 4: EXPRESS APP INITIALIZATION');
 const app = express();
+
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
+
 app.use(express.static(path.join(__dirname, 'frontend')));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
-const PORT = process.env.PORT;
 
-// ==========================================
-// 3) CLOUD R2 CLIENT CONFIGURATION
-// ==========================================
+const PORT = process.env.PORT || 3000;
+console.log('[DEBUG] Express app initialized on port:', PORT);
 
+
+// ==== SECTION 5: HEALTH CHECK ENDPOINT ====
+console.log('[DEBUG] Entered SECTION 5: HEALTH CHECK ENDPOINT');
+app.get('/health', (req, res) => {
+  console.log('[DEBUG] Health check received');
+  res.status(200).send('OK');
+});
+
+
+// ==== SECTION 6: CLOUD R2 CLIENT CONFIGURATION ====
+console.log('[DEBUG] Entered SECTION 6: CLOUD R2 CLIENT CONFIGURATION');
 const { S3, Endpoint } = AWS;
 const s3 = new S3({
   endpoint: new Endpoint(process.env.R2_ENDPOINT),
@@ -54,61 +78,70 @@ const s3 = new S3({
   signatureVersion: 'v4',
   region: 'us-east-1',
 });
+console.log('[DEBUG] Cloud R2 client initialized');
 
-// ==========================================
-// 4) HELPERS
-// ==========================================
 
-async function downloadToFile(url, dest) {
-  console.log(`Downloading from URL: ${url} to ${dest}`);
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const w = fs.createWriteStream(dest);
-  const r = await axios.get(url, { responseType: 'stream' });
-  r.data.pipe(w);
-  return new Promise((res, rej) => w.on('finish', res).on('error', rej));
-}
+// ==== SECTION 7: HELPERS ====
+console.log('[DEBUG] Entered SECTION 7: HELPERS');
 
-function sanitizeQuery(s, max = 12) {
-  const stop = new Set(['and', 'the', 'with', 'into', 'for', 'a', 'to', 'of', 'in']);
-  return s.replace(/["“”‘’.,!?;]/g, '')
-    .split(/\s+/)
-    .filter(w => !stop.has(w.toLowerCase()))
-    .slice(0, max)
-    .join(' ');
-}
+async function pickClipForCloudR2(script, usedUrls = []) {
+  console.log('[DEBUG] Checking Cloud R2 for clips...');
+  // Check Cloud R2 first
+  const r2Clips = await s3.listObjectsV2({
+    Bucket: process.env.R2_BUCKET,
+    Prefix: 'socialstorm-library/', // Cloud R2 folder for video clips
+  }).promise();
 
-function stripEmojis(str) {
-  return str.replace(/\p{Extended_Pictographic}/gu, '');
-}
-
-async function extractMainSubject(script) {
-  try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    console.log(`Extracting main subject from script: ${script.slice(0, 30)}...`);
-    const out = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: 'Extract the ONE main subject of this script in 1-3 words, lowercase, no hashtags or punctuation. Only return the subject.' },
-        { role: 'user', content: script }
-      ],
-      temperature: 0.2
-    });
-    let subject = out.choices[0].message.content.trim().toLowerCase();
-    if (subject.includes('\n')) subject = subject.split('\n')[0].trim();
-    return subject.replace(/[^a-z0-9 ]+/gi, '').trim();
-  } catch (err) {
-    console.log('Error extracting main subject:', err);
-    return sanitizeQuery(script).split(' ')[0] || 'topic';
+  const availableClips = r2Clips.Contents.filter(item => item.Key.endsWith('.mp4'));
+  if (availableClips.length > 0) {
+    console.log('[DEBUG] Found clip in Cloud R2:', availableClips[0].Key);
+    const selectedClip = availableClips[0];
+    return { url: `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${selectedClip.Key}`, id: selectedClip.Key };
   }
+
+  console.log('[DEBUG] No clips found in Cloud R2, falling back to Pexels');
+  return pickClipFor(script, usedUrls); // Fallback to Pexels helper function
 }
 
-// ==========================================
-// 5) VIRAL METADATA ENGINE
-// ==========================================
+async function pickClipFor(script, usedUrls = []) {
+  console.log('[DEBUG] Searching for clip based on script:', script);
+  // Fallback logic for Pexels and Pixabay
+  const pexelsResponse = await axios.get('https://api.pexels.com/v1/search', {
+    headers: { Authorization: `Bearer ${process.env.PEXELS_API_KEY}` },
+    params: { query: sanitizeQuery(script), per_page: 1 },
+  });
 
+  if (pexelsResponse.data.photos.length > 0) {
+    const video = pexelsResponse.data.photos[0].src.original;
+    console.log('[DEBUG] Clip found in Pexels:', video);
+    return { url: video, id: video }; // Return video URL
+  }
+
+  // Fallback to Pixabay if Pexels doesn’t return a video
+  const pixabayResponse = await axios.get('https://pixabay.com/api/videos/', {
+    params: {
+      key: process.env.PIXABAY_API_KEY,
+      q: sanitizeQuery(script),
+      per_page: 1,
+    },
+  });
+
+  if (pixabayResponse.data.hits.length > 0) {
+    const video = pixabayResponse.data.hits[0].videos.large.url;
+    console.log('[DEBUG] Clip found in Pixabay:', video);
+    return { url: video, id: video }; // Return video URL
+  }
+
+  console.log('[DEBUG] No clips found in Pexels or Pixabay');
+  return null; // If no video is found anywhere
+}
+
+
+// ==== SECTION 8: VIRAL METADATA ENGINE ====
+console.log('[DEBUG] Entered SECTION 8: VIRAL METADATA ENGINE');
 async function generateViralMetadata({ script, topic, oldTitle, oldDesc }) {
+  console.log('[DEBUG] Generating viral metadata for script');
   try {
-    console.log('Generating viral metadata...');
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const metaPrompt = `
 You are an expert YouTube Shorts viral strategist. For the following short-form video script and topic, generate:
@@ -128,6 +161,7 @@ DESCRIPTION: [desc]
 HASHTAGS: [hashtag1, hashtag2, ...]
 `.trim();
 
+    console.log('[DEBUG] Sending OpenAI prompt for viral metadata');
     const out = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'user', content: metaPrompt }],
@@ -144,19 +178,18 @@ HASHTAGS: [hashtag1, hashtag2, ...]
     let viralDesc = stripEmojis(descMatch ? descMatch[1].trim() : oldDesc);
     let viralTags = stripEmojis(hashtagsMatch ? hashtagsMatch[1].trim() : '');
 
+    console.log('[DEBUG] Generated viral metadata:', { viralTitle, viralDesc, viralTags });
     return { viralTitle, viralDesc, viralTags };
   } catch (err) {
-    console.error("Viral metadata fallback, error:", err.message);
+    console.error('[ERROR] Viral metadata generation failed:', err.message);
     return { viralTitle: oldTitle, viralDesc: oldDesc, viralTags: '' };
   }
 }
 
-// ==========================================
-// 6) SCRIPT-TO-SCENES SPLITTER
-// ==========================================
-
+// ==== SECTION 9: SCRIPT-TO-SCENES SPLITTER ====
+console.log('[DEBUG] Entered SECTION 9: SCRIPT-TO-SCENES SPLITTER');
 function splitScriptToScenes(script) {
-  console.log(`Splitting script into scenes: ${script.slice(0, 30)}...`);
+  console.log('[DEBUG] Splitting script into scenes');
   return script
     .split(/(?<=[\.!\?])\s+|\n/)
     .map(s => s.trim())
@@ -164,46 +197,128 @@ function splitScriptToScenes(script) {
     .filter(line => line.length > 1);
 }
 
-// ==========================================
-// 7) AMAZON POLLY CLIENT CONFIGURATION
-// ==========================================
 
-const polly = new AWS.Polly({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: 'us-east-1'
-});
+// ==== SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT ====
+console.log('[DEBUG] Entered SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT');
+let pollyClient;
+try {
+  // No longer using Google TTS, now using Polly
+  console.log('[DEBUG] Initializing Polly client');
+  const polly = new AWS.Polly({ region: 'us-east-1' });
+  pollyClient = polly;
+  console.log('[DEBUG] Polly client initialized');
+} catch (e) {
+  console.error('[ERROR] Could not initialize Polly client:', e);
+}
 
-// ==========================================
-// 8) /api/voices endpoint
-// ==========================================
 
+// ==== SECTION 11: POLLY TTS SYNTHESIZER ====
+console.log('[DEBUG] Entered SECTION 11: POLLY TTS SYNTHESIZER');
+async function synthesizeWithPolly(text, voice = 'Matthew', outPath) {
+  console.log(`[DEBUG] Synthesizing speech with Polly for voice: ${voice}`);
+  if (!pollyClient) throw new Error("Polly client not initialized.");
+  const params = {
+    Text: text,
+    OutputFormat: 'mp3',
+    VoiceId: voice,
+    SampleRate: '22050',
+  };
+
+  try {
+    const data = await pollyClient.synthesizeSpeech(params).promise();
+    const mp3Path = outPath;
+    console.log('[DEBUG] Speech synthesized successfully. Writing MP3...');
+    await util.promisify(fs.writeFile)(mp3Path, data.AudioStream);
+
+    // Convert MP3 to WAV format using ffmpeg
+    const wavPath = mp3Path.replace('.mp3', '.wav');
+    console.log('[DEBUG] Converting MP3 to WAV...');
+    await new Promise((resolve, reject) => {
+      ffmpeg()
+        .input(mp3Path)
+        .audioChannels(1)
+        .audioFrequency(44100)
+        .output(wavPath)
+        .on('end', resolve)
+        .on('error', reject)
+        .run();
+    });
+    console.log('[DEBUG] WAV file saved:', wavPath);
+    return wavPath;
+  } catch (err) {
+    console.error('[ERROR] Polly TTS error:', err);
+    throw new Error("Failed to synthesize speech using Polly.");
+  }
+}
+
+
+// ==== SECTION 12: VOICES (REFRESHED LIST) ====
+console.log('[DEBUG] Entered SECTION 12: VOICES (REFRESHED LIST)');
+const elevenProVoices = [
+  { id: "ZthjuvLPty3kTMaNKVKb", name: "Mike (Pro)", description: "ElevenLabs, Deep US Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "6F5Zhi321D3Oq7v1oNT4", name: "Jackson (Pro)", description: "ElevenLabs, Movie Style Narration", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "p2ueywPKFXYa6hdYfSIJ", name: "Tyler (Pro)", description: "ElevenLabs, US Male Friendly", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Olivia (Pro)", description: "ElevenLabs, Warm US Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "FUfBrNit0NNZAwb58KWH", name: "Emily (Pro)", description: "ElevenLabs, Conversational US Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "xctasy8XvGp2cVO9HL9k", name: "Sophia (Pro Kid)", description: "ElevenLabs, US Female Young", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "goT3UYdM9bhm0n2lmKQx", name: "James (Pro UK)", description: "ElevenLabs, British Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "19STyYD15bswVz51nqLf", name: "Amelia (Pro UK)", description: "ElevenLabs, British Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "2h7ex7B1yGrkcLFI8zUO", name: "Pierre (Pro FR)", description: "ElevenLabs, French Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "xNtG3W2oqJs0cJZuTyBc", name: "Claire (Pro FR)", description: "ElevenLabs, French Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "IP2syKL31S2JthzSSfZH", name: "Diego (Pro ES)", description: "ElevenLabs, Spanish Accent Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "WLjZnm4PkNmYtNCyiCq8", name: "Lucia (Pro ES)", description: "ElevenLabs, Spanish Accent Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "zA6D7RyKdc2EClouEMkP", name: "Aimee (ASMR Pro)", description: "Female British Meditation ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false },
+  { id: "RCQHZdatZm4oG3N6Nwme", name: "Dr. Lovelace (ASMR Pro)", description: "Pro Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false },
+  { id: "RBknfnzK8KHNwv44gIrh", name: "James Whitmore (ASMR Pro)", description: "Gentle Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "male", disabled: false },
+  { id: "GL7nH05mDrxcH1JPJK5T", name: "Aimee (ASMR Gentle)", description: "ASMR Gentle Whisper", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false }
+];
+
+const pollyVoices = [
+  { id: "Matthew", name: "Matthew (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Joey", name: "Joey (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Brian", name: "Brian (British Male)", description: "Amazon Polly, Male, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Russell", name: "Russell (Australian Male)", description: "Amazon Polly, Male, Australian English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Joanna", name: "Joanna (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Kimberly", name: "Kimberly (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Amy", name: "Amy (British Female)", description: "Amazon Polly, Female, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false }
+];
+
+console.log('[DEBUG] Voices list loaded:', { elevenProVoices, pollyVoices });
+
+
+// ==== SECTION 13: /api/voices ENDPOINT ====
+console.log('[DEBUG] Entered SECTION 13: /api/voices ENDPOINT');
 app.get('/api/voices', (req, res) => {
-  console.log('Fetching available voices...');
-  res.json({ success: true, voices: mappedCustomVoices });
+  console.log('[DEBUG] Fetching available voices');
+  res.json({ success: true, voices: [...pollyVoices, ...elevenProVoices] });
 });
 
-// ==========================================
-// 9) /api/generate-script endpoint
-// ==========================================
 
+// ==== SECTION 14: /api/generate-script ENDPOINT ====
+console.log('[DEBUG] Entered SECTION 14: /api/generate-script ENDPOINT');
 app.post('/api/generate-script', async (req, res) => {
   const { idea } = req.body;
   if (!idea) return res.status(400).json({ success: false, error: 'Idea required' });
+
+  console.log('[DEBUG] Generating script for idea:', idea);
   try {
-    console.log(`Generating script for idea: ${idea}`);
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
     const scriptPrompt = `
 Generate a YouTube Shorts script for this topic, with each line being a punchy, voice-friendly fact or statement.
 - No emojis, no lists, no numbers, no bullet points, just natural, crisp lines.
 - Lines must be short and easy for text-to-speech voices to read.
+- Do NOT use any numbered list, bullet list, or anything that sounds like a list unless user requests it.
+- No repeating words/phrases, no "as you know", no generic filler.
+- Each line must be interesting and unique.
 Format (no headers, just the raw script, one short line per line):
 
 THEME: ${idea}
 
 SCRIPT:
 `.trim();
-
+    console.log('[DEBUG] Sending OpenAI prompt to generate script');
     const out = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'system', content: scriptPrompt }],
@@ -225,6 +340,7 @@ SCRIPT:
       script, topic: idea, oldTitle: '', oldDesc: ''
     });
 
+    console.log('[DEBUG] Generated script, title, description, and hashtags');
     return res.json({
       success: true,
       script,
@@ -236,49 +352,406 @@ SCRIPT:
       oldDesc: ''
     });
   } catch (err) {
-    console.error('SCRIPT ERR:', err);
+    console.error('[ERROR] Script generation failed:', err);
     if (!res.headersSent) return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ==========================================
-// 10) /api/generate-video endpoint
-// ==========================================
 
+// ==== SECTION 15: /api/generate-video ENDPOINT ====
+console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
 app.post('/api/generate-video', async (req, res) => {
   const jobId = uuidv4();
-  console.log(`Job started for video generation: ${jobId}`);
   progress[jobId] = { percent: 0, status: 'starting' };
+  console.log('[DEBUG] Job started:', jobId);
   res.json({ jobId });
 
   (async () => {
     let finished = false;
     let watchdog = setTimeout(() => {
       if (!finished && progress[jobId]) {
-        console.log('Job timed out:', jobId);
         progress[jobId] = { percent: 100, status: "Failed: Timed out." };
         cleanupJob(jobId);
+        console.log('[DEBUG] Job failed due to timeout');
       }
     }, 10 * 60 * 1000);
 
     try {
       const { script, voice, removeWatermark, paidUser } = req.body;
       if (!script || !voice) {
-        console.log('Missing script or voice for job:', jobId);
         progress[jobId] = { percent: 100, status: 'Failed: script & voice required' };
+        console.log('[ERROR] Missing required data: script or voice');
         cleanupJob(jobId, 10 * 1000);
         finished = true;
         clearTimeout(watchdog);
         return;
       }
 
-      console.log('Generating video for job:', jobId);
-      // Existing video generation logic...
-      // Skipping for brevity as per your request
+      console.log('[DEBUG] Starting video generation process');
+      const mainSubject = await extractMainSubject(script);
+      if (!mainSubject) throw new Error('No main subject found for this script.');
+      
+      const steps = splitScriptToScenes(script).slice(0, 8);
+      const totalSteps = steps.length + 4;
+      let currentStep = 0;
 
-    } catch (err) {
-      console.error("Fatal error in video generator:", err);
-      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
+      const workDir = path.join(__dirname, 'tmp', uuidv4());
+      fs.mkdirSync(workDir, { recursive: true });
+      const scenes = [];
+      const usedUrls = new Set();
+      const usedIds = new Set();
+      const fallbackQueries = [
+        "nature", "background", "city", "abstract", "travel", "people", "pattern", "wallpaper"
+      ];
+
+      let mediaFailCount = 0;
+      for (let i = 0; i < steps.length; i++) {
+        try {
+          currentStep++;
+          progress[jobId] = {
+            percent: Math.round((currentStep / totalSteps) * 100),
+            status: `Building scene ${i + 1}/${steps.length}`
+          };
+
+          const idx = String(i + 1).padStart(2, '0');
+          const text = steps[i];
+          const audioFile = path.join(workDir, `audio-${idx}.mp3`);
+          const wavFile = path.join(workDir, `audio-${idx}.wav`);
+          const clipBase = path.join(workDir, `media-${idx}`);
+          const sceneFile = path.join(workDir, `scene-${idx}.mp4`);
+
+          console.log('[DEBUG] Generating audio for scene:', idx);
+
+          const pollyVoiceIds = pollyVoices.map(v => v.id);
+          if (pollyVoiceIds.includes(voice)) {
+            const wav = await synthesizeWithPolly(text, voice, audioFile);
+            fs.renameSync(wav, wavFile);
+          } else {
+            throw new Error(`Invalid voice selection: ${voice}`);
+          }
+
+          let audioDur = 3.5;
+          try {
+            audioDur = await new Promise((resolve, reject) =>
+              ffmpeg.ffprobe(wavFile, (err, info) => err ? reject(err) : resolve(info.format.duration))
+            );
+          } catch (e) {
+            audioDur = 3.5;
+          }
+
+          let mediaObj = null;
+          let attempts = 0;
+          let found = false;
+
+          // Check Cloud R2 first, then fallback to Pexels, then Pixabay
+          mediaObj = await pickClipForCloudR2(script, Array.from(usedUrls));
+
+          if (!mediaObj || !mediaObj.url) {
+            mediaFailCount++;
+            if (mediaFailCount > 3) {
+              throw new Error(`Failed to get media for scene ${i+1} after many attempts.`);
+            }
+            const colorClip = path.join(workDir, `fallback-black-${idx}.mp4`);
+            let safeDuration = Number(audioDur) && !isNaN(audioDur) ? audioDur + 1.5 : 3.5;
+            await new Promise((resolve, reject) => {
+              ffmpeg()
+                .input(`color=black:s=720x1280:d=${safeDuration}`)
+                .inputFormat('lavfi')
+                .output(colorClip)
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
+            });
+
+            await new Promise((resolve, reject) => {
+              ffmpeg()
+                .input(colorClip)
+                .input(wavFile)
+                .outputOptions([
+                  '-map 0:v:0',
+                  '-map 1:a:0',
+                  '-c:v libx264',
+                  '-c:a aac',
+                  '-shortest',
+                  '-r 30'
+                ])
+                .save(sceneFile)
+                .on('end', resolve)
+                .on('error', reject);
+            });
+
+            scenes.push(sceneFile);
+            continue;
+          }
+
+          const ext = path.extname(new URL(mediaObj.url).pathname);
+          await downloadToFile(mediaObj.url, clipBase + ext);
+
+          const leadFile = path.join(workDir, `lead-${idx}.wav`);
+          const tailFile = path.join(workDir, `tail-${idx}.wav`);
+
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input('anullsrc=r=44100:cl=mono')
+              .inputFormat('lavfi')
+              .outputOptions(['-t 0.5'])
+              .save(leadFile)
+              .on('end', resolve)
+              .on('error', reject)
+              .run();
+          });
+
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input('anullsrc=r=44100:cl=mono')
+              .inputFormat('lavfi')
+              .outputOptions(['-t 1.0'])
+              .save(tailFile)
+              .on('end', resolve)
+              .on('error', reject)
+              .run();
+          });
+
+          const sceneAudioWav = path.join(workDir, `scene-audio-${idx}.wav`);
+          const audListFile = path.join(workDir, `audlist-${idx}.txt`);
+          fs.writeFileSync(
+            audListFile,
+            [leadFile, wavFile, tailFile].map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+          );
+
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input(audListFile)
+              .inputOptions(['-f concat', '-safe 0'])
+              .outputOptions(['-c:a pcm_s16le'])
+              .save(sceneAudioWav)
+              .on('end', resolve)
+              .on('error', reject)
+              .run();
+          });
+
+          const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input(sceneAudioWav)
+              .outputOptions(['-c:a aac', '-b:a 128k'])
+              .save(sceneAudio)
+              .on('end', resolve)
+              .on('error', reject)
+              .run();
+          });
+
+          const sceneLen = audioDur + 1.5;
+
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input(clipBase + ext)
+              .inputOptions(['-stream_loop', '-1'])
+              .input(sceneAudio)
+              .inputOptions([`-t ${sceneLen}`])
+              .outputOptions([
+                '-map 0:v:0',
+                '-map 1:a:0',
+                '-c:v libx264',
+                '-c:a aac',
+                '-shortest',
+                '-r 30'
+              ])
+              .videoFilters(
+                'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280'
+              )
+              .save(sceneFile)
+              .on('end', resolve)
+              .on('error', reject);
+          });
+
+          scenes.push(sceneFile);
+
+        } catch (err) {
+          console.error("Scene", i+1, "error:", err);
+          progress[jobId] = { percent: 100, status: "Failed: " + err.message };
+          cleanupJob(jobId, 10 * 1000);
+          finished = true;
+          clearTimeout(watchdog);
+          return;
+        }
+      }
+
+      // Outro, watermark, concat, upload, etc
+      if (!(paidUser && removeWatermark)) {
+        try {
+          console.log('[DEBUG] Adding outro, watermark, and final processing...');
+          currentStep++;
+          progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Adding outro..." };
+
+          const outroText = "This video was made with SocialStormAI.";
+          const outroLogo = path.join(__dirname, 'frontend', 'logo.png');
+          const outroVoiceId = voice;
+          const outroWorkDir = workDir;
+          const thunderSfx = path.join(__dirname, 'frontend', 'assets', 'thunder.mp3');
+
+          if (fs.existsSync(outroLogo) && fs.existsSync(thunderSfx)) {
+            const outroAudioMp3 = path.join(outroWorkDir, 'outro-audio.mp3');
+            const outroAudioWav = path.join(outroWorkDir, 'outro-audio.wav');
+            const outroThunderWav = path.join(outroWorkDir, 'thunder.wav');
+            const outroAudioMixed = path.join(outroWorkDir, 'outro-mixed.wav');
+            const outroSceneFile = path.join(outroWorkDir, 'scene-outro.mp4');
+
+            console.log('[DEBUG] Synthesizing outro voice with Polly/ElevenLabs...');
+            const googleVoiceIds = googleFreeVoices.map(v => v.id);
+            if (googleVoiceIds.includes(outroVoiceId)) {
+              const wav = await synthesizeWithGoogleTTS(outroText, outroVoiceId, outroAudioMp3);
+              fs.renameSync(wav, outroAudioWav);
+            } else {
+              try {
+                const ttsOutroRes = await axios.post(
+                  `https://api.elevenlabs.io/v1/text-to-speech/${outroVoiceId}`,
+                  { text: outroText, model_id: 'eleven_monolingual_v1' },
+                  { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY }, responseType: 'arraybuffer' }
+                );
+                fs.writeFileSync(outroAudioMp3, ttsOutroRes.data);
+                await new Promise((resolve, reject) => {
+                  ffmpeg()
+                    .input(outroAudioMp3)
+                    .audioChannels(1)
+                    .audioFrequency(44100)
+                    .output(outroAudioWav)
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .run();
+                });
+              } catch (err) {
+                console.error('[ERROR] ElevenLabs outro error:', err);
+                progress[jobId] = { percent: 100, status: `Failed: ElevenLabs outro error: ${err.message}` };
+                cleanupJob(jobId, 10 * 1000);
+                finished = true;
+                clearTimeout(watchdog);
+                return;
+              }
+            }
+
+            await new Promise((resolve, reject) =>
+              ffmpeg()
+                .input(thunderSfx)
+                .outputOptions(['-t 2.2'])
+                .output(outroThunderWav)
+                .on('end', resolve)
+                .on('error', reject)
+                .run()
+            );
+
+            console.log('[DEBUG] Mixing outro audio with thunder sound...');
+            await new Promise((resolve, reject) =>
+              ffmpeg()
+                .input(outroAudioWav)
+                .input(outroThunderWav)
+                .complexFilter([ 
+                  '[0:a]volume=1.2[a0];[1:a]volume=0.5[a1];[a0][a1]amix=inputs=2:duration=first' 
+                ])
+                .output(outroAudioMixed)
+                .on('end', resolve)
+                .on('error', reject)
+                .run()
+            );
+
+            const outroDur = await new Promise((resolve, reject) => {
+              ffmpeg.ffprobe(outroAudioMixed, (err, info) => {
+                if (err || !info?.format?.duration) return resolve(4.5);
+                resolve(info.format.duration + 0.2);
+              });
+            });
+
+            const ff = ffmpeg()
+              .input(`color=black:s=720x1280:d=${outroDur}`)
+              .inputFormat('lavfi')
+              .input(outroLogo).inputOptions(['-loop', '1'])
+              .complexFilter([ 
+                "[1:v]scale=650:650:force_original_aspect_ratio=decrease[brand];" +
+                "[0:v][brand]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2" 
+              ])
+              .input(outroAudioMixed)
+              .outputOptions([ 
+                '-shortest', 
+                '-c:v libx264', 
+                '-c:a aac', 
+                '-pix_fmt yuv420p', 
+                '-r 30' 
+              ])
+              .save(outroSceneFile);
+
+            await new Promise(resolve => ff.on('end', resolve));
+            scenes.push(outroSceneFile);
+            progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Outro added." };
+            console.log('[DEBUG] Outro added successfully');
+          }
+        } catch (err) {
+          console.error('[ERROR] Outro creation failed:', err);
+        }
+      }
+
+      // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
+      console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
+
+      const listFile = path.join(workDir, 'list.txt');
+      fs.writeFileSync(
+        listFile,
+        scenes.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+      );
+      const concatFile = path.join(workDir, 'concat.mp4');
+
+      await new Promise((resolve, reject) => {
+        ffmpeg()
+          .input(listFile)
+          .inputOptions(['-f concat', '-safe 0'])
+          .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+          .save(concatFile)
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      const final = path.join(workDir, 'final.mp4');
+      let useWatermark = !(paidUser && removeWatermark);
+
+      if (useWatermark) {
+        const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(concatFile)
+            .input(watermarkPath)
+            .complexFilter([
+              '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];' +
+              '[0:v][wm]overlay=W-w-20:H-h-20'
+            ])
+            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+            .save(final)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+      } else {
+        fs.copyFileSync(concatFile, final);
+      }
+
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
+      const key = `videos/${uuidv4()}.mp4`;
+      await s3.upload({
+        Bucket: process.env.R2_BUCKET,
+        Key: key,
+        Body: fs.createReadStream(final),
+        ContentType: 'video/mp4',
+        ACL: 'public-read'
+      }).promise();
+
+      progress[jobId] = { percent: 100, status: "Done", key };
+      cleanupJob(jobId, 90 * 1000);
+      finished = true;
+      clearTimeout(watchdog);
+
+    } catch (e) {
+      console.error('[ERROR] Fatal error in video generator:', e);
+      progress[jobId] = { percent: 100, status: "Failed: " + e.message };
       cleanupJob(jobId, 60 * 1000);
       finished = true;
       clearTimeout(watchdog);
@@ -287,29 +760,77 @@ app.post('/api/generate-video', async (req, res) => {
   })();
 });
 
-// ==========================================
-// 11) /api/progress/:jobId endpoint
-// ==========================================
+console.log('[DEBUG] Video generation route set up successfully');
 
+
+// ==== SECTION 18: PROGRESS POLLING ENDPOINT ====
+console.log('[DEBUG] Entered SECTION 18: PROGRESS POLLING ENDPOINT');
 app.get('/api/progress/:jobId', (req, res) => {
   const jobId = req.params.jobId;
+  console.log('[DEBUG] Progress request for jobId:', jobId);
   const job = progress[jobId];
   if (!job) {
-    console.log(`Job not found: ${jobId}`);
     return res.json({ percent: 100, status: 'Failed: Job not found or expired.' });
   }
   res.json(job);
 });
 
-// ==========================================
-// 12) /video/videos/:key endpoint
-// ==========================================
 
-app.get('/video/videos/:key', async (req, res) => {
-  const key = `videos/${req.params.key}`;
-  console.log(`Fetching video from R2: ${key}`);
+// ==== SECTION 19: GENERATE VOICE PREVIEWS ENDPOINT ====
+console.log('[DEBUG] Entered SECTION 19: GENERATE VOICE PREVIEWS ENDPOINT');
+app.post('/api/generate-voice-previews', async (req, res) => {
+  const sampleText = "This is a sample of my voice.";
+  console.log('[DEBUG] Generating voice previews for all voices');
+  try {
+    for (const v of googleFreeVoices) {
+      const filePath = path.join(__dirname, 'frontend', 'voice-previews', `sample_${v.id}.mp3`);
+      if (!fs.existsSync(filePath)) {
+        await synthesizeWithGoogleTTS(sampleText, v.id, filePath);
+        console.log('[DEBUG] Generated preview for', v.name);
+      }
+    }
+    res.json({ success: true, message: "Google voice previews generated." });
+  } catch (err) {
+    console.error('[ERROR] Failed to generate voice previews:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// ==== SECTION 20: SPARKIE (IDEA GENERATOR) ENDPOINT ====
+console.log('[DEBUG] Entered SECTION 20: SPARKIE (IDEA GENERATOR) ENDPOINT');
+app.post('/api/sparkie', async (req, res) => {
+  const { prompt } = req.body;
+  console.log('[DEBUG] Generating creative ideas for prompt:', prompt);
+  if (!prompt) return res.status(400).json({ success: false, error: 'Prompt required' });
 
   try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const c = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        { role: 'system', content: 'You are Sparkie, a creative brainstorming assistant.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.9
+    });
+    console.log('[DEBUG] Sparkie idea generation completed');
+    return res.json({ success: true, ideas: c.choices[0].message.content.trim() });
+  } catch (e) {
+    console.error('[ERROR] Sparkie idea generation failed:', e);
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
+});
+
+
+// ==== SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2 (streaming, download, range support) ====
+console.log('[DEBUG] Entered SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2');
+app.get('/video/videos/:key', async (req, res) => {
+  try {
+    const key = `videos/${req.params.key}`;
+    console.log('[DEBUG] Video request for key:', key);
     const headData = await s3.headObject({
       Bucket: process.env.R2_BUCKET,
       Key: key,
@@ -340,6 +861,11 @@ app.get('/video/videos/:key', async (req, res) => {
         "Access-Control-Expose-Headers": "Content-Disposition"
       });
 
+      stream.on('error', (err) => {
+        console.error("R2 video stream error:", err);
+        res.status(404).end('Video not found');
+      });
+
       stream.pipe(res);
     } else {
       const stream = s3.getObject({
@@ -348,21 +874,26 @@ app.get('/video/videos/:key', async (req, res) => {
       }).createReadStream();
 
       res.setHeader('Content-Type', 'video/mp4');
+      // The below header helps trigger download reliably on mobile/tablet/desktop
       res.setHeader('Content-Disposition', 'attachment; filename="socialstorm-video.mp4"');
       res.setHeader('Content-Length', total);
+
+      stream.on('error', (err) => {
+        console.error("R2 video stream error:", err);
+        res.status(404).end('Video not found');
+      });
 
       stream.pipe(res);
     }
   } catch (err) {
-    console.error("Video route error:", err);
+    console.error("[ERROR] Video route error:", err);
     res.status(500).end('Internal error');
   }
 });
 
-// ==========================================
-// 13) Serve static files (Frontend)
-// ==========================================
 
+// ==== SECTION 22: 404 HTML FALLBACK FOR SPA (not API) ====
+console.log('[DEBUG] Entered SECTION 22: 404 HTML FALLBACK FOR SPA');
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api/') && !req.path.startsWith('/video/')) {
     const htmlPath = path.join(__dirname, 'frontend', req.path.replace(/^\//, ''));
@@ -376,8 +907,9 @@ app.get('*', (req, res) => {
   }
 });
 
-// ==========================================
-// 14) LAUNCH SERVER
-// ==========================================
 
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server listening on port ${PORT}`));
+// ==== SECTION 23: LAUNCH SERVER ====
+console.log('[DEBUG] Entered SECTION 23: LAUNCH SERVER');
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server listening on port ${PORT}`);
+});

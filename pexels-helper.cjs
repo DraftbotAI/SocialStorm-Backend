@@ -12,10 +12,11 @@ const crypto = require('crypto');
 
 console.log('[Pexels Helper] Dependencies loaded.');
 
-// ========== CONFIG ==========
+// ========== CONFIG ========== 
 const STOP_WORDS = new Set([
-  'and','the','with','into','for','a','to','of','in','on','at','by','from','is','are','was','were','be','has','have','had'
+  'and', 'the', 'with', 'into', 'for', 'a', 'to', 'of', 'in', 'on', 'at', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'has', 'have', 'had'
 ]);
+
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT,
@@ -24,6 +25,7 @@ const s3 = new S3Client({
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
   }
 });
+
 const LOCAL_CLIP_DIR = path.join(__dirname, 'clips');
 const TEMP_DIR = path.join(__dirname, 'tmp');
 
@@ -32,7 +34,6 @@ fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 // ========== HELPERS ==========
 
-// Sanitize query to main words only
 function sanitizeQuery(raw, maxWords = 10) {
   const cleaned = raw
     .replace(/["“”‘’.,!?;:]/g, '')
@@ -72,7 +73,7 @@ async function extractMainSubject(line) {
 
 // Download a remote video to a local temp file and return the local path
 async function downloadToLocal(url, workDir = TEMP_DIR) {
-  const hash = crypto.createHash('md5').update(url).digest('hex').slice(0,10);
+  const hash = crypto.createHash('md5').update(url).digest('hex').slice(0, 10);
   const fileName = `remote_${hash}_${Date.now()}.mp4`;
   const dest = path.join(workDir, fileName);
   if (fs.existsSync(dest)) {

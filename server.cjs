@@ -88,6 +88,7 @@ console.log('[DEBUG] Entered SECTION 7: HELPERS');
 // Function to pick clips from CloudR2 first, then fallback to Pexels and Pixabay
 async function pickClipForCloudR2(script, usedUrls = []) {
   console.log('[DEBUG] Checking Cloud R2 for clips...');
+  
   // Check Cloud R2 first
   const r2Clips = await s3.listObjectsV2({
     Bucket: process.env.R2_BUCKET,
@@ -95,13 +96,18 @@ async function pickClipForCloudR2(script, usedUrls = []) {
   }).promise();
 
   const availableClips = r2Clips.Contents.filter(item => item.Key.endsWith('.mp4'));
+
   if (availableClips.length > 0) {
     console.log('[DEBUG] Found clip in Cloud R2:', availableClips[0].Key);
     const selectedClip = availableClips[0];
+    
+    // Return only the URL string and id (not the whole object)
     return { url: `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${selectedClip.Key}`, id: selectedClip.Key };
   }
 
   console.log('[DEBUG] No clips found in Cloud R2, falling back to Pexels');
+  
+  // If no clips found, fallback to Pexels
   return pickClipFor(script, usedUrls); // Fallback to Pexels helper function
 }
 

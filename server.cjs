@@ -476,7 +476,7 @@ function splitScriptToScenes(script) {
 // 10. ELEVENLABS & POLLY TTS SYNTHESIZER (FULL LOGGING, GLOBAL EXPORT)
 // ==========================================
 
-const path = require('path');
+
 const fs = require('fs');
 const axios = require('axios');
 

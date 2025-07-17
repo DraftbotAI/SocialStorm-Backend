@@ -530,7 +530,6 @@ app.get('/api/voices', (req, res) => {
 });
 
 
-
 // ==========================================
 // 12. /api/generate-script ENDPOINT
 // ==========================================
@@ -678,49 +677,32 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 // ...end of Section 14...
 
 // ==========================================
-// generateSceneAudio helper (Polly + ElevenLabs)
+// COMBINE AUDIO AND VIDEO FOR ONE SCENE
 // ==========================================
-async function generateSceneAudio(sceneText, voice) {
-  const elevenLabsIds = new Set([
-    // your ElevenLabs IDs...
-  ]);
-  const isElevenLabs = elevenLabsIds.has(voice);
-
-  const audioOut = path.join(__dirname, 'tmp', `scene_${Date.now()}_${Math.random().toString(36).substr(2,6)}.mp3`);
-  await fs.promises.mkdir(path.dirname(audioOut), { recursive: true }); // <-- This line here
-
-  try {
-    if (isElevenLabs) {
-      await synthesizeWithElevenLabs(sceneText, voice, audioOut);
-      return audioOut;
-    } else {
-      await synthesizeWithPolly(sceneText, voice, audioOut);
-      return audioOut;
+async function combineAudioAndClip(audioPath, videoPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(audioPath)) {
+      return reject(new Error(`[combineAudioAndClip] Missing audio file: ${audioPath}`));
     }
-  } catch (err) {
-    throw new Error("Audio generation failed: " + err.message);
-  }
+    if (!fs.existsSync(videoPath)) {
+      return reject(new Error(`[combineAudioAndClip] Missing video file: ${videoPath}`));
+    }
+    const cmd = `ffmpeg -y -i "${videoPath}" -i "${audioPath}" -c:v copy -c:a aac -shortest "${outputPath}"`;
+    console.log(`[combineAudioAndClip] Running FFmpeg: ${cmd}`);
+    require('child_process').exec(cmd, (err, stdout, stderr) => {
+      if (err) {
+        console.error(`[combineAudioAndClip] FFmpeg error:`, err.message);
+        console.error(stderr);
+        return reject(err);
+      }
+      console.log(`[combineAudioAndClip] Scene created successfully: ${outputPath}`);
+      resolve(outputPath);
+    });
+  });
 }
-
 // ==========================================
 // 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
 // ==========================================
-
-
-
-// ==========================================
-// (Before Section 15) — Helper Aliases for Consistency
-// ==========================================
-
-// Make sure these exist elsewhere in your file or imported modules:
-const parseScriptToScenes = typeof splitScriptToScenes === 'function' ? splitScriptToScenes : () => [];
-const findMatchingClip = typeof findBestClipForScene === 'function' ? findBestClipForScene : async () => null;
-// NOTE: generateSceneAudio, combineAudioAndClip, assembleFinalVideo, uploadVideoToR2 must be defined somewhere!
-
-// ==========================================
-// 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
-// ==========================================
-
 app.post('/api/generate-video', async (req, res) => {
   const jobId = uuidv4();
   const startTime = Date.now();
@@ -728,7 +710,6 @@ app.post('/api/generate-video', async (req, res) => {
   progressMap[progressKey] = { percent: 0, status: "Starting...", started: new Date().toISOString() };
   console.log(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] Video generation started`);
 
-  // Catch all top-level errors so we never leave a zombie job
   try {
     // 1. Extract request data
     const { script, voice, paidUser, removeWatermark } = req.body;
@@ -749,7 +730,7 @@ app.post('/api/generate-video', async (req, res) => {
       return res.status(400).json({ success: false, error: "Script parsing failed." });
     }
 
-    // 3. Main processing: one scene at a time, classic for loop
+    // 3. Main processing: one scene at a time
     let sceneClips = [];
     for (let i = 0; i < scenes.length; i++) {
       const sceneText = scenes[i];
@@ -786,9 +767,10 @@ app.post('/api/generate-video', async (req, res) => {
 
         // 3c. Combine audio and video for scene
         let sceneOutput;
+        const outputPath = path.join(__dirname, 'tmp', `scene_${jobId}_${i+1}.mp4`);
         try {
           if (typeof combineAudioAndClip !== 'function') throw new Error("combineAudioAndClip not implemented!");
-          sceneOutput = await combineAudioAndClip(audioPath, videoPath); // Should return a path
+          sceneOutput = await combineAudioAndClip(audioPath, videoPath, outputPath); // <-- Now passes all 3 args!
           if (!sceneOutput) throw new Error("Scene output path missing");
           console.log(`[15] [${new Date().toISOString()}] ${stepMsg}: Scene created at ${sceneOutput}`);
           sceneClips.push(sceneOutput);
@@ -799,7 +781,6 @@ app.post('/api/generate-video', async (req, res) => {
         }
 
       } catch (sceneError) {
-        // Immediately break loop on any unrecoverable scene error
         progressMap[progressKey] = { percent: Math.round((i / scenes.length) * 80), status: `Stopped: ${sceneError.message}`, error: true };
         console.error(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] FATAL scene error: ${sceneError.stack || sceneError}`);
         break;
@@ -807,7 +788,6 @@ app.post('/api/generate-video', async (req, res) => {
     }
 
     if (sceneClips.length !== scenes.length) {
-      // Not all scenes rendered — exit with error
       progressMap[progressKey] = { percent: 100, status: "Generation failed: Not all scenes processed.", error: true };
       console.error(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] ERROR: Only ${sceneClips.length} of ${scenes.length} scenes rendered. Aborting.`);
       return res.status(500).json({ success: false, error: "Not all scenes rendered, check logs." });
@@ -827,10 +807,7 @@ app.post('/api/generate-video', async (req, res) => {
       return res.status(500).json({ success: false, error: "Concat failed." });
     }
 
-    // 5. Add outro/watermark if required (optional)
-    // ... (Your branding/outro logic here, if needed)
-
-    // 6. Upload to Cloudflare R2 (or wherever)
+    // 5. Upload to Cloudflare R2 (or wherever)
     let videoKey = null;
     try {
       if (typeof uploadVideoToR2 !== 'function') throw new Error("uploadVideoToR2 not implemented!");
@@ -844,7 +821,7 @@ app.post('/api/generate-video', async (req, res) => {
       return res.status(500).json({ success: false, error: "Upload failed." });
     }
 
-    // 7. All done
+    // 6. All done!
     progressMap[progressKey] = { percent: 100, status: "Done!", key: videoKey, completed: new Date().toISOString() };
     console.log(`[15] [${new Date().toISOString()}] [generate-video] [jobId: ${jobId}] Done! All scenes processed, video ready. Total time: ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
 
@@ -856,6 +833,8 @@ app.post('/api/generate-video', async (req, res) => {
     return res.status(500).json({ success: false, error: "Fatal error in video generation.", details: fatalError.message });
   }
 });
+
+
 
 
 // ==========================================

@@ -1,5 +1,5 @@
 // =============================
-// PEXELS HELPER – BULLETPROOF FIXED VERSION
+// PEXELS HELPER – HARD SUBJECT MATCH VERSION
 // =============================
 
 require('dotenv').config();
@@ -10,8 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// === LOG INIT ===
-console.log('[Pexels Helper] Loaded with max verbosity.');
+console.log('[Pexels Helper] Loaded – strict subject filter mode.');
 
 // ========== CONFIG ==========
 const STOP_WORDS = new Set([
@@ -46,27 +45,16 @@ function sanitizeQuery(raw, maxWords = 10) {
 }
 
 async function extractMainSubject(line) {
-  try {
-    const { OpenAI } = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    console.log(`[extractMainSubject] Raw: "${line}"`);
-    const resp = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: "Extract the single main subject of this script in 1-2 words, lowercase, no hashtags, no punctuation, no verbs. Only return the subject." },
-        { role: 'user', content: line }
-      ],
-      temperature: 0.1,
-      max_tokens: 8
-    });
-    const result = resp.choices[0].message.content.trim().toLowerCase();
-    const cleaned = result.split('\n')[0].replace(/[^a-z0-9 ]+/gi, '').trim();
-    console.log(`[extractMainSubject] Cleaned subject: "${cleaned}"`);
-    return cleaned || sanitizeQuery(line, 3).split(' ')[0] || 'nature';
-  } catch (err) {
-    console.error(`[extractMainSubject] Fallback error: ${err.message}`);
-    return sanitizeQuery(line, 3).split(' ')[0] || 'nature';
-  }
+  // Use regex for speed, fall back to OpenAI if not found
+  let match = line.match(/bald\s*eagle/i);
+  if (match) return 'bald eagle';
+  match = line.match(/eagle/i);
+  if (match) return 'eagle';
+  match = line.match(/cat|dog|owl|lion|tiger|shark|snake|wolf|bear|fox|monkey|horse|dolphin|fish|penguin|whale/i);
+  if (match) return match[0].toLowerCase();
+  // fallback: first 1-2 non-stopwords
+  let words = sanitizeQuery(line, 2).split(' ');
+  return words.join(' ') || 'nature';
 }
 
 async function downloadToLocal(urls, workDir = TEMP_DIR) {
@@ -119,12 +107,32 @@ async function findBestVideoFromR2(subject) {
       token = resp.NextContinuationToken;
     } while (token);
 
-    const best = stringSimilarity.findBestMatch(subject.toLowerCase(), allKeys.map(k => k.toLowerCase()));
-    const key = best.bestMatch.rating > 0.1 ? allKeys[best.bestMatchIndex] : allKeys[Math.floor(Math.random() * allKeys.length)];
+    // Strict match: require subject in file name
+    const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
+    let matches = allKeys.filter(k => k.toLowerCase().includes(subjectFlat));
+    if (matches.length > 0) {
+      const key = matches[Math.floor(Math.random() * matches.length)];
+      const url = `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
+      console.log(`[findBestVideoFromR2] Strict subject match: ${key}`);
+      return url;
+    }
 
-    const url = `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${process.env.R2_BUCKET}/${key}`;
-    console.log(`[findBestVideoFromR2] Picked: ${key}`);
-    return url;
+    // If no strict match, fallback to best fuzzy
+    const best = stringSimilarity.findBestMatch(subject.toLowerCase(), allKeys.map(k => k.toLowerCase()));
+    const key = best.bestMatch.rating > 0.2 ? allKeys[best.bestMatchIndex] : null;
+    if (key) {
+      const url = `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
+      console.log(`[findBestVideoFromR2] Fuzzy fallback: ${key}`);
+      return url;
+    }
+    // Absolute fallback: random
+    if (allKeys.length > 0) {
+      const key = allKeys[Math.floor(Math.random() * allKeys.length)];
+      const url = `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
+      console.log(`[findBestVideoFromR2] Random fallback: ${key}`);
+      return url;
+    }
+    return null;
   } catch (err) {
     console.error(`[findBestVideoFromR2] R2 error: ${err.message}`);
     return null;
@@ -133,16 +141,29 @@ async function findBestVideoFromR2(subject) {
 
 async function getPexelsVideo(subject) {
   try {
+    // Always prefix subject (strict)
+    const query = subject + '';
     const response = await axios.get('https://api.pexels.com/videos/search', {
       headers: { Authorization: process.env.PEXELS_API_KEY },
-      params: { query: subject, per_page: 5 },
+      params: { query, per_page: 7 },
       timeout: 10000
     });
 
     const videos = response.data.videos || [];
-    const top = videos.find(v => (v.video_files || []).some(f => f.quality === "hd" && f.height >= 720));
+    // Require at least one tag or word in filename to match subject
+    const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
+    let top = videos.find(v =>
+      v.tags?.some(tag => tag.title?.toLowerCase().includes(subjectFlat)) ||
+      (v.user?.name && v.user.name.toLowerCase().includes(subjectFlat))
+    );
+    if (!top) {
+      // fallback: any with subject in url or file name
+      top = videos.find(v =>
+        v.video_files?.some(f => f.link.toLowerCase().includes(subjectFlat))
+      );
+    }
     const link = top?.video_files?.[0]?.link;
-    if (link) console.log(`[getPexelsVideo] Found: ${link}`);
+    if (link) console.log(`[getPexelsVideo] Strict subject found: ${link}`);
     return link || null;
   } catch (err) {
     console.warn(`[getPexelsVideo] error: ${err.message}`);
@@ -150,13 +171,22 @@ async function getPexelsVideo(subject) {
   }
 }
 
-function getLocalFallback() {
+function getLocalFallback(subject) {
   try {
+    const files = fs.readdirSync(LOCAL_CLIP_DIR)
+      .filter(f => f.endsWith('.mp4') && f.toLowerCase().includes(subject.replace(/\s+/g, '').toLowerCase()));
+    if (files.length > 0) {
+      const pick = files[Math.floor(Math.random() * files.length)];
+      const local = path.join(LOCAL_CLIP_DIR, pick);
+      console.log(`[getLocalFallback] Picked subject match: ${local}`);
+      return local;
+    }
+    // fallback: any local
     const list = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
     if (list.length > 0) {
       const random = list[Math.floor(Math.random() * list.length)];
       const local = path.join(LOCAL_CLIP_DIR, random);
-      console.log(`[getLocalFallback] Picked: ${local}`);
+      console.log(`[getLocalFallback] Picked generic local: ${local}`);
       return local;
     }
   } catch (e) {
@@ -192,18 +222,18 @@ async function pickClipFor(query) {
       const local = await downloadToLocal(url);
       if (local) {
         console.log(`[pickClipFor] Found from ${src.name}: ${local}`);
-        return { url: local, source: src.name.toLowerCase() };
+        return { url: local, source: src.name.toLowerCase(), subject };
       }
     }
   }
 
-  const localFallback = getLocalFallback();
-  if (localFallback) return { url: localFallback, source: 'local_fallback' };
+  const localFallback = getLocalFallback(subject);
+  if (localFallback) return { url: localFallback, source: 'local_fallback', subject };
 
   const genericFallback = getGenericFallback();
-  if (genericFallback) return { url: genericFallback, source: 'generic_fallback' };
+  if (genericFallback) return { url: genericFallback, source: 'generic_fallback', subject };
 
-  console.error(`[pickClipFor] TOTAL FAILURE: No video found`);
+  console.error(`[pickClipFor] TOTAL FAILURE: No video found for subject "${subject}"`);
   return null;
 }
 

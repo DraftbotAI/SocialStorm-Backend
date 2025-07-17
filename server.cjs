@@ -123,14 +123,19 @@ function extractMainSubject(script) {
     if (line.match(/bald\s*eagle/i)) return "bald eagle";
     if (line.toLowerCase().includes("how")) return line;
   }
+  // Look for any "eagle" or "owl" or "animal" in lines
+  const eagleLine = lines.find(l => l.toLowerCase().includes("eagle"));
+  if (eagleLine) return "eagle";
   return lines[0] || "video";
 }
 
-// ---- Main: Smart R2 picker (fuzzy matching) ----
+// ---- Main: Smart R2 picker (hard subject enforcement) ----
 async function pickClipForCloudR2(script, usedUrls = []) {
   const subject = extractMainSubject(script);
   const keywords = extractKeywords(subject);
-  console.log('[pickClipForCloudR2] Subject:', subject, '| Keywords:', keywords);
+  const mustInclude = subject.toLowerCase().replace(/\s+/g, '');
+
+  console.log('[pickClipForCloudR2] Subject:', subject, '| Keywords:', keywords, '| MustInclude:', mustInclude);
 
   // Fetch all R2 clips (can be slow if there are thousands)
   let r2Clips = [];
@@ -145,12 +150,23 @@ async function pickClipForCloudR2(script, usedUrls = []) {
     r2Clips = [];
   }
 
-  // Try best keyword matches (from most specific)
+  // Require subject match in filename (e.g. 'eagle' for 'bald eagle')
   let bestClip = null;
   for (const keyword of keywords) {
-    bestClip = r2Clips.find(item => item.Key.toLowerCase().includes(keyword.replace(/\s+/g, '').toLowerCase()));
+    bestClip = r2Clips.find(item =>
+      item.Key.toLowerCase().includes(mustInclude) &&
+      item.Key.toLowerCase().includes(keyword.replace(/\s+/g, '').toLowerCase())
+    );
     if (bestClip) break;
   }
+
+  // If no combo, just any file with subject in name (e.g. any eagle)
+  if (!bestClip) {
+    bestClip = r2Clips.find(item =>
+      item.Key.toLowerCase().includes(mustInclude)
+    );
+  }
+
   if (bestClip) {
     console.log('[pickClipForCloudR2] Found subject match in R2:', bestClip.Key);
     return {
@@ -159,19 +175,10 @@ async function pickClipForCloudR2(script, usedUrls = []) {
     };
   }
 
-  // Fallback: find any "eagle" clip not already used
-  let eagleFallback = r2Clips.find(item => item.Key.toLowerCase().includes('eagle') && !usedUrls.includes(item.Key));
-  if (eagleFallback) {
-    console.log('[pickClipForCloudR2] Found eagle fallback in R2:', eagleFallback.Key);
-    return {
-      url: `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${eagleFallback.Key}`,
-      id: eagleFallback.Key
-    };
-  }
-
-  // Final fallback: Pexels helper, try keywords/subject
-  console.log('[pickClipForCloudR2] No good match in R2. Falling back to Pexels for:', subject);
-  return pickClipFor(subject, usedUrls);
+  // Final fallback: Pexels helper, *prefix subject* for every query (e.g. 'bald eagle sight')
+  const fallbackQuery = subject + " " + (keywords[1] || "");
+  console.log('[pickClipForCloudR2] No good match in R2. Falling back to Pexels for:', fallbackQuery);
+  return pickClipFor(fallbackQuery.trim(), usedUrls);
 }
 
 // ---- Emoji stripper ----

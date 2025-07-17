@@ -81,7 +81,7 @@ console.log('[DEBUG] Cloud R2 client initialized');
 // ==== SECTION 7: HELPERS ====
 console.log('[DEBUG] Entered SECTION 7: HELPERS');
 
-// Download file helper (unchanged)
+// ---- Download file helper ----
 async function downloadToFile(url, outPath) {
   const writer = fs.createWriteStream(outPath);
   const response = await axios.get(url, { responseType: 'stream' });
@@ -99,45 +99,40 @@ async function downloadToFile(url, outPath) {
   });
 }
 
-// Smart keyword extraction from script line
+// ---- Keyword extraction ----
 function extractKeywords(text) {
   if (!text) return [];
-  // Try to pick out quoted words or capitalized words, fallback to nouns
+  // Try to pick quoted words or capitalized words, fallback to nouns
   let matches = text.match(/"([^"]+)"|'([^']+)'|([A-Z][a-z]+)/g) || [];
   matches = matches.map(k => k.replace(/['"]+/g, ''));
   if (matches.length === 0) {
-    // fallback: most significant word(s)
     matches = text.split(/\s+/).filter(word =>
       word.length > 3 &&
       !['this', 'that', 'with', 'from', 'have', 'your', 'some', 'more', 'they', 'will', 'very', 'which', 'what'].includes(word.toLowerCase())
     );
   }
-  // Always push the full phrase first
   matches.unshift(text.trim());
   return [...new Set(matches.map(k => sanitizeQuery(k)))];
 }
 
-// Improved subject extractor: prefer most specific subject
+// ---- Improved main subject extraction ----
 function extractMainSubject(script) {
   if (!script || typeof script !== "string") return "video";
-  // Try to find a phrase like "bald eagle" or a main noun
   const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
   for (const line of lines) {
     if (line.match(/bald\s*eagle/i)) return "bald eagle";
     if (line.toLowerCase().includes("how")) return line;
-    // Add more logic here for other specific matches if needed
   }
-  // Fallback: first line
   return lines[0] || "video";
 }
 
-// Main: Try to find an exact match in Cloud R2 for the best keyword(s)
+// ---- Main: Smart R2 picker (fuzzy matching) ----
 async function pickClipForCloudR2(script, usedUrls = []) {
   const subject = extractMainSubject(script);
   const keywords = extractKeywords(subject);
   console.log('[pickClipForCloudR2] Subject:', subject, '| Keywords:', keywords);
 
-  // Fetch all R2 clips (caution: slow with thousands)
+  // Fetch all R2 clips (can be slow if there are thousands)
   let r2Clips = [];
   try {
     const resp = await s3.listObjectsV2({
@@ -150,7 +145,7 @@ async function pickClipForCloudR2(script, usedUrls = []) {
     r2Clips = [];
   }
 
-  // Try to find a perfect keyword match (start with most specific)
+  // Try best keyword matches (from most specific)
   let bestClip = null;
   for (const keyword of keywords) {
     bestClip = r2Clips.find(item => item.Key.toLowerCase().includes(keyword.replace(/\s+/g, '').toLowerCase()));
@@ -164,7 +159,7 @@ async function pickClipForCloudR2(script, usedUrls = []) {
     };
   }
 
-  // Try to find any non-used clip related to "eagle" if available
+  // Fallback: find any "eagle" clip not already used
   let eagleFallback = r2Clips.find(item => item.Key.toLowerCase().includes('eagle') && !usedUrls.includes(item.Key));
   if (eagleFallback) {
     console.log('[pickClipForCloudR2] Found eagle fallback in R2:', eagleFallback.Key);
@@ -174,19 +169,18 @@ async function pickClipForCloudR2(script, usedUrls = []) {
     };
   }
 
-  // Otherwise fallback to Pexels with specific query
+  // Final fallback: Pexels helper, try keywords/subject
   console.log('[pickClipForCloudR2] No good match in R2. Falling back to Pexels for:', subject);
-  // Call your normal Pexels helper with subject/keywords (if possible, pass keywords array)
   return pickClipFor(subject, usedUrls);
 }
 
-// Strip emojis
+// ---- Emoji stripper ----
 function stripEmojis(str) {
   if (!str) return '';
   return str.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD00-\uDDFF])/g, '');
 }
 
-// Simple query sanitizer
+// ---- Query sanitizer ----
 function sanitizeQuery(str) {
   if (!str) return '';
   return str.replace(/[^a-zA-Z0-9 ]/g, '').toLowerCase();
@@ -271,11 +265,16 @@ console.log('[DEBUG] Entered SECTION 11: POLLY TTS SYNTHESIZER');
 async function synthesizeWithPolly(text, voice = 'Matthew', outPath) {
   console.log(`[DEBUG] Synthesizing speech with Polly for voice: ${voice}`);
   if (!pollyClient) throw new Error("Polly client not initialized.");
+
+  // Wrap text in SSML with slower speech rate
+  const ssml = `<speak><prosody rate="90%">${text}</prosody></speak>`;
+
   const params = {
-    Text: text,
+    Text: ssml,
     OutputFormat: 'mp3',
     VoiceId: voice,
     SampleRate: '22050',
+    TextType: 'ssml', // Important! This enables SSML
   };
 
   try {
@@ -303,6 +302,9 @@ async function synthesizeWithPolly(text, voice = 'Matthew', outPath) {
     throw new Error("Failed to synthesize speech using Polly.");
   }
 }
+
+
+
 
 // ==== SECTION 12: VOICES (REFRESHED LIST) ====
 console.log('[DEBUG] Entered SECTION 12: VOICES (REFRESHED LIST)');

@@ -477,7 +477,7 @@ function splitScriptToScenes(script) {
 // ==========================================
 
 
-const fs = require('fs');
+
 const axios = require('axios');
 
 // -- ELEVENLABS TTS SYNTHESIZER --

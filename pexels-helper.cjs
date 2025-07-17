@@ -319,6 +319,7 @@ async function pickClipFor(rawQuery, tempDir = TEMP_DIR, minScore = 0.13, mainSu
     };
   }
 
+  
   // 6. Nothing worked (should never reach here)
   console.error(`[pickClipFor] TOTAL FAIL — No video found for "${rawQuery}" (subject="${subject}")`);
   return null;

@@ -56,7 +56,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 console.log('[DEBUG] Express app initialized on port:', PORT);
 
 

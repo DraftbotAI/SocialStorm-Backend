@@ -123,6 +123,7 @@ const s3 = new S3({
 });
 console.log('[6] Cloudflare R2 S3 client configured. Bucket:', process.env.R2_BUCKET);
 
+  
 // ==========================================
 // 7. HELPERS, CLIP SOURCING, VOICES, LOGGING
 // ==========================================
@@ -396,6 +397,9 @@ const pollyVoices = [
 ];
 
 console.log('[7] All helper utilities, clip finders, and voices loaded.');
+
+// === WIRE UP THE GLOBAL FOR VIDEO CLIP FINDER ===
+global.findBestClipForScene = findBestClipForScene;
 
 
 

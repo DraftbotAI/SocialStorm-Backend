@@ -473,8 +473,14 @@ function splitScriptToScenes(script) {
 
 
 // ==========================================
-// 10. ELEVENLABS & POLLY TTS SYNTHESIZER (FULL LOGGING)
+// 10. ELEVENLABS & POLLY TTS SYNTHESIZER (FULL LOGGING, GLOBAL EXPORT)
 // ==========================================
+
+const path = require('path');
+const fs = require('fs');
+const axios = require('axios');
+
+// -- ELEVENLABS TTS SYNTHESIZER --
 async function synthesizeWithElevenLabs(text, voice, outFile) {
   try {
     if (!process.env.ELEVENLABS_API_KEY) throw new Error("No ElevenLabs API Key");
@@ -493,6 +499,7 @@ async function synthesizeWithElevenLabs(text, voice, outFile) {
   }
 }
 
+// -- POLLY TTS SYNTHESIZER --
 async function synthesizeWithPolly(text, voice, outFile) {
   const params = {
     Text: text,
@@ -517,6 +524,28 @@ async function synthesizeWithPolly(text, voice, outFile) {
     });
   });
 }
+
+// -- MAIN GLOBAL SCENE AUDIO GENERATOR --
+// This will pick ElevenLabs if 'voice' is an ElevenLabs ID, Polly otherwise. You can expand logic.
+global.generateSceneAudio = async function (sceneText, voice) {
+  try {
+    if (!sceneText || !voice) throw new Error("Missing sceneText or voice");
+    // Pick provider by voice string pattern (adjust this logic as needed)
+    const isElevenLabs = typeof voice === 'string' && voice.match(/^([a-z0-9]{20,})$/i); // crude: IDs look like hash
+    const outDir = path.join(__dirname, 'audio');
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const outFile = path.join(outDir, `scene_${Date.now()}_${Math.random().toString(36).slice(2,8)}.mp3`);
+
+    if (isElevenLabs) {
+      return await synthesizeWithElevenLabs(sceneText, voice, outFile);
+    } else {
+      return await synthesizeWithPolly(sceneText, voice, outFile);
+    }
+  } catch (err) {
+    console.error(`[10] [generateSceneAudio] ERROR: ${err.stack || err}`);
+    throw err;
+  }
+};
 
 
 

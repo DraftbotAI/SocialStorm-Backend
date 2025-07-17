@@ -676,52 +676,48 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 // ...end of Section 14...
 // ==========================================
-// (Before Section 15) — Defensive Helper Aliases for Consistency
+// Defensive Helper Aliases for Consistency (goes before Section 15)
 // ==========================================
 
-// Defensive: Use your real splitScriptToScenes/findBestClipForScene if available, else fallback dummy.
-const parseScriptToScenes = (typeof splitScriptToScenes === 'function')
-  ? splitScriptToScenes
+const parseScriptToScenes = (typeof global.splitScriptToScenes === 'function')
+  ? global.splitScriptToScenes
   : (script) => (typeof script === 'string' && script.trim()) ? script.split('\n').filter(Boolean) : [];
 
-const findMatchingClip = (typeof findBestClipForScene === 'function')
-  ? findBestClipForScene
+const findMatchingClip = (typeof global.findBestClipForScene === 'function')
+  ? global.findBestClipForScene
   : async (sceneText) => {
       console.warn('[findMatchingClip fallback] No local/video clip logic implemented!');
-      return null; // Always fallback to null
+      return null;
     };
 
-// Defensive wrapper for audio generation
-const generateSceneAudio = (typeof generateSceneAudio === 'function')
-  ? generateSceneAudio
+const generateSceneAudio = (typeof global.generateSceneAudio === 'function')
+  ? global.generateSceneAudio
   : async (sceneText, voice) => {
       console.warn('[generateSceneAudio fallback] Not implemented!');
       return null;
     };
 
-// Defensive wrapper for combining audio/video
-const combineAudioAndClipDef = (typeof combineAudioAndClip === 'function')
-  ? combineAudioAndClip
+const combineAudioAndClipDef = (typeof global.combineAudioAndClip === 'function')
+  ? global.combineAudioAndClip
   : async (audioPath, videoPath, outputPath) => {
       console.warn('[combineAudioAndClip fallback] Not implemented!');
       return null;
     };
 
-// Defensive wrapper for assembling final video
-const assembleFinalVideo = (typeof assembleFinalVideo === 'function')
-  ? assembleFinalVideo
+const assembleFinalVideo = (typeof global.assembleFinalVideo === 'function')
+  ? global.assembleFinalVideo
   : async (sceneFiles, opts) => {
       console.warn('[assembleFinalVideo fallback] Not implemented!');
       return null;
     };
 
-// Defensive wrapper for upload to R2
-const uploadVideoToR2 = (typeof uploadVideoToR2 === 'function')
-  ? uploadVideoToR2
+const uploadVideoToR2 = (typeof global.uploadVideoToR2 === 'function')
+  ? global.uploadVideoToR2
   : async (videoPath) => {
       console.warn('[uploadVideoToR2 fallback] Not implemented!');
       return null;
     };
+
 // ==========================================
 // 15. /api/generate-video ENDPOINT (MAIN VIDEO GENERATION LOGIC)
 // ==========================================

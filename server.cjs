@@ -369,6 +369,7 @@ SCRIPT:
 
 // ==== SECTION 15: /api/generate-video ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
+
 app.post('/api/generate-video', async (req, res) => {
   const jobId = uuidv4();
   progress[jobId] = { percent: 0, status: 'starting' };
@@ -399,7 +400,7 @@ app.post('/api/generate-video', async (req, res) => {
       console.log('[DEBUG] Starting video generation process');
       const mainSubject = await extractMainSubject(script);
       if (!mainSubject) throw new Error('No main subject found for this script.');
-      
+
       const steps = splitScriptToScenes(script).slice(0, 8);
       const totalSteps = steps.length + 4;
       let currentStep = 0;
@@ -408,10 +409,6 @@ app.post('/api/generate-video', async (req, res) => {
       fs.mkdirSync(workDir, { recursive: true });
       const scenes = [];
       const usedUrls = new Set();
-      const usedIds = new Set();
-      const fallbackQueries = [
-        "nature", "background", "city", "abstract", "travel", "people", "pattern", "wallpaper"
-      ];
 
       let mediaFailCount = 0;
       for (let i = 0; i < steps.length; i++) {
@@ -448,131 +445,52 @@ app.post('/api/generate-video', async (req, res) => {
             audioDur = 3.5;
           }
 
-          let mediaObj = null;
-          let attempts = 0;
-          let found = false;
-
-          // Check Cloud R2 first, then fallback to Pexels, then Pixabay
-          mediaObj = await pickClipForCloudR2(script, Array.from(usedUrls));
-
+          const mediaObj = await pickClipFor(text, workDir, 0.13, mainSubject, Array.from(usedUrls));
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
             if (mediaFailCount > 3) {
               throw new Error(`Failed to get media for scene ${i+1} after many attempts.`);
             }
-            const colorClip = path.join(workDir, `fallback-black-${idx}.mp4`);
-            let safeDuration = Number(audioDur) && !isNaN(audioDur) ? audioDur + 1.5 : 3.5;
-            await new Promise((resolve, reject) => {
-              ffmpeg()
-                .input(`color=black:s=720x1280:d=${safeDuration}`)
-                .inputFormat('lavfi')
-                .output(colorClip)
-                .on('end', resolve)
-                .on('error', reject)
-                .run();
-            });
+            const fallbackClip = path.join(workDir, `fallback-${idx}.mp4`);
+            await ffmpeg()
+              .input(`color=black:s=720x1280:d=${audioDur + 1.5}`)
+              .inputFormat('lavfi')
+              .output(fallbackClip)
+              .on('end', () => {})
+              .on('error', err => { throw err; })
+              .run();
 
-            await new Promise((resolve, reject) => {
-              ffmpeg()
-                .input(colorClip)
-                .input(wavFile)
-                .outputOptions([
-                  '-map 0:v:0',
-                  '-map 1:a:0',
-                  '-c:v libx264',
-                  '-c:a aac',
-                  '-shortest',
-                  '-r 30'
-                ])
-                .save(sceneFile)
-                .on('end', resolve)
-                .on('error', reject);
-            });
+            await ffmpeg()
+              .input(fallbackClip)
+              .input(wavFile)
+              .outputOptions(['-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest'])
+              .save(sceneFile);
 
             scenes.push(sceneFile);
             continue;
           }
 
+          usedUrls.add(mediaObj.originalUrl);
           const ext = path.extname(new URL(mediaObj.url).pathname);
-          await downloadToFile(mediaObj.url, clipBase + ext);
-
-          const leadFile = path.join(workDir, `lead-${idx}.wav`);
-          const tailFile = path.join(workDir, `tail-${idx}.wav`);
-
-          await new Promise((resolve, reject) => {
-            ffmpeg()
-              .input('anullsrc=r=44100:cl=mono')
-              .inputFormat('lavfi')
-              .outputOptions(['-t 0.5'])
-              .save(leadFile)
-              .on('end', resolve)
-              .on('error', reject)
-              .run();
-          });
-
-          await new Promise((resolve, reject) => {
-            ffmpeg()
-              .input('anullsrc=r=44100:cl=mono')
-              .inputFormat('lavfi')
-              .outputOptions(['-t 1.0'])
-              .save(tailFile)
-              .on('end', resolve)
-              .on('error', reject)
-              .run();
-          });
-
-          const sceneAudioWav = path.join(workDir, `scene-audio-${idx}.wav`);
-          const audListFile = path.join(workDir, `audlist-${idx}.txt`);
-          fs.writeFileSync(
-            audListFile,
-            [leadFile, wavFile, tailFile].map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
-          );
-
-          await new Promise((resolve, reject) => {
-            ffmpeg()
-              .input(audListFile)
-              .inputOptions(['-f concat', '-safe 0'])
-              .outputOptions(['-c:a pcm_s16le'])
-              .save(sceneAudioWav)
-              .on('end', resolve)
-              .on('error', reject)
-              .run();
-          });
+          const mediaPath = clipBase + ext;
+          await downloadToFile(mediaObj.url, mediaPath);
 
           const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
-          await new Promise((resolve, reject) => {
-            ffmpeg()
-              .input(sceneAudioWav)
-              .outputOptions(['-c:a aac', '-b:a 128k'])
-              .save(sceneAudio)
-              .on('end', resolve)
-              .on('error', reject)
-              .run();
-          });
+          await ffmpeg()
+            .input(wavFile)
+            .outputOptions(['-c:a aac', '-b:a 128k'])
+            .save(sceneAudio);
 
           const sceneLen = audioDur + 1.5;
 
-          await new Promise((resolve, reject) => {
-            ffmpeg()
-              .input(clipBase + ext)
-              .inputOptions(['-stream_loop', '-1'])
-              .input(sceneAudio)
-              .inputOptions([`-t ${sceneLen}`])
-              .outputOptions([
-                '-map 0:v:0',
-                '-map 1:a:0',
-                '-c:v libx264',
-                '-c:a aac',
-                '-shortest',
-                '-r 30'
-              ])
-              .videoFilters(
-                'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280'
-              )
-              .save(sceneFile)
-              .on('end', resolve)
-              .on('error', reject);
-          });
+          await ffmpeg()
+            .input(mediaPath)
+            .inputOptions(['-stream_loop', '-1'])
+            .input(sceneAudio)
+            .inputOptions([`-t ${sceneLen}`])
+            .outputOptions(['-map 0:v:0', '-map 1:a:0', '-c:v libx264', '-c:a aac', '-shortest', '-r 30'])
+            .videoFilters('scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280')
+            .save(sceneFile);
 
           scenes.push(sceneFile);
 
@@ -586,117 +504,20 @@ app.post('/api/generate-video', async (req, res) => {
         }
       }
 
-      // Outro, watermark, concat, upload, etc
-      if (!(paidUser && removeWatermark)) {
-        try {
-          console.log('[DEBUG] Adding outro, watermark, and final processing...');
-          currentStep++;
-          progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Adding outro..." };
+      // Trigger outro logic etc. after scenes built...
+      await finalizeAndUpload(jobId, scenes, workDir, script, voice, paidUser, removeWatermark);
+      finished = true;
+      clearTimeout(watchdog);
+    } catch (err) {
+      console.error('[ERROR] Unexpected error in video job:', err);
+      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
+      cleanupJob(jobId, 10 * 1000);
+      finished = true;
+      clearTimeout(watchdog);
+    }
+  })();
+});
 
-          const outroText = "This video was made with SocialStormAI.";
-          const outroLogo = path.join(__dirname, 'frontend', 'logo.png');
-          const outroVoiceId = voice;
-          const outroWorkDir = workDir;
-          const thunderSfx = path.join(__dirname, 'frontend', 'assets', 'thunder.mp3');
-
-          if (fs.existsSync(outroLogo) && fs.existsSync(thunderSfx)) {
-            const outroAudioMp3 = path.join(outroWorkDir, 'outro-audio.mp3');
-            const outroAudioWav = path.join(outroWorkDir, 'outro-audio.wav');
-            const outroThunderWav = path.join(outroWorkDir, 'thunder.wav');
-            const outroAudioMixed = path.join(outroWorkDir, 'outro-mixed.wav');
-            const outroSceneFile = path.join(outroWorkDir, 'scene-outro.mp4');
-
-            console.log('[DEBUG] Synthesizing outro voice with Polly/ElevenLabs...');
-            const googleVoiceIds = googleFreeVoices.map(v => v.id);
-            if (googleVoiceIds.includes(outroVoiceId)) {
-              const wav = await synthesizeWithGoogleTTS(outroText, outroVoiceId, outroAudioMp3);
-              fs.renameSync(wav, outroAudioWav);
-            } else {
-              try {
-                const ttsOutroRes = await axios.post(
-                  `https://api.elevenlabs.io/v1/text-to-speech/${outroVoiceId}`,
-                  { text: outroText, model_id: 'eleven_monolingual_v1' },
-                  { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY }, responseType: 'arraybuffer' }
-                );
-                fs.writeFileSync(outroAudioMp3, ttsOutroRes.data);
-                await new Promise((resolve, reject) => {
-                  ffmpeg()
-                    .input(outroAudioMp3)
-                    .audioChannels(1)
-                    .audioFrequency(44100)
-                    .output(outroAudioWav)
-                    .on('end', resolve)
-                    .on('error', reject)
-                    .run();
-                });
-              } catch (err) {
-                console.error('[ERROR] ElevenLabs outro error:', err);
-                progress[jobId] = { percent: 100, status: `Failed: ElevenLabs outro error: ${err.message}` };
-                cleanupJob(jobId, 10 * 1000);
-                finished = true;
-                clearTimeout(watchdog);
-                return;
-              }
-            }
-
-            await new Promise((resolve, reject) =>
-              ffmpeg()
-                .input(thunderSfx)
-                .outputOptions(['-t 2.2'])
-                .output(outroThunderWav)
-                .on('end', resolve)
-                .on('error', reject)
-                .run()
-            );
-
-            console.log('[DEBUG] Mixing outro audio with thunder sound...');
-            await new Promise((resolve, reject) =>
-              ffmpeg()
-                .input(outroAudioWav)
-                .input(outroThunderWav)
-                .complexFilter([ 
-                  '[0:a]volume=1.2[a0];[1:a]volume=0.5[a1];[a0][a1]amix=inputs=2:duration=first' 
-                ])
-                .output(outroAudioMixed)
-                .on('end', resolve)
-                .on('error', reject)
-                .run()
-            );
-
-            const outroDur = await new Promise((resolve, reject) => {
-              ffmpeg.ffprobe(outroAudioMixed, (err, info) => {
-                if (err || !info?.format?.duration) return resolve(4.5);
-                resolve(info.format.duration + 0.2);
-              });
-            });
-
-            const ff = ffmpeg()
-              .input(`color=black:s=720x1280:d=${outroDur}`)
-              .inputFormat('lavfi')
-              .input(outroLogo).inputOptions(['-loop', '1'])
-              .complexFilter([ 
-                "[1:v]scale=650:650:force_original_aspect_ratio=decrease[brand];" +
-                "[0:v][brand]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2" 
-              ])
-              .input(outroAudioMixed)
-              .outputOptions([ 
-                '-shortest', 
-                '-c:v libx264', 
-                '-c:a aac', 
-                '-pix_fmt yuv420p', 
-                '-r 30' 
-              ])
-              .save(outroSceneFile);
-
-            await new Promise(resolve => ff.on('end', resolve));
-            scenes.push(outroSceneFile);
-            progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Outro added." };
-            console.log('[DEBUG] Outro added successfully');
-          }
-        } catch (err) {
-          console.error('[ERROR] Outro creation failed:', err);
-        }
-      }
 
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
       console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');

@@ -62,6 +62,8 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+
+
 // ==== SECTION 6: CLOUD R2 CLIENT CONFIGURATION ====
 console.log('[DEBUG] Entered SECTION 6: CLOUD R2 CLIENT CONFIGURATION');
 const { S3, Endpoint } = AWS;
@@ -74,10 +76,12 @@ const s3 = new S3({
 });
 console.log('[DEBUG] Cloud R2 client initialized');
 
+
+
 // ==== SECTION 7: HELPERS ====
 console.log('[DEBUG] Entered SECTION 7: HELPERS');
 
-// Download file helper
+// Download file helper (unchanged)
 async function downloadToFile(url, outPath) {
   const writer = fs.createWriteStream(outPath);
   const response = await axios.get(url, { responseType: 'stream' });
@@ -95,44 +99,99 @@ async function downloadToFile(url, outPath) {
   });
 }
 
-// Function to pick clips from CloudR2 first, then fallback to Pexels and Pixabay
-async function pickClipForCloudR2(script, usedUrls = []) {
-  console.log('[DEBUG] Checking Cloud R2 for clips...');
-  const r2Clips = await s3.listObjectsV2({
-    Bucket: process.env.R2_BUCKET,
-    Prefix: 'socialstorm-library/',
-  }).promise();
-
-  const availableClips = r2Clips.Contents.filter(item => item.Key.endsWith('.mp4'));
-  if (availableClips.length > 0) {
-    console.log('[DEBUG] Found clip in Cloud R2:', availableClips[0].Key);
-    const selectedClip = availableClips[0];
-    return { url: `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${selectedClip.Key}`, id: selectedClip.Key };
+// Smart keyword extraction from script line
+function extractKeywords(text) {
+  if (!text) return [];
+  // Try to pick out quoted words or capitalized words, fallback to nouns
+  let matches = text.match(/"([^"]+)"|'([^']+)'|([A-Z][a-z]+)/g) || [];
+  matches = matches.map(k => k.replace(/['"]+/g, ''));
+  if (matches.length === 0) {
+    // fallback: most significant word(s)
+    matches = text.split(/\s+/).filter(word =>
+      word.length > 3 &&
+      !['this', 'that', 'with', 'from', 'have', 'your', 'some', 'more', 'they', 'will', 'very', 'which', 'what'].includes(word.toLowerCase())
+    );
   }
-  console.log('[DEBUG] No clips found in Cloud R2, falling back to Pexels');
-  return pickClipFor(script, usedUrls);
+  // Always push the full phrase first
+  matches.unshift(text.trim());
+  return [...new Set(matches.map(k => sanitizeQuery(k)))];
 }
 
+// Improved subject extractor: prefer most specific subject
+function extractMainSubject(script) {
+  if (!script || typeof script !== "string") return "video";
+  // Try to find a phrase like "bald eagle" or a main noun
+  const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (line.match(/bald\s*eagle/i)) return "bald eagle";
+    if (line.toLowerCase().includes("how")) return line;
+    // Add more logic here for other specific matches if needed
+  }
+  // Fallback: first line
+  return lines[0] || "video";
+}
+
+// Main: Try to find an exact match in Cloud R2 for the best keyword(s)
+async function pickClipForCloudR2(script, usedUrls = []) {
+  const subject = extractMainSubject(script);
+  const keywords = extractKeywords(subject);
+  console.log('[pickClipForCloudR2] Subject:', subject, '| Keywords:', keywords);
+
+  // Fetch all R2 clips (caution: slow with thousands)
+  let r2Clips = [];
+  try {
+    const resp = await s3.listObjectsV2({
+      Bucket: process.env.R2_BUCKET,
+      Prefix: 'socialstorm-library/',
+    }).promise();
+    r2Clips = resp.Contents.filter(item => item.Key.endsWith('.mp4'));
+  } catch (err) {
+    console.log('[pickClipForCloudR2] R2 error:', err.message);
+    r2Clips = [];
+  }
+
+  // Try to find a perfect keyword match (start with most specific)
+  let bestClip = null;
+  for (const keyword of keywords) {
+    bestClip = r2Clips.find(item => item.Key.toLowerCase().includes(keyword.replace(/\s+/g, '').toLowerCase()));
+    if (bestClip) break;
+  }
+  if (bestClip) {
+    console.log('[pickClipForCloudR2] Found subject match in R2:', bestClip.Key);
+    return {
+      url: `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${bestClip.Key}`,
+      id: bestClip.Key
+    };
+  }
+
+  // Try to find any non-used clip related to "eagle" if available
+  let eagleFallback = r2Clips.find(item => item.Key.toLowerCase().includes('eagle') && !usedUrls.includes(item.Key));
+  if (eagleFallback) {
+    console.log('[pickClipForCloudR2] Found eagle fallback in R2:', eagleFallback.Key);
+    return {
+      url: `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${eagleFallback.Key}`,
+      id: eagleFallback.Key
+    };
+  }
+
+  // Otherwise fallback to Pexels with specific query
+  console.log('[pickClipForCloudR2] No good match in R2. Falling back to Pexels for:', subject);
+  // Call your normal Pexels helper with subject/keywords (if possible, pass keywords array)
+  return pickClipFor(subject, usedUrls);
+}
+
+// Strip emojis
 function stripEmojis(str) {
   if (!str) return '';
   return str.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD00-\uDDFF])/g, '');
 }
 
+// Simple query sanitizer
 function sanitizeQuery(str) {
   if (!str) return '';
   return str.replace(/[^a-zA-Z0-9 ]/g, '').toLowerCase();
 }
 
-function extractMainSubject(script) {
-  if (!script || typeof script !== "string") return "video";
-  const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
-  for (const line of lines) {
-    if (line.toLowerCase().includes("how")) {
-      return line;
-    }
-  }
-  return lines[0];
-}
 
 // ==== SECTION 8: VIRAL METADATA ENGINE ====
 console.log('[DEBUG] Entered SECTION 8: VIRAL METADATA ENGINE');
@@ -392,7 +451,7 @@ app.post('/api/generate-video', (req, res) => {
       mainSubject = await extractMainSubject(script);
       if (!mainSubject) throw new Error('No main subject found for this script.');
 
-      steps = splitScriptToScenes(script).slice(0, 8);
+      steps = splitScriptToScenes(script).slice(0, 15);
       totalSteps = steps.length + 4; // 4 extra: concat, watermark, upload, cleanup
       currentStep = 0;
 

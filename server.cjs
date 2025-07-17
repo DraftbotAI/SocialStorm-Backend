@@ -378,7 +378,7 @@ app.post('/api/generate-video', async (req, res) => {
 
   (async () => {
     let finished = false;
-    let watchdog = setTimeout(() => {
+    const watchdog = setTimeout(() => {
       if (!finished && progress[jobId]) {
         progress[jobId] = { percent: 100, status: "Failed: Timed out." };
         cleanupJob(jobId);
@@ -386,8 +386,20 @@ app.post('/api/generate-video', async (req, res) => {
       }
     }, 10 * 60 * 1000);
 
+    let workDir = null;
+    let scenes = [];
+    let steps = [];
+    let totalSteps = 0;
+    let currentStep = 0;
+    let paidUser = false;
+    let removeWatermark = false;
+    let mainSubject = '';
+    let voice = '';
+    let script = '';
+
     try {
-      const { script, voice, removeWatermark, paidUser } = req.body;
+      // === INPUTS ===
+      ({ script, voice, removeWatermark, paidUser } = req.body);
       if (!script || !voice) {
         progress[jobId] = { percent: 100, status: 'Failed: script & voice required' };
         console.log('[ERROR] Missing required data: script or voice');
@@ -398,16 +410,16 @@ app.post('/api/generate-video', async (req, res) => {
       }
 
       console.log('[DEBUG] Starting video generation process');
-      const mainSubject = await extractMainSubject(script);
+      mainSubject = await extractMainSubject(script);
       if (!mainSubject) throw new Error('No main subject found for this script.');
 
-      const steps = splitScriptToScenes(script).slice(0, 8);
-      const totalSteps = steps.length + 4;
-      let currentStep = 0;
+      steps = splitScriptToScenes(script).slice(0, 8);
+      totalSteps = steps.length + 4; // 4 extra: concat, watermark, upload, cleanup
+      currentStep = 0;
 
-      const workDir = path.join(__dirname, 'tmp', uuidv4());
+      workDir = path.join(__dirname, 'tmp', uuidv4());
       fs.mkdirSync(workDir, { recursive: true });
-      const scenes = [];
+      scenes = [];
       const usedUrls = new Set();
 
       let mediaFailCount = 0;
@@ -428,6 +440,7 @@ app.post('/api/generate-video', async (req, res) => {
 
           console.log('[DEBUG] Generating audio for scene:', idx);
 
+          // --- AUDIO GENERATION ---
           const pollyVoiceIds = pollyVoices.map(v => v.id);
           if (pollyVoiceIds.includes(voice)) {
             const wav = await synthesizeWithPolly(text, voice, audioFile);
@@ -436,6 +449,7 @@ app.post('/api/generate-video', async (req, res) => {
             throw new Error(`Invalid voice selection: ${voice}`);
           }
 
+          // --- GET AUDIO DURATION ---
           let audioDur = 3.5;
           try {
             audioDur = await new Promise((resolve, reject) =>
@@ -445,11 +459,12 @@ app.post('/api/generate-video', async (req, res) => {
             audioDur = 3.5;
           }
 
+          // --- FIND MATCHING CLIP ---
           const mediaObj = await pickClipFor(text, workDir, 0.13, mainSubject, Array.from(usedUrls));
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
             if (mediaFailCount > 3) {
-              throw new Error(`Failed to get media for scene ${i+1} after many attempts.`);
+              throw new Error(`Failed to get media for scene ${i + 1} after many attempts.`);
             }
             const fallbackClip = path.join(workDir, `fallback-${idx}.mp4`);
             await ffmpeg()
@@ -475,6 +490,7 @@ app.post('/api/generate-video', async (req, res) => {
           const mediaPath = clipBase + ext;
           await downloadToFile(mediaObj.url, mediaPath);
 
+          // --- ENCODE AUDIO TO M4A FOR FINAL SCENE ---
           const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
           await ffmpeg()
             .input(wavFile)
@@ -483,6 +499,7 @@ app.post('/api/generate-video', async (req, res) => {
 
           const sceneLen = audioDur + 1.5;
 
+          // --- STITCH AUDIO + VIDEO ---
           await ffmpeg()
             .input(mediaPath)
             .inputOptions(['-stream_loop', '-1'])
@@ -495,7 +512,7 @@ app.post('/api/generate-video', async (req, res) => {
           scenes.push(sceneFile);
 
         } catch (err) {
-          console.error("Scene", i+1, "error:", err);
+          console.error("Scene", i + 1, "error:", err);
           progress[jobId] = { percent: 100, status: "Failed: " + err.message };
           cleanupJob(jobId, 10 * 1000);
           finished = true;
@@ -503,21 +520,6 @@ app.post('/api/generate-video', async (req, res) => {
           return;
         }
       }
-
-      // Trigger outro logic etc. after scenes built...
-      await finalizeAndUpload(jobId, scenes, workDir, script, voice, paidUser, removeWatermark);
-      finished = true;
-      clearTimeout(watchdog);
-    } catch (err) {
-      console.error('[ERROR] Unexpected error in video job:', err);
-      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
-      cleanupJob(jobId, 10 * 1000);
-      finished = true;
-      clearTimeout(watchdog);
-    }
-  })();
-});
-
 
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
       console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');
@@ -579,9 +581,9 @@ app.post('/api/generate-video', async (req, res) => {
       finished = true;
       clearTimeout(watchdog);
 
-    } catch (e) {
-      console.error('[ERROR] Fatal error in video generator:', e);
-      progress[jobId] = { percent: 100, status: "Failed: " + e.message };
+    } catch (err) {
+      console.error('[ERROR] Fatal error in video generator:', err);
+      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
       cleanupJob(jobId, 60 * 1000);
       finished = true;
       clearTimeout(watchdog);

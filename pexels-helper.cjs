@@ -271,7 +271,7 @@ function shuffleArray(arr) {
   }
 }
 
-// ========== UNIVERSAL, NEVER-FAIL PICK CLIP FUNCTION ==========
+// ========== UNIVERSAL, NEVER-FAIL PICK CLIP FUNCTION ========== 
 async function pickClipFor(rawQuery, tempDir = TEMP_DIR, minScore = 0.13, mainSubject = '', excludeUrls = []) {
   console.log(`[pickClipFor] rawQuery="${rawQuery}"`);
 

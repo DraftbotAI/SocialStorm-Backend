@@ -486,9 +486,24 @@ app.post('/api/generate-video', async (req, res) => {
           }
 
           usedUrls.add(mediaObj.originalUrl);
-          const ext = path.extname(new URL(mediaObj.url).pathname);
+
+          // ---- ERR_INVALID_URL FIX STARTS HERE ----
+          let ext;
+          if (mediaObj.url.startsWith('http')) {
+            ext = path.extname(new URL(mediaObj.url).pathname);
+          } else {
+            ext = path.extname(mediaObj.url);
+          }
           const mediaPath = clipBase + ext;
-          await downloadToFile(mediaObj.url, mediaPath);
+
+          if (mediaObj.url.startsWith('http')) {
+            await downloadToFile(mediaObj.url, mediaPath);
+          } else {
+            if (mediaObj.url !== mediaPath) {
+              fs.copyFileSync(mediaObj.url, mediaPath);
+            }
+          }
+          // ---- ERR_INVALID_URL FIX ENDS HERE ----
 
           // --- ENCODE AUDIO TO M4A FOR FINAL SCENE ---
           const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
@@ -520,6 +535,32 @@ app.post('/api/generate-video', async (req, res) => {
           return;
         }
       }
+
+      // All scenes are built at this point
+      // The concatenation, watermark, and upload will happen in SECTION 17
+
+      progress[jobId] = {
+        percent: Math.round(((currentStep + 1) / totalSteps) * 100),
+        status: "Scenes completed, ready for final assembly."
+      };
+
+      // <-- SECTION 17 begins immediately after this -->
+
+      finished = true;
+      clearTimeout(watchdog);
+
+    } catch (err) {
+      console.error('[ERROR] Unexpected error in video job:', err);
+      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
+      cleanupJob(jobId, 10 * 1000);
+      finished = true;
+      clearTimeout(watchdog);
+    }
+  })();
+});
+
+console.log('[DEBUG] Video generation route set up successfully');
+
 
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
       console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');

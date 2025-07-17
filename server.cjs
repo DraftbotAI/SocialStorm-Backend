@@ -68,6 +68,7 @@ app.get('/health', (req, res) => {
 });
 
 
+
 // ==== SECTION 6: CLOUD R2 CLIENT CONFIGURATION ====
 console.log('[DEBUG] Entered SECTION 6: CLOUD R2 CLIENT CONFIGURATION');
 const { S3, Endpoint } = AWS;
@@ -79,6 +80,7 @@ const s3 = new S3({
   region: 'us-east-1',
 });
 console.log('[DEBUG] Cloud R2 client initialized');
+
 
 
 // ==== SECTION 7: HELPERS ==== 
@@ -193,18 +195,25 @@ function splitScriptToScenes(script) {
 }
 
 
-// ==== SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT ====
+// ==== SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT ==== 
 console.log('[DEBUG] Entered SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT');
+
+// No longer using Google TTS, now using Polly
 let pollyClient;
+
 try {
-  // No longer using Google TTS, now using Polly
   console.log('[DEBUG] Initializing Polly client');
+  // Initialize Polly client
   const polly = new AWS.Polly({ region: 'us-east-1' });
-  pollyClient = polly;
+  pollyClient = polly; // Assign Polly client
   console.log('[DEBUG] Polly client initialized');
 } catch (e) {
   console.error('[ERROR] Could not initialize Polly client:', e);
 }
+
+// Ensure that no Google TTS-related logic remains
+// All references to Google TTS should now be removed.
+
 
 
 // ==== SECTION 11: POLLY TTS SYNTHESIZER ====

@@ -81,9 +81,10 @@ const s3 = new S3({
 console.log('[DEBUG] Cloud R2 client initialized');
 
 
-// ==== SECTION 7: HELPERS ====
+// ==== SECTION 7: HELPERS ==== 
 console.log('[DEBUG] Entered SECTION 7: HELPERS');
 
+// Function to pick clips from CloudR2 first, then fallback to Pexels and Pixabay
 async function pickClipForCloudR2(script, usedUrls = []) {
   console.log('[DEBUG] Checking Cloud R2 for clips...');
   // Check Cloud R2 first
@@ -103,38 +104,32 @@ async function pickClipForCloudR2(script, usedUrls = []) {
   return pickClipFor(script, usedUrls); // Fallback to Pexels helper function
 }
 
-async function pickClipFor(script, usedUrls = []) {
-  console.log('[DEBUG] Searching for clip based on script:', script);
-  // Fallback logic for Pexels and Pixabay
-  const pexelsResponse = await axios.get('https://api.pexels.com/v1/search', {
-    headers: { Authorization: `Bearer ${process.env.PEXELS_API_KEY}` },
-    params: { query: sanitizeQuery(script), per_page: 1 },
-  });
+// The pickClipFor function is already imported from pexels-helper.cjs
+// No need to redeclare it here again
+// const { pickClipFor } = require('./pexels-helper.cjs'); // Keep this import and don't redeclare pickClipFor again
 
-  if (pexelsResponse.data.photos.length > 0) {
-    const video = pexelsResponse.data.photos[0].src.original;
-    console.log('[DEBUG] Clip found in Pexels:', video);
-    return { url: video, id: video }; // Return video URL
-  }
-
-  // Fallback to Pixabay if Pexels doesn’t return a video
-  const pixabayResponse = await axios.get('https://pixabay.com/api/videos/', {
-    params: {
-      key: process.env.PIXABAY_API_KEY,
-      q: sanitizeQuery(script),
-      per_page: 1,
-    },
-  });
-
-  if (pixabayResponse.data.hits.length > 0) {
-    const video = pixabayResponse.data.hits[0].videos.large.url;
-    console.log('[DEBUG] Clip found in Pixabay:', video);
-    return { url: video, id: video }; // Return video URL
-  }
-
-  console.log('[DEBUG] No clips found in Pexels or Pixabay');
-  return null; // If no video is found anywhere
+// Helper functions for sanitizing input or removing emojis from text
+function stripEmojis(str) {
+  if (!str) return '';
+  return str.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD00-\uDDFF])/g, '');
 }
+
+function sanitizeQuery(str) {
+  if (!str) return '';
+  return str.replace(/[^a-zA-Z0-9 ]/g, '').toLowerCase();
+}
+
+function extractMainSubject(script) {
+  if (!script || typeof script !== "string") return "video";
+  const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (line.toLowerCase().includes("how")) {
+      return line;
+    }
+  }
+  return lines[0]; // Fallback
+}
+
 
 
 // ==== SECTION 8: VIRAL METADATA ENGINE ====

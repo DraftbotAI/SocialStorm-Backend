@@ -485,7 +485,7 @@ app.post('/api/generate-video', async (req, res) => {
             continue;
           }
 
-          usedUrls.add(mediaObj.originalUrl);
+          usedUrls.add(mediaObj.originalUrl || mediaObj.url);
 
           // ---- ERR_INVALID_URL FIX STARTS HERE ----
           let ext;
@@ -536,30 +536,81 @@ app.post('/api/generate-video', async (req, res) => {
         }
       }
 
-      // All scenes are built at this point
-      // The concatenation, watermark, and upload will happen in SECTION 17
+      // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
+      console.log('[DEBUG] Entered SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO');
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
 
-      progress[jobId] = {
-        percent: Math.round(((currentStep + 1) / totalSteps) * 100),
-        status: "Scenes completed, ready for final assembly."
-      };
+      const listFile = path.join(workDir, 'list.txt');
+      fs.writeFileSync(
+        listFile,
+        scenes.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+      );
+      const concatFile = path.join(workDir, 'concat.mp4');
 
-      // <-- SECTION 17 begins immediately after this -->
+      await new Promise((resolve, reject) => {
+        ffmpeg()
+          .input(listFile)
+          .inputOptions(['-f concat', '-safe 0'])
+          .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+          .save(concatFile)
+          .on('end', resolve)
+          .on('error', reject);
+      });
 
+      const final = path.join(workDir, 'final.mp4');
+      let useWatermark = !(paidUser && removeWatermark);
+
+      if (useWatermark) {
+        const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(concatFile)
+            .input(watermarkPath)
+            .complexFilter([
+              '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];' +
+              '[0:v][wm]overlay=W-w-20:H-h-20'
+            ])
+            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+            .save(final)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+      } else {
+        fs.copyFileSync(concatFile, final);
+      }
+
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
+      const key = `videos/${uuidv4()}.mp4`;
+      await s3.upload({
+        Bucket: process.env.R2_BUCKET,
+        Key: key,
+        Body: fs.createReadStream(final),
+        ContentType: 'video/mp4',
+        ACL: 'public-read'
+      }).promise();
+
+      progress[jobId] = { percent: 100, status: "Done", key };
+      cleanupJob(jobId, 90 * 1000);
       finished = true;
       clearTimeout(watchdog);
 
     } catch (err) {
-      console.error('[ERROR] Unexpected error in video job:', err);
+      console.error('[ERROR] Fatal error in video generator:', err);
       progress[jobId] = { percent: 100, status: "Failed: " + err.message };
-      cleanupJob(jobId, 10 * 1000);
+      cleanupJob(jobId, 60 * 1000);
       finished = true;
       clearTimeout(watchdog);
+      return;
     }
   })();
 });
 
 console.log('[DEBUG] Video generation route set up successfully');
+
+
+
 
 
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====

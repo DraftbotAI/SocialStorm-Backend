@@ -71,41 +71,51 @@ async function extractMainSubject(line) {
   }
 }
 
-// Download a remote video to a local temp file and return the local path
-async function downloadToLocal(url, workDir = TEMP_DIR) {
-  // Ensure the URL is a string and not an array
-  if (Array.isArray(url)) {
-    console.error("[downloadToLocal] Received array instead of a string URL:", url);
-    url = url[0];  // Fallback to the first item in the array if multiple URLs are found
+// Download remote videos to local temp files and return an array of local paths
+async function downloadToLocal(urls, workDir = TEMP_DIR) {
+  if (!Array.isArray(urls)) {
+    console.warn("[downloadToLocal] Expected an array of URLs, but received a single string. Wrapping the string in an array.");
+    urls = [urls]; // Wrap the single URL into an array if a string is passed
   }
-  
-  const hash = crypto.createHash('md5').update(url).digest('hex').slice(0, 10);
-  const fileName = `remote_${hash}_${Date.now()}.mp4`;
-  const dest = path.join(workDir, fileName);
-  if (fs.existsSync(dest)) {
-    console.log(`[downloadToLocal] Already downloaded: ${dest}`);
-    return dest;
+
+  const downloadedPaths = [];
+
+  for (let url of urls) {
+    const hash = crypto.createHash('md5').update(url).digest('hex').slice(0, 10);
+    const fileName = `remote_${hash}_${Date.now()}.mp4`;
+    const dest = path.join(workDir, fileName);
+
+    if (fs.existsSync(dest)) {
+      console.log(`[downloadToLocal] Already downloaded: ${dest}`);
+      downloadedPaths.push(dest);
+      continue; // Skip if already downloaded
+    }
+
+    try {
+      const response = await axios({
+        url,
+        method: 'GET',
+        responseType: 'stream',
+        timeout: 15000,
+        maxContentLength: 200 * 1024 * 1024, // 200MB safety limit
+      });
+
+      await new Promise((resolve, reject) => {
+        const w = fs.createWriteStream(dest);
+        response.data.pipe(w);
+        w.on('finish', resolve);
+        w.on('error', reject);
+      });
+
+      console.log(`[downloadToLocal] Downloaded ${url} to ${dest}`);
+      downloadedPaths.push(dest);
+    } catch (err) {
+      console.error(`[downloadToLocal] Failed to download ${url}:`, err.message);
+      downloadedPaths.push(null); // Push null if download fails
+    }
   }
-  try {
-    const response = await axios({
-      url,
-      method: 'GET',
-      responseType: 'stream',
-      timeout: 15000,
-      maxContentLength: 200 * 1024 * 1024, // 200MB safety limit
-    });
-    await new Promise((resolve, reject) => {
-      const w = fs.createWriteStream(dest);
-      response.data.pipe(w);
-      w.on('finish', resolve);
-      w.on('error', reject);
-    });
-    console.log(`[downloadToLocal] Downloaded ${url} to ${dest}`);
-    return dest;
-  } catch (err) {
-    console.error(`[downloadToLocal] Failed to download ${url}:`, err.message);
-    return null;
-  }
+
+  return downloadedPaths;
 }
 
 // Promise timeout
@@ -314,7 +324,6 @@ async function pickClipFor(rawQuery, tempDir = TEMP_DIR, minScore = 0.13, mainSu
   return null;
 }
 
-
-// ========== EXPORT ==========
+// ========== EXPORT ========== 
 module.exports = { pickClipFor };
 console.log('[Pexels Helper] Exported pickClipFor function.');

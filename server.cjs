@@ -108,13 +108,12 @@ const s3 = new S3({
   accessKeyId: R2_ACCESS_KEY,
   secretAccessKey: R2_SECRET_KEY,
   signatureVersion: 'v4',
-  region: 'us-east-1', // Use 'us-east-1' for max R2 compatibility
+  region: 'auto',   // Changed from 'us-east-1' to 'auto' for Cloudflare R2
   sslEnabled: true,
   s3ForcePathStyle: true
 });
 
 console.log('[DEBUG] Cloud R2 client initialized');
-
 
 
 

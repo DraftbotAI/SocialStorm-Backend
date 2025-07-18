@@ -28,6 +28,9 @@ const util = require('util');
 ffmpeg.setFfmpegPath(ffmpegPath);
 console.log('[DEBUG] All dependencies loaded successfully');
 
+
+
+
 // ==== SECTION 3: PROGRESS TRACKING MAP ====
 console.log('[DEBUG] Entered SECTION 3: PROGRESS TRACKING MAP');
 const progress = {};
@@ -37,6 +40,9 @@ function cleanupJob(jobId, delay = JOB_TTL_MS) {
   console.log('[DEBUG] Cleaning up job:', jobId);
   setTimeout(() => { delete progress[jobId]; console.log('[DEBUG] Job cleaned up:', jobId); }, delay);
 }
+
+
+
 
 // ==== SECTION 4: EXPRESS APP INITIALIZATION ====
 console.log('[DEBUG] Entered SECTION 4: EXPRESS APP INITIALIZATION');
@@ -55,12 +61,16 @@ app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voic
 const PORT = process.env.PORT || 8080;
 console.log('[DEBUG] Express app initialized on port:', PORT);
 
+
+
+
 // ==== SECTION 5: HEALTH CHECK ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 5: HEALTH CHECK ENDPOINT');
 app.get('/health', (req, res) => {
   console.log('[DEBUG] Health check received');
   res.status(200).send('OK');
 });
+
 
 
 
@@ -77,11 +87,10 @@ const s3 = new S3({
 console.log('[DEBUG] Cloud R2 client initialized');
 
 
-
 // ==== SECTION 7: HELPERS ====
 console.log('[DEBUG] Entered SECTION 7: HELPERS');
 
-// ---- Download file helper ----
+// Download helper
 async function downloadToFile(url, outPath) {
   const writer = fs.createWriteStream(outPath);
   const response = await axios.get(url, { responseType: 'stream' });
@@ -99,10 +108,9 @@ async function downloadToFile(url, outPath) {
   });
 }
 
-// ---- Keyword extraction ----
+// Keyword extraction
 function extractKeywords(text) {
   if (!text) return [];
-  // Try to pick quoted words or capitalized words, fallback to nouns
   let matches = text.match(/"([^"]+)"|'([^']+)'|([A-Z][a-z]+)/g) || [];
   matches = matches.map(k => k.replace(/['"]+/g, ''));
   if (matches.length === 0) {
@@ -115,7 +123,7 @@ function extractKeywords(text) {
   return [...new Set(matches.map(k => sanitizeQuery(k)))];
 }
 
-// ---- Improved main subject extraction ----
+// Extract main subject
 function extractMainSubject(script) {
   if (!script || typeof script !== "string") return "video";
   const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
@@ -123,46 +131,46 @@ function extractMainSubject(script) {
     if (line.match(/bald\s*eagle/i)) return "bald eagle";
     if (line.toLowerCase().includes("how")) return line;
   }
-  // Look for any "eagle" or "owl" or "animal" in lines
   const eagleLine = lines.find(l => l.toLowerCase().includes("eagle"));
   if (eagleLine) return "eagle";
   return lines[0] || "video";
 }
 
-// ---- Main: Smart R2 picker (hard subject enforcement) ----
-async function pickClipForCloudR2(script, usedUrls = []) {
+// Pick clip from R2, avoid duplicates via usedIds array
+async function pickClipForCloudR2(script, usedIds = []) {
   const subject = extractMainSubject(script);
   const keywords = extractKeywords(subject);
   const mustInclude = subject.toLowerCase().replace(/\s+/g, '');
 
   console.log('[pickClipForCloudR2] Subject:', subject, '| Keywords:', keywords, '| MustInclude:', mustInclude);
 
-  // Fetch all R2 clips (can be slow if there are thousands)
   let r2Clips = [];
   try {
     const resp = await s3.listObjectsV2({
       Bucket: process.env.R2_BUCKET,
       Prefix: 'socialstorm-library/',
     }).promise();
+
     r2Clips = resp.Contents.filter(item => item.Key.endsWith('.mp4'));
   } catch (err) {
     console.log('[pickClipForCloudR2] R2 error:', err.message);
     r2Clips = [];
   }
 
-  // Require subject match in filename (e.g. 'eagle' for 'bald eagle')
+  // Filter out used clip IDs to avoid repeats
+  const availableClips = r2Clips.filter(c => !usedIds.includes(c.Key.toLowerCase()));
+
   let bestClip = null;
   for (const keyword of keywords) {
-    bestClip = r2Clips.find(item =>
+    bestClip = availableClips.find(item =>
       item.Key.toLowerCase().includes(mustInclude) &&
       item.Key.toLowerCase().includes(keyword.replace(/\s+/g, '').toLowerCase())
     );
     if (bestClip) break;
   }
 
-  // If no combo, just any file with subject in name (e.g. any eagle)
   if (!bestClip) {
-    bestClip = r2Clips.find(item =>
+    bestClip = availableClips.find(item =>
       item.Key.toLowerCase().includes(mustInclude)
     );
   }
@@ -175,23 +183,49 @@ async function pickClipForCloudR2(script, usedUrls = []) {
     };
   }
 
-  // Final fallback: Pexels helper, *prefix subject* for every query (e.g. 'bald eagle sight')
+  // No R2 match, fallback to Pexels (pass usedIds for deduplication if applicable)
   const fallbackQuery = subject + " " + (keywords[1] || "");
   console.log('[pickClipForCloudR2] No good match in R2. Falling back to Pexels for:', fallbackQuery);
-  return pickClipFor(fallbackQuery.trim(), usedUrls);
+  return pickClipFor(fallbackQuery.trim(), usedIds);
 }
 
-// ---- Emoji stripper ----
-function stripEmojis(str) {
-  if (!str) return '';
-  return str.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD00-\uDDFF])/g, '');
+// Pick clip using R2 > Pexels > Pixabay priority & avoid duplicates
+async function pickClipFor(query, usedIds = []) {
+  console.log(`[pickClipFor] Query: ${query}`);
+
+  const subject = await extractMainSubject(query) || 'nature';
+
+  // 1. Try R2
+  const r2Clip = await pickClipForCloudR2(query, usedIds);
+  if (r2Clip && r2Clip.url && !usedIds.includes(r2Clip.id.toLowerCase())) {
+    return r2Clip;
+  }
+
+  // 2. Try Pexels
+  const pexelsUrl = await getPexelsVideo(subject);
+  if (pexelsUrl && !usedIds.includes(pexelsUrl.toLowerCase())) {
+    const localPexels = await downloadToLocal(pexelsUrl);
+    if (localPexels) {
+      return { url: localPexels, source: 'pexels', id: pexelsUrl };
+    }
+  }
+
+  // 3. Try Pixabay
+  const pixabayUrl = await getPixabayVideo(subject);
+  if (pixabayUrl && !usedIds.includes(pixabayUrl.toLowerCase())) {
+    const localPixabay = await downloadToLocal(pixabayUrl);
+    if (localPixabay) {
+      return { url: localPixabay, source: 'pixabay', id: pixabayUrl };
+    }
+  }
+
+  // 4. Fallback: error, no clip
+  console.error(`[pickClipFor] No clips found for query "${query}"`);
+  return null;
 }
 
-// ---- Query sanitizer ----
-function sanitizeQuery(str) {
-  if (!str) return '';
-  return str.replace(/[^a-zA-Z0-9 ]/g, '').toLowerCase();
-}
+// Export main picker
+module.exports = { pickClipFor, pickClipForCloudR2 };
 
 
 
@@ -533,10 +567,7 @@ One line per line, no headers, no extra formatting.
 });
 
 
-
-
-
-// ==== SECTION 15: /api/generate-video ENDPOINT ====
+// ==== SECTION 15–17: /api/generate-video ENDPOINT (FULL, CORRECTED) ====
 console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
 app.post('/api/generate-video', (req, res) => {
   const jobId = uuidv4();
@@ -627,12 +658,13 @@ app.post('/api/generate-video', (req, res) => {
           }
 
           // --- FIND MATCHING CLIP ---
-          const mediaObj = await pickClipFor(text, workDir, 0.13, mainSubject, Array.from(usedUrls));
+          const mediaObj = await pickClipFor(text, Array.from(usedUrls));
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
             if (mediaFailCount > 3) {
               throw new Error(`Failed to get media for scene ${i + 1} after many attempts.`);
             }
+            // Create fallback black video clip
             const fallbackClip = path.join(workDir, `fallback-${idx}.mp4`);
             await new Promise((resolve, reject) => {
               ffmpeg()
@@ -644,6 +676,7 @@ app.post('/api/generate-video', (req, res) => {
                 .run();
             });
 
+            // Combine fallback video with audio
             await new Promise((resolve, reject) => {
               ffmpeg()
                 .input(fallbackClip)
@@ -658,9 +691,9 @@ app.post('/api/generate-video', (req, res) => {
             continue;
           }
 
-          usedUrls.add(mediaObj.originalUrl);
+          usedUrls.add(mediaObj.id || mediaObj.url || mediaObj.originalUrl);
 
-          // ---- FIX: Handle local file path vs URL for ext ----
+          // --- Determine file extension ---
           let ext;
           if (
             mediaObj.url.startsWith('http://') ||
@@ -672,7 +705,7 @@ app.post('/api/generate-video', (req, res) => {
           }
           const mediaPath = clipBase + ext;
 
-          // ---- FIX: Handle download vs copy for URL or file ----
+          // --- Download or copy the media clip ---
           if (
             mediaObj.url.startsWith('http://') ||
             mediaObj.url.startsWith('https://')
@@ -682,7 +715,7 @@ app.post('/api/generate-video', (req, res) => {
             fs.copyFileSync(mediaObj.url, mediaPath);
           }
 
-          // --- ENCODE AUDIO TO M4A FOR FINAL SCENE ---
+          // --- Encode audio to m4a ---
           const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
           await new Promise((resolve, reject) => {
             ffmpeg()
@@ -695,7 +728,7 @@ app.post('/api/generate-video', (req, res) => {
 
           const sceneLen = audioDur + 1.5;
 
-          // --- STITCH AUDIO + VIDEO ---
+          // --- Stitch audio + video ---
           await new Promise((resolve, reject) => {
             ffmpeg()
               .input(mediaPath)
@@ -767,6 +800,8 @@ app.post('/api/generate-video', (req, res) => {
       currentStep++;
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
       const key = `videos/${uuidv4()}.mp4`;
+
+      // ===== UPLOAD TO CLOUDFLARE R2 =====
       await s3.upload({
         Bucket: process.env.R2_BUCKET,
         Key: key,

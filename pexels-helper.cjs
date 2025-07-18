@@ -1,7 +1,4 @@
-// =============================
-// PEXELS HELPER – HARD SUBJECT MATCH VERSION
-// =============================
-
+// ==== SECTION 1: SETUP & DEPENDENCIES ====
 require('dotenv').config();
 const axios = require('axios');
 const stringSimilarity = require('string-similarity');
@@ -12,7 +9,10 @@ const crypto = require('crypto');
 
 console.log('[Pexels Helper] Loaded – strict subject filter mode.');
 
-// ========== CONFIG ==========
+
+
+ 
+// ==== SECTION 2: CONFIGURATION & GLOBALS ====
 const STOP_WORDS = new Set([
   'and','the','with','into','for','a','to','of','in','on','at','by','from','is','are','was','were','be','has','have','had'
 ]);
@@ -30,7 +30,10 @@ const LOCAL_CLIP_DIR = path.join(__dirname, 'clips');
 const TEMP_DIR = path.join(__dirname, 'tmp');
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-// ========== HELPERS ==========
+
+
+ 
+// ==== SECTION 3: TEXT & SUBJECT HELPERS ====
 
 function sanitizeQuery(raw, maxWords = 10) {
   const cleaned = raw
@@ -45,17 +48,20 @@ function sanitizeQuery(raw, maxWords = 10) {
 }
 
 async function extractMainSubject(line) {
-  // Use regex for speed, fall back to OpenAI if not found
   let match = line.match(/bald\s*eagle/i);
   if (match) return 'bald eagle';
   match = line.match(/eagle/i);
   if (match) return 'eagle';
   match = line.match(/cat|dog|owl|lion|tiger|shark|snake|wolf|bear|fox|monkey|horse|dolphin|fish|penguin|whale/i);
   if (match) return match[0].toLowerCase();
-  // fallback: first 1-2 non-stopwords
   let words = sanitizeQuery(line, 2).split(' ');
   return words.join(' ') || 'nature';
 }
+
+
+
+ 
+// ==== SECTION 4: DOWNLOADERS & FILE HELPERS ====
 
 async function downloadToLocal(urls, workDir = TEMP_DIR) {
   if (!Array.isArray(urls)) urls = [urls];
@@ -92,6 +98,11 @@ async function downloadToLocal(urls, workDir = TEMP_DIR) {
   return downloaded.length > 0 ? downloaded[0] : null;
 }
 
+
+
+ 
+// ==== SECTION 5: REMOTE VIDEO FETCHERS (R2, PEXELS) ====
+
 async function findBestVideoFromR2(subject) {
   try {
     let allKeys = [], token;
@@ -107,7 +118,6 @@ async function findBestVideoFromR2(subject) {
       token = resp.NextContinuationToken;
     } while (token);
 
-    // Strict match: require subject in file name
     const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
     let matches = allKeys.filter(k => k.toLowerCase().includes(subjectFlat));
     if (matches.length > 0) {
@@ -117,7 +127,6 @@ async function findBestVideoFromR2(subject) {
       return url;
     }
 
-    // If no strict match, fallback to best fuzzy
     const best = stringSimilarity.findBestMatch(subject.toLowerCase(), allKeys.map(k => k.toLowerCase()));
     const key = best.bestMatch.rating > 0.2 ? allKeys[best.bestMatchIndex] : null;
     if (key) {
@@ -125,7 +134,7 @@ async function findBestVideoFromR2(subject) {
       console.log(`[findBestVideoFromR2] Fuzzy fallback: ${key}`);
       return url;
     }
-    // Absolute fallback: random
+
     if (allKeys.length > 0) {
       const key = allKeys[Math.floor(Math.random() * allKeys.length)];
       const url = `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
@@ -141,7 +150,6 @@ async function findBestVideoFromR2(subject) {
 
 async function getPexelsVideo(subject) {
   try {
-    // Always prefix subject (strict)
     const query = subject + '';
     const response = await axios.get('https://api.pexels.com/videos/search', {
       headers: { Authorization: process.env.PEXELS_API_KEY },
@@ -150,14 +158,12 @@ async function getPexelsVideo(subject) {
     });
 
     const videos = response.data.videos || [];
-    // Require at least one tag or word in filename to match subject
     const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
     let top = videos.find(v =>
       v.tags?.some(tag => tag.title?.toLowerCase().includes(subjectFlat)) ||
       (v.user?.name && v.user.name.toLowerCase().includes(subjectFlat))
     );
     if (!top) {
-      // fallback: any with subject in url or file name
       top = videos.find(v =>
         v.video_files?.some(f => f.link.toLowerCase().includes(subjectFlat))
       );
@@ -171,6 +177,11 @@ async function getPexelsVideo(subject) {
   }
 }
 
+
+
+ 
+// ==== SECTION 6: LOCAL LIBRARY FALLBACKS ====
+
 function getLocalFallback(subject) {
   try {
     const files = fs.readdirSync(LOCAL_CLIP_DIR)
@@ -181,7 +192,6 @@ function getLocalFallback(subject) {
       console.log(`[getLocalFallback] Picked subject match: ${local}`);
       return local;
     }
-    // fallback: any local
     const list = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
     if (list.length > 0) {
       const random = list[Math.floor(Math.random() * list.length)];
@@ -196,21 +206,35 @@ function getLocalFallback(subject) {
 }
 
 function getGenericFallback() {
-  const fallback = path.join(__dirname, 'fallback.mp4');
-  if (fs.existsSync(fallback)) return fallback;
+  // Now enforces presence of a default fallback clip.
+  const fallback1 = path.join(__dirname, 'clips', 'default.mp4');
+  if (fs.existsSync(fallback1)) {
+    console.warn('[getGenericFallback] Using default.mp4 fallback');
+    return fallback1;
+  }
+  // Legacy fallback (optional, remove if not used)
+  const fallback2 = path.join(__dirname, 'fallback.mp4');
+  if (fs.existsSync(fallback2)) {
+    console.warn('[getGenericFallback] Using fallback.mp4');
+    return fallback2;
+  }
   return null;
 }
 
-// ========== MAIN EXPORT ==========
+
+
+ 
+// ==== SECTION 7: MAIN PICK LOGIC (ENTRY POINT) ====
 
 async function pickClipFor(query) {
   console.log(`[pickClipFor] Query: ${query}`);
-  const subject = await extractMainSubject(query);
+  let subject = await extractMainSubject(query);
   if (!subject) {
     console.warn(`[pickClipFor] No subject found, defaulting to nature`);
     subject = 'nature';
   }
 
+  // Try R2 and Pexels first (downloads remote files locally if needed)
   const sources = [
     { name: 'R2', fetch: () => findBestVideoFromR2(subject) },
     { name: 'Pexels', fetch: () => getPexelsVideo(subject) }
@@ -227,14 +251,27 @@ async function pickClipFor(query) {
     }
   }
 
+  // Try local library next
   const localFallback = getLocalFallback(subject);
-  if (localFallback) return { url: localFallback, source: 'local_fallback', subject };
+  if (localFallback) {
+    console.log(`[pickClipFor] Using local library fallback: ${localFallback}`);
+    return { url: localFallback, source: 'local_fallback', subject };
+  }
 
+  // Bulletproof: If even that fails, use default fallback!
   const genericFallback = getGenericFallback();
-  if (genericFallback) return { url: genericFallback, source: 'generic_fallback', subject };
+  if (genericFallback) {
+    console.warn(`[pickClipFor] Using generic fallback: ${genericFallback}`);
+    return { url: genericFallback, source: 'generic_fallback', subject };
+  }
 
+  // If *absolutely nothing* found, log error and return null
   console.error(`[pickClipFor] TOTAL FAILURE: No video found for subject "${subject}"`);
   return null;
 }
 
+
+
+ 
+// ==== SECTION 8: EXPORTS ====
 module.exports = { pickClipFor };

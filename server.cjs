@@ -11,6 +11,7 @@ if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
 
 
 
+
 // ==== SECTION 2: ENVIRONMENT & DEPENDENCY SETUP ====
 console.log('[DEBUG] Entered SECTION 2: ENVIRONMENT & DEPENDENCY SETUP');
 require('dotenv').config();
@@ -32,6 +33,7 @@ console.log('[DEBUG] All dependencies loaded successfully');
 
 
 
+
 // ==== SECTION 3: PROGRESS TRACKING MAP ====
 console.log('[DEBUG] Entered SECTION 3: PROGRESS TRACKING MAP');
 const progress = {};
@@ -41,6 +43,7 @@ function cleanupJob(jobId, delay = JOB_TTL_MS) {
   console.log('[DEBUG] Cleaning up job:', jobId);
   setTimeout(() => { delete progress[jobId]; console.log('[DEBUG] Job cleaned up:', jobId); }, delay);
 }
+
 
 
 
@@ -63,6 +66,7 @@ console.log('[DEBUG] Express app initialized on port:', PORT);
 
 
 
+
 // ==== SECTION 5: HEALTH CHECK ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 5: HEALTH CHECK ENDPOINT');
 app.get('/health', (req, res) => {
@@ -72,16 +76,43 @@ app.get('/health', (req, res) => {
 
 
 
+
 // ==== SECTION 6: CLOUD R2 CLIENT CONFIGURATION ====
 console.log('[DEBUG] Entered SECTION 6: CLOUD R2 CLIENT CONFIGURATION');
+
+// SAFETY: Load all variables up front with robust fallback and warnings
+const R2_BUCKET = process.env.R2_BUCKET;
+const R2_ENDPOINT = process.env.R2_ENDPOINT;
+const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY;
+const R2_SECRET_KEY = process.env.R2_SECRET_KEY;
+const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || 'pub-5d04f1b3024299b5953e63a9555fb8.r2.dev';
+
+if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY || !R2_SECRET_KEY) {
+  console.error('[R2 CONFIG] Missing one or more required R2 env vars! Double check R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY.');
+  throw new Error('Missing R2 configuration for Cloudflare storage. Aborting startup.');
+}
+
+// DEBUG: Dump config (hide secrets)
+console.log('[DEBUG] R2 CONFIG:', {
+  R2_BUCKET,
+  R2_ENDPOINT,
+  R2_ACCESS_KEY: R2_ACCESS_KEY ? '***' : 'MISSING',
+  R2_SECRET_KEY: R2_SECRET_KEY ? '***' : 'MISSING',
+  R2_PUBLIC_DOMAIN,
+});
+
+// IMPORTANT: Endpoint must be S3-compatible endpoint, *not* the public domain!
 const { S3, Endpoint } = AWS;
 const s3 = new S3({
-  endpoint: new Endpoint(process.env.R2_ENDPOINT),
-  accessKeyId: process.env.R2_ACCESS_KEY,
-  secretAccessKey: process.env.R2_SECRET_KEY,
+  endpoint: new Endpoint(R2_ENDPOINT),
+  accessKeyId: R2_ACCESS_KEY,
+  secretAccessKey: R2_SECRET_KEY,
   signatureVersion: 'v4',
-  region: 'us-east-1',
+  region: 'auto',         // Changed from 'us-east-1' to 'auto' for Cloudflare R2
+  sslEnabled: true,
+  s3ForcePathStyle: true,
 });
+
 console.log('[DEBUG] Cloud R2 client initialized');
 
 
@@ -89,7 +120,7 @@ console.log('[DEBUG] Cloud R2 client initialized');
 // ==== SECTION 7: HELPERS ====
 console.log('[DEBUG] Entered SECTION 7: HELPERS');
 
-// ---- Download file helper ----
+// Download helper
 async function downloadToFile(url, outPath) {
   const writer = fs.createWriteStream(outPath);
   const response = await axios.get(url, { responseType: 'stream' });
@@ -107,10 +138,9 @@ async function downloadToFile(url, outPath) {
   });
 }
 
-// ---- Keyword extraction ----
+// Keyword extraction
 function extractKeywords(text) {
   if (!text) return [];
-  // Try to pick quoted words or capitalized words, fallback to nouns
   let matches = text.match(/"([^"]+)"|'([^']+)'|([A-Z][a-z]+)/g) || [];
   matches = matches.map(k => k.replace(/['"]+/g, ''));
   if (matches.length === 0) {
@@ -123,7 +153,7 @@ function extractKeywords(text) {
   return [...new Set(matches.map(k => sanitizeQuery(k)))];
 }
 
-// ---- Improved main subject extraction ----
+// Extract main subject
 function extractMainSubject(script) {
   if (!script || typeof script !== "string") return "video";
   const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
@@ -131,46 +161,46 @@ function extractMainSubject(script) {
     if (line.match(/bald\s*eagle/i)) return "bald eagle";
     if (line.toLowerCase().includes("how")) return line;
   }
-  // Look for any "eagle" or "owl" or "animal" in lines
   const eagleLine = lines.find(l => l.toLowerCase().includes("eagle"));
   if (eagleLine) return "eagle";
   return lines[0] || "video";
 }
 
-// ---- Main: Smart R2 picker (hard subject enforcement) ----
-async function pickClipForCloudR2(script, usedUrls = []) {
+// Pick clip from R2, avoid duplicates via usedIds array
+async function pickClipForCloudR2(script, usedIds = []) {
   const subject = extractMainSubject(script);
   const keywords = extractKeywords(subject);
   const mustInclude = subject.toLowerCase().replace(/\s+/g, '');
 
   console.log('[pickClipForCloudR2] Subject:', subject, '| Keywords:', keywords, '| MustInclude:', mustInclude);
 
-  // Fetch all R2 clips (can be slow if there are thousands)
   let r2Clips = [];
   try {
     const resp = await s3.listObjectsV2({
       Bucket: process.env.R2_BUCKET,
       Prefix: 'socialstorm-library/',
     }).promise();
+
     r2Clips = resp.Contents.filter(item => item.Key.endsWith('.mp4'));
   } catch (err) {
     console.log('[pickClipForCloudR2] R2 error:', err.message);
     r2Clips = [];
   }
 
-  // Require subject match in filename (e.g. 'eagle' for 'bald eagle')
+  // Filter out used clip IDs to avoid repeats
+  const availableClips = r2Clips.filter(c => !usedIds.includes(c.Key.toLowerCase()));
+
   let bestClip = null;
   for (const keyword of keywords) {
-    bestClip = r2Clips.find(item =>
+    bestClip = availableClips.find(item =>
       item.Key.toLowerCase().includes(mustInclude) &&
       item.Key.toLowerCase().includes(keyword.replace(/\s+/g, '').toLowerCase())
     );
     if (bestClip) break;
   }
 
-  // If no combo, just any file with subject in name (e.g. any eagle)
   if (!bestClip) {
-    bestClip = r2Clips.find(item =>
+    bestClip = availableClips.find(item =>
       item.Key.toLowerCase().includes(mustInclude)
     );
   }
@@ -183,23 +213,93 @@ async function pickClipForCloudR2(script, usedUrls = []) {
     };
   }
 
-  // Final fallback: Pexels helper, *prefix subject* for every query (e.g. 'bald eagle sight')
+  // No R2 match, fallback to Pexels (pass usedIds for deduplication if applicable)
   const fallbackQuery = subject + " " + (keywords[1] || "");
   console.log('[pickClipForCloudR2] No good match in R2. Falling back to Pexels for:', fallbackQuery);
-  return pickClipFor(fallbackQuery.trim(), usedUrls);
+  // Only call imported pickClipFor from helper!
+  return pickClipFor(fallbackQuery.trim(), usedIds);
 }
 
-// ---- Emoji stripper ----
-function stripEmojis(str) {
-  if (!str) return '';
-  return str.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD00-\uDDFF])/g, '');
+// Do NOT define pickClipFor here. Only import from your helper!
+
+
+
+// ==== SECTION 7.5: SCRIPT NORMALIZER (LIBRARY MATCHING + PROMPT TUNING) ====
+console.log('[DEBUG] Entered SECTION 7.5: SCRIPT NORMALIZER');
+
+// --- List of available library topics/folders (read dynamically from R2 for max match) ---
+let availableLibraryTopics = [];
+async function refreshLibraryTopics() {
+  try {
+    const resp = await s3.listObjectsV2({
+      Bucket: process.env.R2_BUCKET,
+      Prefix: 'socialstorm-library/',
+      Delimiter: '/'
+    }).promise();
+    // Extract unique topic folder names, e.g. 'paris', 'dog', 'cat', etc.
+    const allKeys = (resp.Contents || []).map(item => item.Key);
+    availableLibraryTopics = [...new Set(allKeys.map(k => {
+      const match = k.replace('socialstorm-library/', '').split('/')[0];
+      return match && match.length < 40 ? match.toLowerCase() : null;
+    }).filter(Boolean))];
+    console.log('[SCRIPT NORMALIZER] Refreshed topics:', availableLibraryTopics);
+  } catch (err) {
+    console.error('[SCRIPT NORMALIZER] Failed to refresh library topics:', err.message);
+  }
 }
 
-// ---- Query sanitizer ----
-function sanitizeQuery(str) {
-  if (!str) return '';
-  return str.replace(/[^a-zA-Z0-9 ]/g, '').toLowerCase();
+// Call this once at server start and every 30 mins
+refreshLibraryTopics();
+setInterval(refreshLibraryTopics, 30 * 60 * 1000);
+
+// --- Normalize script for library matching ---
+async function normalizeScriptForLibrary(inputScript) {
+  if (!inputScript) return '';
+  // Split to lines/scenes
+  const lines = inputScript.split('\n').map(l => l.trim()).filter(Boolean);
+  if (!availableLibraryTopics.length) await refreshLibraryTopics();
+  const normLines = lines.map(line => {
+    let best = availableLibraryTopics.find(topic =>
+      line.toLowerCase().includes(topic)
+    );
+    if (best) return line; // Already matches
+
+    // Try to rewrite: Replace nouns with library topics if found in line
+    let newLine = line;
+    for (const topic of availableLibraryTopics) {
+      if (line.toLowerCase().includes(topic.slice(0, 4))) {
+        newLine = topic.charAt(0).toUpperCase() + topic.slice(1) + ': ' + line;
+        break;
+      }
+    }
+    // Fallback: force match random topic
+    if (newLine === line) {
+      const fallback = availableLibraryTopics[Math.floor(Math.random() * availableLibraryTopics.length)];
+      newLine = fallback.charAt(0).toUpperCase() + fallback.slice(1) + ': ' + line;
+    }
+    return newLine;
+  });
+
+  // Log normalized script
+  console.log('[SCRIPT NORMALIZER] Input script:', inputScript);
+  console.log('[SCRIPT NORMALIZER] Normalized script:', normLines.join('\n'));
+  return normLines.join('\n');
 }
+
+// --- Script generator prompt tuner (guides model to pick from our library) ---
+function getScriptGeneratorPrompt(userTopic, libraryTopics = availableLibraryTopics) {
+  // Top N topics for prompt focus
+  const focusTopics = (libraryTopics || []).slice(0, 30).map(t => t.charAt(0).toUpperCase() + t.slice(1));
+  return `
+You are an AI YouTube script generator for viral Shorts. ALWAYS write scripts about these topics ONLY: ${focusTopics.join(', ')}.
+Do NOT mention topics not in this list.
+If user gives a topic not in the list, pick the most similar from the above and generate scenes that use those words in each sentence.
+Use simple, visual language and make sure every scene can match a clip from the library.
+
+User topic: "${userTopic}"
+`.trim();
+}
+
 
 
 // ==== SECTION 8: VIRAL METADATA ENGINE ====
@@ -251,6 +351,7 @@ HASHTAGS: [hashtag1, hashtag2, ...]
   }
 }
 
+
 // ==== SECTION 9: SCRIPT-TO-SCENES SPLITTER ====
 console.log('[DEBUG] Entered SECTION 9: SCRIPT-TO-SCENES SPLITTER');
 function splitScriptToScenes(script) {
@@ -261,9 +362,6 @@ function splitScriptToScenes(script) {
     .filter(Boolean)
     .filter(line => line.length > 1);
 }
-
-
-
 
 // ==== SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT ====
 console.log('[DEBUG] Entered SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT');
@@ -277,6 +375,7 @@ try {
 } catch (e) {
   console.error('[ERROR] Could not initialize Polly client:', e);
 }
+
 
 
 
@@ -362,6 +461,7 @@ console.log('[DEBUG] Voices list loaded:', { elevenProVoices, pollyVoices });
 
 
 
+
 // ==== SECTION 13: /api/voices ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 13: /api/voices ENDPOINT');
 app.get('/api/voices', (req, res) => {
@@ -372,30 +472,68 @@ app.get('/api/voices', (req, res) => {
 
 
 
+
 // ==== SECTION 14: /api/generate-script ENDPOINT ====
+
+// ==== HELPER: stripEmojis ====
+// Removes all emoji characters from a string (Unicode-safe)
+function stripEmojis(str) {
+  return str.replace(/\p{Extended_Pictographic}/gu, '');
+}
+
 console.log('[DEBUG] Entered SECTION 14: /api/generate-script ENDPOINT');
 app.post('/api/generate-script', async (req, res) => {
   const { idea } = req.body;
   if (!idea) return res.status(400).json({ success: false, error: 'Idea required' });
 
   console.log('[DEBUG] Generating script for idea:', idea);
+
+  // List of main clip subjects you have (customize this list with your library's key subjects)
+  const clipSubjects = [
+    "bald eagle", "eagle", "owl", "cat", "dog", "lion", "tiger",
+    "shark", "snake", "wolf", "bear", "fox", "monkey", "horse",
+    "dolphin", "fish", "penguin", "whale", "nature", "forest", "ocean",
+    "mountain", "city", "science", "history", "space", "technology",
+    // Add food-related subjects you have clips for, e.g.:
+    "turkey sandwich", "bread", "lettuce", "tomato", "cheese", "condiments",
+    "kitchen", "cooking", "knife", "toaster", "sauce", "ingredients"
+  ];
+
+  // Helper function to create a tailored first line based on the main subject
+  function generateFirstLine(subject) {
+    subject = subject.toLowerCase();
+    if (subject.includes('sandwich') || subject.includes('food') || subject.includes('cooking')) {
+      return `Do you want to know how to make the best ${subject} ever?`;
+    }
+    if (clipSubjects.some(sub => subject.includes(sub))) {
+      return `Did you ever wonder about the secrets of ${subject}s?`;
+    }
+    return `Here are some amazing facts about ${subject}.`;
+  }
+
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+    // Sanitize and find main subject for first line
+    const mainSubject = clipSubjects.find(sub => idea.toLowerCase().includes(sub)) || idea;
+
+    // Build a prompt that tells GPT to generate script lines ONLY about subjects you have clips for
     const scriptPrompt = `
-Generate a YouTube Shorts script for this topic, with each line being a punchy, voice-friendly fact or statement.
-- No emojis, no lists, no numbers, no bullet points, just natural, crisp lines.
-- Lines must be short and easy for text-to-speech voices to read.
-- Do NOT use any numbered list, bullet list, or anything that sounds like a list unless user requests it.
-- No repeating words/phrases, no "as you know", no generic filler.
-- Each line must be interesting and unique.
-Format (no headers, just the raw script, one short line per line):
-
-THEME: ${idea}
-
-SCRIPT:
+Generate a YouTube Shorts script on the theme: "${idea}".
+Only include facts or statements related to these topics I have video clips for:
+${clipSubjects.join(', ')}.
+Start with this sentence exactly:
+"${generateFirstLine(mainSubject)}"
+After the first sentence, make each line punchy, voice-friendly, and short.
+No emojis, no lists, no numbers or bullet points.
+Avoid filler and repetition.
+Each line should be unique and interesting.
+Format:
+One line per line, no headers, no extra formatting.
 `.trim();
-    console.log('[DEBUG] Sending OpenAI prompt to generate script');
+
+    console.log('[DEBUG] Sending OpenAI prompt to generate script with clip subjects focus');
+
     const out = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'system', content: scriptPrompt }],
@@ -437,7 +575,8 @@ SCRIPT:
 
 
 
-// ==== SECTION 15: /api/generate-video ENDPOINT ====
+
+// ==== SECTION 15 /api/generate-video ENDPOINT (FIXED FOLDER LOGIC) ====
 console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
 app.post('/api/generate-video', (req, res) => {
   const jobId = uuidv4();
@@ -528,13 +667,14 @@ app.post('/api/generate-video', (req, res) => {
           }
 
           // --- FIND MATCHING CLIP ---
-          // ** CRUCIAL CHANGE: always use mainSubject for picking clip **
-          const mediaObj = await pickClipFor(mainSubject, workDir, 0.13, mainSubject, Array.from(usedUrls));
+          // pickClipFor must use 'socialstorm-library/' only (see pexels-helper logic!)
+          const mediaObj = await pickClipFor(text, Array.from(usedUrls));
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
             if (mediaFailCount > 3) {
               throw new Error(`Failed to get media for scene ${i + 1} after many attempts.`);
             }
+            // Create fallback black video clip
             const fallbackClip = path.join(workDir, `fallback-${idx}.mp4`);
             await new Promise((resolve, reject) => {
               ffmpeg()
@@ -546,6 +686,7 @@ app.post('/api/generate-video', (req, res) => {
                 .run();
             });
 
+            // Combine fallback video with audio
             await new Promise((resolve, reject) => {
               ffmpeg()
                 .input(fallbackClip)
@@ -560,9 +701,9 @@ app.post('/api/generate-video', (req, res) => {
             continue;
           }
 
-          usedUrls.add(mediaObj.originalUrl);
+          usedUrls.add(mediaObj.id || mediaObj.url || mediaObj.originalUrl);
 
-          // ---- FIX: Handle local file path vs URL for ext ----
+          // --- Determine file extension ---
           let ext;
           if (
             mediaObj.url.startsWith('http://') ||
@@ -574,7 +715,7 @@ app.post('/api/generate-video', (req, res) => {
           }
           const mediaPath = clipBase + ext;
 
-          // ---- FIX: Handle download vs copy for URL or file ----
+          // --- Download or copy the media clip ---
           if (
             mediaObj.url.startsWith('http://') ||
             mediaObj.url.startsWith('https://')
@@ -584,7 +725,7 @@ app.post('/api/generate-video', (req, res) => {
             fs.copyFileSync(mediaObj.url, mediaPath);
           }
 
-          // --- ENCODE AUDIO TO M4A FOR FINAL SCENE ---
+          // --- Encode audio to m4a ---
           const sceneAudio = path.join(workDir, `scene-audio-${idx}.m4a`);
           await new Promise((resolve, reject) => {
             ffmpeg()
@@ -597,7 +738,7 @@ app.post('/api/generate-video', (req, res) => {
 
           const sceneLen = audioDur + 1.5;
 
-          // --- STITCH AUDIO + VIDEO ---
+          // --- Stitch audio + video ---
           await new Promise((resolve, reject) => {
             ffmpeg()
               .input(mediaPath)
@@ -668,7 +809,9 @@ app.post('/api/generate-video', (req, res) => {
 
       currentStep++;
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
-      const key = `videos/${uuidv4()}.mp4`;
+
+      // ===== UPLOAD TO CLOUDFLARE R2 TO socialstorm-videos =====
+      const key = `socialstorm-videos/${uuidv4()}.mp4`;
       await s3.upload({
         Bucket: process.env.R2_BUCKET,
         Key: key,
@@ -677,7 +820,10 @@ app.post('/api/generate-video', (req, res) => {
         ACL: 'public-read'
       }).promise();
 
-      progress[jobId] = { percent: 100, status: "Done", key };
+      // Build public URL using your .r2.dev public domain
+      const publicUrl = `https://${process.env.R2_PUBLIC_DOMAIN || 'pub-5d04f1b3024299b5953e63a9555fb8.r2.dev'}/${key}`;
+
+      progress[jobId] = { percent: 100, status: "Done", key, url: publicUrl };
       cleanupJob(jobId, 90 * 1000);
       finished = true;
       clearTimeout(watchdog);
@@ -696,6 +842,8 @@ console.log('[DEBUG] Video generation route set up successfully');
 
 
 
+
+
 // ==== SECTION 18: PROGRESS POLLING ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 18: PROGRESS POLLING ENDPOINT');
 app.get('/api/progress/:jobId', (req, res) => {
@@ -707,6 +855,10 @@ app.get('/api/progress/:jobId', (req, res) => {
   }
   res.json(job);
 });
+
+
+
+
 
 // ==== SECTION 19: GENERATE VOICE PREVIEWS ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 19: GENERATE VOICE PREVIEWS ENDPOINT');
@@ -721,6 +873,10 @@ app.post('/api/generate-voice-previews', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+
+
+
 
 // ==== SECTION 20: SPARKIE (IDEA GENERATOR) ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 20: SPARKIE (IDEA GENERATOR) ENDPOINT');
@@ -748,6 +904,10 @@ app.post('/api/sparkie', async (req, res) => {
     }
   }
 });
+
+
+
+
 
 // ==== SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2 (streaming, download, range support) ====
 console.log('[DEBUG] Entered SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2');
@@ -814,6 +974,10 @@ app.get('/video/videos/:key', async (req, res) => {
   }
 });
 
+
+
+
+
 // ==== SECTION 22: 404 HTML FALLBACK FOR SPA (not API) ====
 console.log('[DEBUG] Entered SECTION 22: 404 HTML FALLBACK FOR SPA');
 app.get('*', (req, res) => {
@@ -828,6 +992,10 @@ app.get('*', (req, res) => {
     res.status(404).json({ error: 'Not found.' });
   }
 });
+
+
+
+
 
 // ==== SECTION 23: LAUNCH SERVER ====
 console.log('[DEBUG] Entered SECTION 23: LAUNCH SERVER');

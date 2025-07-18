@@ -7,11 +7,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-console.log('[Pexels Helper] Loaded – strict subject filter mode.');
+console.log('[Pexels Helper] Loaded – forgiving fallback mode.');
 
 
 
- 
+
 // ==== SECTION 2: CONFIGURATION & GLOBALS ====
 const STOP_WORDS = new Set([
   'and','the','with','into','for','a','to','of','in','on','at','by','from','is','are','was','were','be','has','have','had'
@@ -32,7 +32,7 @@ fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 
 
- 
+
 // ==== SECTION 3: TEXT & SUBJECT HELPERS ====
 
 function sanitizeQuery(raw, maxWords = 10) {
@@ -60,7 +60,7 @@ async function extractMainSubject(line) {
 
 
 
- 
+
 // ==== SECTION 4: DOWNLOADERS & FILE HELPERS ====
 
 async function downloadToLocal(urls, workDir = TEMP_DIR) {
@@ -100,7 +100,7 @@ async function downloadToLocal(urls, workDir = TEMP_DIR) {
 
 
 
- 
+
 // ==== SECTION 5: REMOTE VIDEO FETCHERS (R2, PEXELS) ====
 
 async function findBestVideoFromR2(subject) {
@@ -119,6 +119,7 @@ async function findBestVideoFromR2(subject) {
     } while (token);
 
     const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
+    // Try strict subject match
     let matches = allKeys.filter(k => k.toLowerCase().includes(subjectFlat));
     if (matches.length > 0) {
       const key = matches[Math.floor(Math.random() * matches.length)];
@@ -127,14 +128,16 @@ async function findBestVideoFromR2(subject) {
       return url;
     }
 
+    // Try fuzzy
     const best = stringSimilarity.findBestMatch(subject.toLowerCase(), allKeys.map(k => k.toLowerCase()));
-    const key = best.bestMatch.rating > 0.2 ? allKeys[best.bestMatchIndex] : null;
+    const key = best.bestMatch.rating > 0.15 ? allKeys[best.bestMatchIndex] : null;
     if (key) {
       const url = `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
-      console.log(`[findBestVideoFromR2] Fuzzy fallback: ${key}`);
+      console.log(`[findBestVideoFromR2] Fuzzy fallback: ${key} (score: ${best.bestMatch.rating.toFixed(2)})`);
       return url;
     }
 
+    // Absolute fallback: random
     if (allKeys.length > 0) {
       const key = allKeys[Math.floor(Math.random() * allKeys.length)];
       const url = `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
@@ -179,25 +182,34 @@ async function getPexelsVideo(subject) {
 
 
 
- 
-// ==== SECTION 6: LOCAL LIBRARY FALLBACKS ====
+
+// ==== SECTION 6: LOCAL LIBRARY & FUZZY FALLBACKS ====
 
 function getLocalFallback(subject) {
   try {
-    const files = fs.readdirSync(LOCAL_CLIP_DIR)
-      .filter(f => f.endsWith('.mp4') && f.toLowerCase().includes(subject.replace(/\s+/g, '').toLowerCase()));
-    if (files.length > 0) {
-      const pick = files[Math.floor(Math.random() * files.length)];
+    const files = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
+    // Try strict subject match
+    let strict = files.filter(f => f.toLowerCase().includes(subject.replace(/\s+/g, '').toLowerCase()));
+    if (strict.length > 0) {
+      const pick = strict[Math.floor(Math.random() * strict.length)];
       const local = path.join(LOCAL_CLIP_DIR, pick);
       console.log(`[getLocalFallback] Picked subject match: ${local}`);
       return local;
     }
-    const list = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
-    if (list.length > 0) {
-      const random = list[Math.floor(Math.random() * list.length)];
-      const local = path.join(LOCAL_CLIP_DIR, random);
-      console.log(`[getLocalFallback] Picked generic local: ${local}`);
-      return local;
+    // Fuzzy match
+    const best = stringSimilarity.findBestMatch(subject.toLowerCase(), files.map(f => f.toLowerCase()));
+    if (best.bestMatch && best.bestMatch.rating > 0.13) {
+      const fuzzyFile = files[best.bestMatchIndex];
+      if (fuzzyFile) {
+        console.warn(`[getLocalFallback] Fuzzy subject fallback: ${fuzzyFile} (score: ${best.bestMatch.rating.toFixed(2)})`);
+        return path.join(LOCAL_CLIP_DIR, fuzzyFile);
+      }
+    }
+    // Absolute random .mp4 fallback
+    if (files.length > 0) {
+      const random = files[Math.floor(Math.random() * files.length)];
+      console.warn(`[getLocalFallback] Random .mp4 fallback: ${random}`);
+      return path.join(LOCAL_CLIP_DIR, random);
     }
   } catch (e) {
     console.warn('[getLocalFallback] error:', e.message);
@@ -206,24 +218,27 @@ function getLocalFallback(subject) {
 }
 
 function getGenericFallback() {
-  // Now enforces presence of a default fallback clip.
-  const fallback1 = path.join(__dirname, 'clips', 'default.mp4');
+  // Try "default.mp4" first
+  const fallback1 = path.join(LOCAL_CLIP_DIR, 'default.mp4');
   if (fs.existsSync(fallback1)) {
     console.warn('[getGenericFallback] Using default.mp4 fallback');
     return fallback1;
   }
-  // Legacy fallback (optional, remove if not used)
-  const fallback2 = path.join(__dirname, 'fallback.mp4');
-  if (fs.existsSync(fallback2)) {
-    console.warn('[getGenericFallback] Using fallback.mp4');
-    return fallback2;
-  }
+  // Try any .mp4 in the folder, totally random
+  try {
+    const allFiles = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
+    if (allFiles.length > 0) {
+      const random = allFiles[Math.floor(Math.random() * allFiles.length)];
+      console.warn('[getGenericFallback] Using any random fallback:', random);
+      return path.join(LOCAL_CLIP_DIR, random);
+    }
+  } catch (e) {}
   return null;
 }
 
 
 
- 
+
 // ==== SECTION 7: MAIN PICK LOGIC (ENTRY POINT) ====
 
 async function pickClipFor(query) {
@@ -251,14 +266,14 @@ async function pickClipFor(query) {
     }
   }
 
-  // Try local library next
+  // Try local library next (subject strict/fuzzy/random)
   const localFallback = getLocalFallback(subject);
   if (localFallback) {
     console.log(`[pickClipFor] Using local library fallback: ${localFallback}`);
     return { url: localFallback, source: 'local_fallback', subject };
   }
 
-  // Bulletproof: If even that fails, use default fallback!
+  // Ultimate fallback: any default or random .mp4
   const genericFallback = getGenericFallback();
   if (genericFallback) {
     console.warn(`[pickClipFor] Using generic fallback: ${genericFallback}`);
@@ -272,6 +287,6 @@ async function pickClipFor(query) {
 
 
 
- 
+
 // ==== SECTION 8: EXPORTS ====
 module.exports = { pickClipFor };

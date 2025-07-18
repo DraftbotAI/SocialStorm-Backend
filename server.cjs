@@ -453,18 +453,38 @@ app.post('/api/generate-script', async (req, res) => {
     "bald eagle", "eagle", "owl", "cat", "dog", "lion", "tiger",
     "shark", "snake", "wolf", "bear", "fox", "monkey", "horse",
     "dolphin", "fish", "penguin", "whale", "nature", "forest", "ocean",
-    "mountain", "city", "science", "history", "space", "technology"
+    "mountain", "city", "science", "history", "space", "technology",
+    // Add food-related subjects you have clips for, e.g.:
+    "turkey sandwich", "bread", "lettuce", "tomato", "cheese", "condiments",
+    "kitchen", "cooking", "knife", "toaster", "sauce", "ingredients"
   ];
+
+  // Helper function to create a tailored first line based on the main subject
+  function generateFirstLine(subject) {
+    subject = subject.toLowerCase();
+    if (subject.includes('sandwich') || subject.includes('food') || subject.includes('cooking')) {
+      return `Do you want to know how to make the best ${subject} ever?`;
+    }
+    if (clipSubjects.some(sub => subject.includes(sub))) {
+      return `Did you ever wonder about the secrets of ${subject}s?`;
+    }
+    return `Here are some amazing facts about ${subject}.`;
+  }
 
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    // Sanitize and find main subject for first line
+    const mainSubject = clipSubjects.find(sub => idea.toLowerCase().includes(sub)) || idea;
 
     // Build a prompt that tells GPT to generate script lines ONLY about subjects you have clips for
     const scriptPrompt = `
 Generate a YouTube Shorts script on the theme: "${idea}".
 Only include facts or statements related to these topics I have video clips for:
 ${clipSubjects.join(', ')}.
-Make each line punchy, voice-friendly, and short.
+Start with this sentence exactly:
+"${generateFirstLine(mainSubject)}"
+After the first sentence, make each line punchy, voice-friendly, and short.
 No emojis, no lists, no numbers or bullet points.
 Avoid filler and repetition.
 Each line should be unique and interesting.

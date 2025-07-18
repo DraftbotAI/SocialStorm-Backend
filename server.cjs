@@ -186,46 +186,11 @@ async function pickClipForCloudR2(script, usedIds = []) {
   // No R2 match, fallback to Pexels (pass usedIds for deduplication if applicable)
   const fallbackQuery = subject + " " + (keywords[1] || "");
   console.log('[pickClipForCloudR2] No good match in R2. Falling back to Pexels for:', fallbackQuery);
+  // Only call imported pickClipFor from helper!
   return pickClipFor(fallbackQuery.trim(), usedIds);
 }
 
-// Pick clip using R2 > Pexels > Pixabay priority & avoid duplicates
-async function pickClipFor(query, usedIds = []) {
-  console.log(`[pickClipFor] Query: ${query}`);
-
-  const subject = await extractMainSubject(query) || 'nature';
-
-  // 1. Try R2
-  const r2Clip = await pickClipForCloudR2(query, usedIds);
-  if (r2Clip && r2Clip.url && !usedIds.includes(r2Clip.id.toLowerCase())) {
-    return r2Clip;
-  }
-
-  // 2. Try Pexels
-  const pexelsUrl = await getPexelsVideo(subject);
-  if (pexelsUrl && !usedIds.includes(pexelsUrl.toLowerCase())) {
-    const localPexels = await downloadToLocal(pexelsUrl);
-    if (localPexels) {
-      return { url: localPexels, source: 'pexels', id: pexelsUrl };
-    }
-  }
-
-  // 3. Try Pixabay
-  const pixabayUrl = await getPixabayVideo(subject);
-  if (pixabayUrl && !usedIds.includes(pixabayUrl.toLowerCase())) {
-    const localPixabay = await downloadToLocal(pixabayUrl);
-    if (localPixabay) {
-      return { url: localPixabay, source: 'pixabay', id: pixabayUrl };
-    }
-  }
-
-  // 4. Fallback: error, no clip
-  console.error(`[pickClipFor] No clips found for query "${query}"`);
-  return null;
-}
-
-// Export main picker
-module.exports = { pickClipFor, pickClipForCloudR2 };
+// Do NOT define pickClipFor here. Only import from your helper!
 
 
 

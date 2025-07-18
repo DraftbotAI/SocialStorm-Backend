@@ -86,6 +86,8 @@ console.log('[DEBUG] Entered SECTION 6: CLOUD R2 CLIENT CONFIGURATION');
 
 // SAFETY: Load all variables up front with robust fallback and warnings
 const R2_BUCKET = process.env.R2_BUCKET;
+const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || process.env.R2_BUCKET || 'socialstorm-library';
+const R2_VIDEOS_BUCKET = process.env.R2_VIDEOS_BUCKET || 'socialstorm-videos';
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY;
 const R2_SECRET_KEY = process.env.R2_SECRET_KEY;
@@ -99,6 +101,8 @@ if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY || !R2_SECRET_KEY) {
 // DEBUG: Dump config (hide secrets)
 console.log('[DEBUG] R2 CONFIG:', {
   R2_BUCKET,
+  R2_LIBRARY_BUCKET,
+  R2_VIDEOS_BUCKET,
   R2_ENDPOINT,
   R2_ACCESS_KEY: R2_ACCESS_KEY ? '***' : 'MISSING',
   R2_SECRET_KEY: R2_SECRET_KEY ? '***' : 'MISSING',
@@ -118,7 +122,6 @@ const s3 = new S3({
 });
 
 console.log('[DEBUG] Cloud R2 client initialized');
-
 
 
 // ==== SECTION 7: HELPERS ====
@@ -157,6 +160,11 @@ function extractKeywords(text) {
   return [...new Set(matches.map(k => sanitizeQuery(k)))];
 }
 
+// You must define sanitizeQuery if not already defined elsewhere:
+function sanitizeQuery(k) {
+  return (k || '').replace(/[^\w\s-]/gi, '').toLowerCase();
+}
+
 // Extract main subject
 function extractMainSubject(script) {
   if (!script || typeof script !== "string") return "video";
@@ -181,11 +189,11 @@ async function pickClipForCloudR2(script, usedIds = []) {
   let r2Clips = [];
   try {
     const resp = await s3.listObjectsV2({
-      Bucket: process.env.R2_BUCKET,
+      Bucket: R2_LIBRARY_BUCKET,
       Prefix: 'socialstorm-library/',
     }).promise();
 
-    r2Clips = resp.Contents.filter(item => item.Key.endsWith('.mp4'));
+    r2Clips = (resp.Contents || []).filter(item => item.Key.endsWith('.mp4'));
   } catch (err) {
     console.log('[pickClipForCloudR2] R2 error:', err.message);
     r2Clips = [];
@@ -212,7 +220,7 @@ async function pickClipForCloudR2(script, usedIds = []) {
   if (bestClip) {
     console.log('[pickClipForCloudR2] Found subject match in R2:', bestClip.Key);
     return {
-      url: `https://${process.env.R2_BUCKET}.r2.cloudflarestorage.com/${bestClip.Key}`,
+      url: `https://${R2_LIBRARY_BUCKET}.r2.cloudflarestorage.com/${bestClip.Key}`,
       id: bestClip.Key
     };
   }
@@ -227,7 +235,6 @@ async function pickClipForCloudR2(script, usedIds = []) {
 // Do NOT define pickClipFor here. Only import from your helper!
 
 
-
 // ==== SECTION 7.5: SCRIPT NORMALIZER (LIBRARY MATCHING + PROMPT TUNING) ====
 console.log('[DEBUG] Entered SECTION 7.5: SCRIPT NORMALIZER');
 
@@ -236,7 +243,7 @@ let availableLibraryTopics = [];
 async function refreshLibraryTopics() {
   try {
     const resp = await s3.listObjectsV2({
-      Bucket: process.env.R2_BUCKET,
+      Bucket: R2_LIBRARY_BUCKET,
       Prefix: 'socialstorm-library/',
       Delimiter: '/'
     }).promise();
@@ -277,7 +284,7 @@ async function normalizeScriptForLibrary(inputScript) {
       }
     }
     // Fallback: force match random topic
-    if (newLine === line) {
+    if (newLine === line && availableLibraryTopics.length) {
       const fallback = availableLibraryTopics[Math.floor(Math.random() * availableLibraryTopics.length)];
       newLine = fallback.charAt(0).toUpperCase() + fallback.slice(1) + ': ' + line;
     }
@@ -671,7 +678,6 @@ app.post('/api/generate-video', (req, res) => {
           }
 
           // --- FIND MATCHING CLIP ---
-          // pickClipFor must use 'socialstorm-library/' only (see pexels-helper logic!)
           const mediaObj = await pickClipFor(text, Array.from(usedUrls));
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
@@ -817,7 +823,7 @@ app.post('/api/generate-video', (req, res) => {
       // ===== UPLOAD TO CLOUDFLARE R2 TO socialstorm-videos =====
       const key = `socialstorm-videos/${uuidv4()}.mp4`;
       await s3.upload({
-        Bucket: process.env.R2_BUCKET,
+        Bucket: R2_VIDEOS_BUCKET,
         Key: key,
         Body: fs.createReadStream(final),
         ContentType: 'video/mp4',
@@ -825,7 +831,7 @@ app.post('/api/generate-video', (req, res) => {
       }).promise();
 
       // Build public URL using your .r2.dev public domain
-      const publicUrl = `https://${process.env.R2_PUBLIC_DOMAIN || 'pub-5d04f1b3024299b5953e63a9555fb8.r2.dev'}/${key}`;
+      const publicUrl = `https://${R2_PUBLIC_DOMAIN}/${key}`;
 
       progress[jobId] = { percent: 100, status: "Done", key, url: publicUrl };
       cleanupJob(jobId, 90 * 1000);
@@ -917,8 +923,10 @@ app.post('/api/sparkie', async (req, res) => {
 console.log('[DEBUG] Entered SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2');
 app.get('/video/videos/:key', async (req, res) => {
   try {
-    const key = `videos/${req.params.key}`;
+    // Match the actual upload path: socialstorm-videos/<uuid>.mp4
+    const key = `socialstorm-videos/${req.params.key}`;
     console.log('[DEBUG] Video request for key:', key);
+
     const headData = await s3.headObject({
       Bucket: process.env.R2_BUCKET,
       Key: key,
@@ -930,6 +938,7 @@ app.get('/video/videos/:key', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (range) {
+      // Support partial streaming (for browsers, mobile)
       const parts = range.replace(/bytes=/, "").split("-");
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
@@ -956,6 +965,7 @@ app.get('/video/videos/:key', async (req, res) => {
 
       stream.pipe(res);
     } else {
+      // Full download/stream
       const stream = s3.getObject({
         Bucket: process.env.R2_BUCKET,
         Key: key,
@@ -977,6 +987,7 @@ app.get('/video/videos/:key', async (req, res) => {
     res.status(500).end('Internal error');
   }
 });
+
 
 
 

@@ -1,3 +1,7 @@
+console.log('[DEBUG] DEPLOY TEST', new Date());
+
+
+
 // ==== SECTION 1: DIRECTORY DEBUGGING (Safe to comment out in prod) ====
 console.log('[DEBUG] Entered SECTION 1: DIRECTORY DEBUGGING');
 console.log('Working directory:', __dirname);

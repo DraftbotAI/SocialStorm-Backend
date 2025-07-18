@@ -194,6 +194,85 @@ function sanitizeQuery(str) {
 }
 
 
+
+// ==== SECTION 7.5: SCRIPT NORMALIZER (LIBRARY MATCHING + PROMPT TUNING) ====
+console.log('[DEBUG] Entered SECTION 7.5: SCRIPT NORMALIZER');
+
+// --- List of available library topics/folders (read dynamically from R2 for max match) ---
+let availableLibraryTopics = [];
+async function refreshLibraryTopics() {
+  try {
+    const resp = await s3.listObjectsV2({
+      Bucket: process.env.R2_BUCKET,
+      Prefix: 'socialstorm-library/',
+      Delimiter: '/'
+    }).promise();
+    // Extract unique topic folder names, e.g. 'paris', 'dog', 'cat', etc.
+    const allKeys = (resp.Contents || []).map(item => item.Key);
+    availableLibraryTopics = [...new Set(allKeys.map(k => {
+      const match = k.replace('socialstorm-library/', '').split('/')[0];
+      return match && match.length < 40 ? match.toLowerCase() : null;
+    }).filter(Boolean))];
+    console.log('[SCRIPT NORMALIZER] Refreshed topics:', availableLibraryTopics);
+  } catch (err) {
+    console.error('[SCRIPT NORMALIZER] Failed to refresh library topics:', err.message);
+  }
+}
+
+// Call this once at server start and every 30 mins
+refreshLibraryTopics();
+setInterval(refreshLibraryTopics, 30 * 60 * 1000);
+
+// --- Normalize script for library matching ---
+async function normalizeScriptForLibrary(inputScript) {
+  if (!inputScript) return '';
+  // Split to lines/scenes
+  const lines = inputScript.split('\n').map(l => l.trim()).filter(Boolean);
+  if (!availableLibraryTopics.length) await refreshLibraryTopics();
+  const normLines = lines.map(line => {
+    let best = availableLibraryTopics.find(topic =>
+      line.toLowerCase().includes(topic)
+    );
+    if (best) return line; // Already matches
+
+    // Try to rewrite: Replace nouns with library topics if found in line
+    let newLine = line;
+    for (const topic of availableLibraryTopics) {
+      if (line.toLowerCase().includes(topic.slice(0, 4))) {
+        newLine = topic.charAt(0).toUpperCase() + topic.slice(1) + ': ' + line;
+        break;
+      }
+    }
+    // Fallback: force match random topic
+    if (newLine === line) {
+      const fallback = availableLibraryTopics[Math.floor(Math.random() * availableLibraryTopics.length)];
+      newLine = fallback.charAt(0).toUpperCase() + fallback.slice(1) + ': ' + line;
+    }
+    return newLine;
+  });
+
+  // Log normalized script
+  console.log('[SCRIPT NORMALIZER] Input script:', inputScript);
+  console.log('[SCRIPT NORMALIZER] Normalized script:', normLines.join('\n'));
+  return normLines.join('\n');
+}
+
+// --- Script generator prompt tuner (guides model to pick from our library) ---
+function getScriptGeneratorPrompt(userTopic, libraryTopics = availableLibraryTopics) {
+  // Top N topics for prompt focus
+  const focusTopics = (libraryTopics || []).slice(0, 30).map(t => t.charAt(0).toUpperCase() + t.slice(1));
+  return `
+You are an AI YouTube script generator for viral Shorts. ALWAYS write scripts about these topics ONLY: ${focusTopics.join(', ')}.
+Do NOT mention topics not in this list.
+If user gives a topic not in the list, pick the most similar from the above and generate scenes that use those words in each sentence.
+Use simple, visual language and make sure every scene can match a clip from the library.
+
+User topic: "${userTopic}"
+`.trim();
+}
+
+
+
 // ==== SECTION 8: VIRAL METADATA ENGINE ====
 console.log('[DEBUG] Entered SECTION 8: VIRAL METADATA ENGINE');
 async function generateViralMetadata({ script, topic, oldTitle, oldDesc }) {
@@ -242,6 +321,7 @@ HASHTAGS: [hashtag1, hashtag2, ...]
     return { viralTitle: oldTitle, viralDesc: oldDesc, viralTags: '' };
   }
 }
+
 
 // ==== SECTION 9: SCRIPT-TO-SCENES SPLITTER ====
 console.log('[DEBUG] Entered SECTION 9: SCRIPT-TO-SCENES SPLITTER');

@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-console.log('[Pexels Helper] Loaded – bulletproof fallback mode.');
+console.log('[Pexels Helper] Loaded – GOD TIER MATCHING ENABLED.');
 
 // ==== SECTION 2: CONFIGURATION & GLOBALS ====
 const STOP_WORDS = new Set([
@@ -20,6 +20,7 @@ const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_K
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY;
 
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
+const PIXABAY_KEY = process.env.PIXABAY_API_KEY;
 if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
   console.warn('[Pexels Helper] WARNING: R2 credentials are missing or invalid! Cloud video matching will fail.');
 }
@@ -43,33 +44,62 @@ if (!fs.existsSync(LOCAL_CLIP_DIR)) {
   console.warn(`[Pexels Helper] WARNING: Local clips folder (${LOCAL_CLIP_DIR}) does not exist!`);
 }
 
-// ==== SECTION 3: TEXT & SUBJECT HELPERS ====
+// ==== SECTION 3: SMART SUBJECT/CLIP MAPPINGS ====
+// (Edit/add here as you grow the library!)
+const CUSTOM_KEYWORDS = {
+  // Example: 'sandwich': ['sandwich', 'sub', 'hoagie', 'panini'],
+  // Add common food/animal/scene types below (all lowercased, values are possible filename tokens)
+  'sandwich': ['sandwich', 'sub', 'hoagie', 'deli', 'bread'],
+  'owl': ['owl', 'owlet'],
+  'cat': ['cat', 'kitten', 'tabby'],
+  'dog': ['dog', 'puppy'],
+  'pizza': ['pizza', 'slice'],
+  'burger': ['burger', 'cheeseburger', 'hamburger'],
+  'salad': ['salad', 'greens'],
+  'beach': ['beach', 'ocean', 'seashore'],
+  'mountain': ['mountain', 'alps', 'rocky'],
+  // Add more for new categories as needed!
+};
+
+// ==== SECTION 4: TEXT & SUBJECT HELPERS ====
+
+// Smarter extraction: finds best subject based on mappings, nouns, and direct mentions
+function extractMainSubject(lineRaw) {
+  let line = (lineRaw || '').toLowerCase().replace(/[^\w\s]/gi, ' ');
+  // Try explicit mapping first
+  for (const key in CUSTOM_KEYWORDS) {
+    for (const token of CUSTOM_KEYWORDS[key]) {
+      if (line.includes(token)) {
+        console.log(`[extractMainSubject] Matched custom subject "${key}" with token "${token}"`);
+        return key;
+      }
+    }
+  }
+  // Try known animals/foods/etc
+  const match = line.match(/(bald\s*eagle|eagle|cat|dog|owl|lion|tiger|shark|snake|wolf|bear|fox|monkey|horse|dolphin|fish|penguin|whale|pizza|burger|sandwich|salad|beach|mountain|sunset|lake|forest|desert|car|train|plane)/i);
+  if (match) {
+    console.log(`[extractMainSubject] Regex matched: ${match[0].toLowerCase()}`);
+    return match[0].toLowerCase();
+  }
+  // Fallback: sanitize and take 1-2 strongest words
+  let words = sanitizeQuery(lineRaw, 2).split(' ');
+  let subject = words.join(' ') || 'nature';
+  console.log(`[extractMainSubject] Fallback subject: ${subject}`);
+  return subject;
+}
 
 function sanitizeQuery(raw, maxWords = 10) {
-  const cleaned = raw
+  const cleaned = (raw || '')
     .replace(/["“”‘’.,!?;:]/g, '')
     .split(/\s+/)
     .map(w => w.trim())
     .filter(w => w && !STOP_WORDS.has(w.toLowerCase()))
     .slice(0, maxWords)
     .join(' ');
-  console.log(`[sanitizeQuery] Cleaned: "${cleaned}"`);
   return cleaned;
 }
 
-async function extractMainSubject(line) {
-  let match = line.match(/bald\s*eagle/i);
-  if (match) return 'bald eagle';
-  match = line.match(/eagle/i);
-  if (match) return 'eagle';
-  match = line.match(/cat|dog|owl|lion|tiger|shark|snake|wolf|bear|fox|monkey|horse|dolphin|fish|penguin|whale/i);
-  if (match) return match[0].toLowerCase();
-  let words = sanitizeQuery(line, 2).split(' ');
-  return words.join(' ') || 'nature';
-}
-
-// ==== SECTION 4: DOWNLOADERS & FILE HELPERS ====
-
+// ==== SECTION 5: DOWNLOADERS & FILE HELPERS ====
 async function downloadToLocal(urls, workDir = TEMP_DIR) {
   if (!urls) return null;
   if (!Array.isArray(urls)) urls = [urls];
@@ -88,7 +118,7 @@ async function downloadToLocal(urls, workDir = TEMP_DIR) {
       }
 
       console.log(`[downloadToLocal] Downloading ${url}`);
-      const response = await axios({ url, method: 'GET', responseType: 'stream', timeout: 15000 });
+      const response = await axios({ url, method: 'GET', responseType: 'stream', timeout: 20000 });
       await new Promise((resolve, reject) => {
         const writer = fs.createWriteStream(dest);
         response.data.pipe(writer);
@@ -109,7 +139,7 @@ async function downloadToLocal(urls, workDir = TEMP_DIR) {
   return downloaded.length > 0 ? downloaded[0] : null;
 }
 
-// ==== SECTION 5: REMOTE VIDEO FETCHERS (R2, PEXELS, PIXABAY) ====
+// ==== SECTION 6: REMOTE VIDEO FETCHERS (R2, PEXELS, PIXABAY) ====
 
 async function findBestVideoFromR2(subject) {
   if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
@@ -121,7 +151,7 @@ async function findBestVideoFromR2(subject) {
     do {
       const resp = await s3.send(new ListObjectsV2Command({
         Bucket: R2_BUCKET,
-        Prefix: '', // You can set e.g. 'socialstorm-library/' if needed
+        Prefix: '', // 'socialstorm-library/' if needed
         ContinuationToken: token
       }));
       const keys = (resp.Contents || [])
@@ -135,28 +165,43 @@ async function findBestVideoFromR2(subject) {
       console.warn('[findBestVideoFromR2] No videos found in R2.');
       return null;
     }
-    const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
-    // Strict match
-    let matches = allKeys.filter(k => k.toLowerCase().includes(subjectFlat));
-    if (matches.length > 0) {
-      const key = matches[Math.floor(Math.random() * matches.length)];
-      const url = `https://${R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
-      console.log(`[findBestVideoFromR2] Strict subject match: ${key}`);
-      return url;
+
+    // Custom mapping: test all tokens for match in file names!
+    let matchKey = null;
+    if (CUSTOM_KEYWORDS[subject]) {
+      for (const token of CUSTOM_KEYWORDS[subject]) {
+        matchKey = allKeys.find(k => k.toLowerCase().includes(token));
+        if (matchKey) {
+          console.log(`[findBestVideoFromR2] Custom keyword match: ${matchKey}`);
+          break;
+        }
+      }
     }
-    // Fuzzy match
-    const best = stringSimilarity.findBestMatch(subject.toLowerCase(), allKeys.map(k => k.toLowerCase()));
-    const key = best.bestMatch.rating > 0.13 ? allKeys[best.bestMatchIndex] : null;
-    if (key) {
-      const url = `https://${R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
-      console.log(`[findBestVideoFromR2] Fuzzy fallback: ${key} (score: ${best.bestMatch.rating.toFixed(2)})`);
-      return url;
+    // Strict subject match
+    if (!matchKey) {
+      const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
+      const matches = allKeys.filter(k => k.toLowerCase().includes(subjectFlat));
+      if (matches.length > 0) {
+        matchKey = matches[Math.floor(Math.random() * matches.length)];
+        console.log(`[findBestVideoFromR2] Strict subject match: ${matchKey}`);
+      }
+    }
+    // Fuzzy fallback
+    if (!matchKey) {
+      const best = stringSimilarity.findBestMatch(subject.toLowerCase(), allKeys.map(k => k.toLowerCase()));
+      if (best.bestMatch.rating > 0.13) {
+        matchKey = allKeys[best.bestMatchIndex];
+        console.log(`[findBestVideoFromR2] Fuzzy fallback: ${matchKey} (score: ${best.bestMatch.rating.toFixed(2)})`);
+      }
     }
     // Random fallback
-    if (allKeys.length > 0) {
-      const key = allKeys[Math.floor(Math.random() * allKeys.length)];
-      const url = `https://${R2_BUCKET}.r2.cloudflarestorage.com/${key}`;
-      console.log(`[findBestVideoFromR2] Random fallback: ${key}`);
+    if (!matchKey && allKeys.length > 0) {
+      matchKey = allKeys[Math.floor(Math.random() * allKeys.length)];
+      console.log(`[findBestVideoFromR2] Random fallback: ${matchKey}`);
+    }
+
+    if (matchKey) {
+      const url = `https://${R2_BUCKET}.r2.cloudflarestorage.com/${matchKey}`;
       return url;
     }
     return null;
@@ -172,10 +217,9 @@ async function getPexelsVideo(subject) {
     return null;
   }
   try {
-    const query = subject + '';
     const response = await axios.get('https://api.pexels.com/videos/search', {
       headers: { Authorization: PEXELS_API_KEY },
-      params: { query, per_page: 7 },
+      params: { query: subject, per_page: 7 },
       timeout: 10000
     });
 
@@ -199,9 +243,7 @@ async function getPexelsVideo(subject) {
   }
 }
 
-// Optionally, add Pixabay fallback here if you have API key/setup
 async function getPixabayVideo(subject) {
-  const PIXABAY_KEY = process.env.PIXABAY_API_KEY;
   if (!PIXABAY_KEY) {
     console.warn('[getPixabayVideo] No Pixabay API key!');
     return null;
@@ -229,8 +271,7 @@ async function getPixabayVideo(subject) {
   }
 }
 
-// ==== SECTION 6: LOCAL LIBRARY & FUZZY FALLBACKS ====
-
+// ==== SECTION 7: LOCAL LIBRARY & FUZZY FALLBACKS ====
 function getLocalFallback(subject) {
   try {
     if (!fs.existsSync(LOCAL_CLIP_DIR)) {
@@ -241,6 +282,17 @@ function getLocalFallback(subject) {
     if (!files.length) {
       console.warn('[getLocalFallback] No .mp4 files in local clips!');
       return null;
+    }
+    // Custom mapping: check for any mapped keyword in file names
+    if (CUSTOM_KEYWORDS[subject]) {
+      for (const token of CUSTOM_KEYWORDS[subject]) {
+        const match = files.find(f => f.toLowerCase().includes(token));
+        if (match) {
+          const local = path.join(LOCAL_CLIP_DIR, match);
+          console.log(`[getLocalFallback] Custom keyword matched: ${local}`);
+          return local;
+        }
+      }
     }
     // Strict subject match
     let strict = files.filter(f => f.toLowerCase().includes(subject.replace(/\s+/g, '').toLowerCase()));
@@ -272,13 +324,11 @@ function getLocalFallback(subject) {
 }
 
 function getGenericFallback() {
-  // Try "default.mp4" first
   const fallback1 = path.join(LOCAL_CLIP_DIR, 'default.mp4');
   if (fs.existsSync(fallback1)) {
     console.warn('[getGenericFallback] Using default.mp4 fallback');
     return fallback1;
   }
-  // Try any .mp4 in the folder, totally random
   try {
     const allFiles = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
     if (allFiles.length > 0) {
@@ -290,11 +340,10 @@ function getGenericFallback() {
   return null;
 }
 
-// ==== SECTION 7: MAIN PICK LOGIC (ENTRY POINT) ====
-
+// ==== SECTION 8: MAIN PICK LOGIC (ENTRY POINT) ====
 async function pickClipFor(query) {
   console.log(`[pickClipFor] Query: ${query}`);
-  let subject = await extractMainSubject(query);
+  let subject = extractMainSubject(query);
   if (!subject) {
     console.warn(`[pickClipFor] No subject found, defaulting to nature`);
     subject = 'nature';
@@ -351,5 +400,5 @@ async function pickClipFor(query) {
   return null;
 }
 
-// ==== SECTION 8: EXPORTS ====
+// ==== SECTION 9: EXPORTS ====
 module.exports = { pickClipFor };

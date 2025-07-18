@@ -9,8 +9,6 @@ if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
   console.log('[WARNING] No frontend folder found!');
 }
 
-
-
 // ==== SECTION 2: ENVIRONMENT & DEPENDENCY SETUP ====
 console.log('[DEBUG] Entered SECTION 2: ENVIRONMENT & DEPENDENCY SETUP');
 require('dotenv').config();
@@ -30,23 +28,6 @@ const util = require('util');
 ffmpeg.setFfmpegPath(ffmpegPath);
 console.log('[DEBUG] All dependencies loaded successfully');
 
-// --- Bulletproof: Warn if /clips or /frontend folder missing ---
-const CLIPS_DIR = path.join(__dirname, 'clips');
-const FRONTEND_DIR = path.join(__dirname, 'frontend');
-if (!fs.existsSync(CLIPS_DIR)) {
-  console.warn('[WARNING] /clips directory does NOT exist at startup:', CLIPS_DIR);
-} else {
-  console.log('[DEBUG] /clips directory found:', CLIPS_DIR);
-}
-if (!fs.existsSync(FRONTEND_DIR)) {
-  console.warn('[WARNING] /frontend directory does NOT exist at startup:', FRONTEND_DIR);
-} else {
-  console.log('[DEBUG] /frontend directory found:', FRONTEND_DIR);
-}
-
-
-
-
 // ==== SECTION 3: PROGRESS TRACKING MAP ====
 console.log('[DEBUG] Entered SECTION 3: PROGRESS TRACKING MAP');
 const progress = {};
@@ -54,13 +35,8 @@ const JOB_TTL_MS = 5 * 60 * 1000;
 
 function cleanupJob(jobId, delay = JOB_TTL_MS) {
   console.log('[DEBUG] Cleaning up job:', jobId);
-  setTimeout(() => { 
-    delete progress[jobId]; 
-    console.log('[DEBUG] Job cleaned up:', jobId); 
-  }, delay);
+  setTimeout(() => { delete progress[jobId]; console.log('[DEBUG] Job cleaned up:', jobId); }, delay);
 }
-
-
 
 // ==== SECTION 4: EXPRESS APP INITIALIZATION ====
 console.log('[DEBUG] Entered SECTION 4: EXPRESS APP INITIALIZATION');
@@ -71,16 +47,13 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(FRONTEND_DIR));
+app.use(express.static(path.join(__dirname, 'frontend')));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use('/voice-previews', express.static(path.join(FRONTEND_DIR, 'voice-previews')));
+app.use('/voice-previews', express.static(path.join(__dirname, 'frontend', 'voice-previews')));
 
 const PORT = process.env.PORT || 8080;
 console.log('[DEBUG] Express app initialized on port:', PORT);
-
-
-
 
 // ==== SECTION 5: HEALTH CHECK ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 5: HEALTH CHECK ENDPOINT');
@@ -88,6 +61,7 @@ app.get('/health', (req, res) => {
   console.log('[DEBUG] Health check received');
   res.status(200).send('OK');
 });
+
 
 
 // ==== SECTION 6: CLOUD R2 CLIENT CONFIGURATION ====
@@ -155,7 +129,7 @@ function extractMainSubject(script) {
   return lines[0] || "video";
 }
 
-// ---- Main: Smart R2 picker (hard subject enforcement, now with bulletproof fallback) ----
+// ---- Main: Smart R2 picker (hard subject enforcement) ----
 async function pickClipForCloudR2(script, usedUrls = []) {
   const subject = extractMainSubject(script);
   const keywords = extractKeywords(subject);
@@ -204,30 +178,7 @@ async function pickClipForCloudR2(script, usedUrls = []) {
   // Final fallback: Pexels helper, *prefix subject* for every query (e.g. 'bald eagle sight')
   const fallbackQuery = subject + " " + (keywords[1] || "");
   console.log('[pickClipForCloudR2] No good match in R2. Falling back to Pexels for:', fallbackQuery);
-
-  try {
-    const pexelsResult = await pickClipFor(fallbackQuery.trim(), usedUrls);
-    if (pexelsResult && pexelsResult.url) {
-      console.log('[pickClipForCloudR2] Found video from Pexels/Pixabay:', pexelsResult.url);
-      return pexelsResult;
-    }
-  } catch (err) {
-    console.warn('[pickClipForCloudR2] Pexels/Pixabay lookup failed:', err.message);
-  }
-
-  // *** BULLETPROOF: If all else fails, use a default fallback video from local library ***
-  try {
-    const fallbackPath = path.join(__dirname, 'clips', 'default.mp4');
-    if (fs.existsSync(fallbackPath)) {
-      console.warn('[pickClipForCloudR2] Using DEFAULT fallback video for subject:', subject, '->', fallbackPath);
-      return { url: fallbackPath, id: 'default.mp4', local: true };
-    } else {
-      throw new Error('No default fallback video found in clips folder!');
-    }
-  } catch (err) {
-    console.error('[pickClipForCloudR2] CRITICAL: No default fallback video available!', err.message);
-    throw new Error('No media found for scene AND no default fallback video!');
-  }
+  return pickClipFor(fallbackQuery.trim(), usedUrls);
 }
 
 // ---- Emoji stripper ----
@@ -241,7 +192,6 @@ function sanitizeQuery(str) {
   if (!str) return '';
   return str.replace(/[^a-zA-Z0-9 ]/g, '').toLowerCase();
 }
-
 
 
 // ==== SECTION 8: VIRAL METADATA ENGINE ====
@@ -304,9 +254,6 @@ function splitScriptToScenes(script) {
     .filter(line => line.length > 1);
 }
 
-
-
-
 // ==== SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT ====
 console.log('[DEBUG] Entered SECTION 10: REMOVE GOOGLE CLOUD TTS CLIENT');
 
@@ -319,8 +266,6 @@ try {
 } catch (e) {
   console.error('[ERROR] Could not initialize Polly client:', e);
 }
-
-
 
 // ==== SECTION 11: POLLY TTS SYNTHESIZER ====
 console.log('[DEBUG] Entered SECTION 11: POLLY TTS SYNTHESIZER');
@@ -402,17 +347,12 @@ const pollyVoices = [
 
 console.log('[DEBUG] Voices list loaded:', { elevenProVoices, pollyVoices });
 
-
-
 // ==== SECTION 13: /api/voices ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 13: /api/voices ENDPOINT');
 app.get('/api/voices', (req, res) => {
   console.log('[DEBUG] Fetching available voices');
   res.json({ success: true, voices: [...pollyVoices, ...elevenProVoices] });
 });
-
-
-
 
 // ==== SECTION 14: /api/generate-script ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 14: /api/generate-script ENDPOINT');
@@ -475,9 +415,6 @@ SCRIPT:
     if (!res.headersSent) return res.status(500).json({ success: false, error: err.message });
   }
 });
-
-
-
 
 // ==== SECTION 15: /api/generate-video ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
@@ -570,8 +507,7 @@ app.post('/api/generate-video', (req, res) => {
           }
 
           // --- FIND MATCHING CLIP ---
-          // ** CRUCIAL CHANGE: always use mainSubject for picking clip **
-          const mediaObj = await pickClipFor(mainSubject, workDir, 0.13, mainSubject, Array.from(usedUrls));
+          const mediaObj = await pickClipFor(text, workDir, 0.13, mainSubject, Array.from(usedUrls));
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
             if (mediaFailCount > 3) {
@@ -735,6 +671,7 @@ app.post('/api/generate-video', (req, res) => {
   })();
 });
 console.log('[DEBUG] Video generation route set up successfully');
+
 
 
 

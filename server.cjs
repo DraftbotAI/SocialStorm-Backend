@@ -346,6 +346,9 @@ try {
   console.error('[ERROR] Could not initialize Polly client:', e);
 }
 
+
+
+
 // ==== SECTION 11: POLLY TTS SYNTHESIZER ====
 console.log('[DEBUG] Entered SECTION 11: POLLY TTS SYNTHESIZER');
 async function synthesizeWithPolly(text, voice = 'Matthew', outPath) {
@@ -439,7 +442,15 @@ app.get('/api/voices', (req, res) => {
 
 
 
+
 // ==== SECTION 14: /api/generate-script ENDPOINT ====
+
+// ==== HELPER: stripEmojis ====
+// Removes all emoji characters from a string (Unicode-safe)
+function stripEmojis(str) {
+  return str.replace(/\p{Extended_Pictographic}/gu, '');
+}
+
 console.log('[DEBUG] Entered SECTION 14: /api/generate-script ENDPOINT');
 app.post('/api/generate-script', async (req, res) => {
   const { idea } = req.body;
@@ -532,7 +543,10 @@ One line per line, no headers, no extra formatting.
 });
 
 
-// ==== SECTION 15–17: /api/generate-video ENDPOINT (FULL, CORRECTED) ====
+
+
+
+// ==== SECTION 15 /api/generate-video ENDPOINT (FULL, CORRECTED) ====
 console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
 app.post('/api/generate-video', (req, res) => {
   const jobId = uuidv4();
@@ -719,6 +733,9 @@ app.post('/api/generate-video', (req, res) => {
         }
       }
 
+
+
+
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
       currentStep++;
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
@@ -795,6 +812,7 @@ console.log('[DEBUG] Video generation route set up successfully');
 
 
 
+
 // ==== SECTION 18: PROGRESS POLLING ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 18: PROGRESS POLLING ENDPOINT');
 app.get('/api/progress/:jobId', (req, res) => {
@@ -806,6 +824,10 @@ app.get('/api/progress/:jobId', (req, res) => {
   }
   res.json(job);
 });
+
+
+
+
 
 // ==== SECTION 19: GENERATE VOICE PREVIEWS ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 19: GENERATE VOICE PREVIEWS ENDPOINT');
@@ -820,6 +842,10 @@ app.post('/api/generate-voice-previews', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+
+
+
 
 // ==== SECTION 20: SPARKIE (IDEA GENERATOR) ENDPOINT ====
 console.log('[DEBUG] Entered SECTION 20: SPARKIE (IDEA GENERATOR) ENDPOINT');
@@ -847,6 +873,10 @@ app.post('/api/sparkie', async (req, res) => {
     }
   }
 });
+
+
+
+
 
 // ==== SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2 (streaming, download, range support) ====
 console.log('[DEBUG] Entered SECTION 21: SERVE VIDEOS FROM CLOUDFLARE R2');
@@ -913,6 +943,10 @@ app.get('/video/videos/:key', async (req, res) => {
   }
 });
 
+
+
+
+
 // ==== SECTION 22: 404 HTML FALLBACK FOR SPA (not API) ====
 console.log('[DEBUG] Entered SECTION 22: 404 HTML FALLBACK FOR SPA');
 app.get('*', (req, res) => {
@@ -927,6 +961,10 @@ app.get('*', (req, res) => {
     res.status(404).json({ error: 'Not found.' });
   }
 });
+
+
+
+
 
 // ==== SECTION 23: LAUNCH SERVER ====
 console.log('[DEBUG] Entered SECTION 23: LAUNCH SERVER');

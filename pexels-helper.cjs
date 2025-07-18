@@ -3,8 +3,6 @@ require('dotenv').config();
 const axios = require('axios');
 const stringSimilarity = require('string-similarity');
 const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 
 console.log('[Pexels Helper] Loaded – GOD TIER MATCHING ENABLED.');
@@ -18,14 +16,19 @@ const R2_BUCKET = process.env.R2_BUCKET;
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY;
+const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || 'pub-5d04f1b3024299b5953e63a9555fb8.r2.dev';
 
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_KEY = process.env.PIXABAY_API_KEY;
+
 if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
   console.warn('[Pexels Helper] WARNING: R2 credentials are missing or invalid! Cloud video matching will fail.');
 }
 if (!PEXELS_API_KEY) {
   console.warn('[Pexels Helper] WARNING: Pexels API Key not set! No Pexels fallback available.');
+}
+if (!PIXABAY_KEY) {
+  console.warn('[Pexels Helper] WARNING: Pixabay API Key not set! No Pixabay fallback available.');
 }
 
 const s3 = new S3Client({
@@ -36,13 +39,6 @@ const s3 = new S3Client({
     secretAccessKey: R2_SECRET_ACCESS_KEY
   }
 });
-
-const LOCAL_CLIP_DIR = path.join(__dirname, 'clips');
-const TEMP_DIR = path.join(__dirname, 'tmp');
-fs.mkdirSync(TEMP_DIR, { recursive: true });
-if (!fs.existsSync(LOCAL_CLIP_DIR)) {
-  console.warn(`[Pexels Helper] WARNING: Local clips folder (${LOCAL_CLIP_DIR}) does not exist!`);
-}
 
 // ==== SECTION 3: SMART SUBJECT/CLIP MAPPINGS ====
 // (Edit/add here as you grow the library!)
@@ -97,47 +93,7 @@ function sanitizeQuery(raw, maxWords = 10) {
   return cleaned;
 }
 
-// ==== SECTION 5: DOWNLOADERS & FILE HELPERS ====
-async function downloadToLocal(urls, workDir = TEMP_DIR) {
-  if (!urls) return null;
-  if (!Array.isArray(urls)) urls = [urls];
-  const downloaded = [];
-  for (let url of urls) {
-    try {
-      if (!url) continue;
-      const hash = crypto.createHash('md5').update(url).digest('hex').slice(0, 10);
-      const fileName = `clip_${hash}_${Date.now()}.mp4`;
-      const dest = path.join(workDir, fileName);
-
-      if (fs.existsSync(dest)) {
-        console.log(`[downloadToLocal] Already exists: ${dest}`);
-        downloaded.push(dest);
-        continue;
-      }
-
-      console.log(`[downloadToLocal] Downloading ${url}`);
-      const response = await axios({ url, method: 'GET', responseType: 'stream', timeout: 20000 });
-      await new Promise((resolve, reject) => {
-        const writer = fs.createWriteStream(dest);
-        response.data.pipe(writer);
-        writer.on('finish', resolve);
-        writer.on('error', reject);
-      });
-
-      if (fs.existsSync(dest)) {
-        console.log(`[downloadToLocal] Saved: ${dest}`);
-        downloaded.push(dest);
-      } else {
-        console.error(`[downloadToLocal] File not saved: ${dest}`);
-      }
-    } catch (err) {
-      console.error(`[downloadToLocal] Error downloading ${url}: ${err.message}`);
-    }
-  }
-  return downloaded.length > 0 ? downloaded[0] : null;
-}
-
-// ==== SECTION 6: REMOTE VIDEO FETCHERS (R2, PEXELS, PIXABAY) ====
+// ==== SECTION 5: REMOTE VIDEO FETCHERS (R2, PEXELS, PIXABAY) ====
 
 async function findBestVideoFromR2(subject) {
   if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
@@ -149,12 +105,12 @@ async function findBestVideoFromR2(subject) {
     do {
       const resp = await s3.send(new ListObjectsV2Command({
         Bucket: R2_BUCKET,
-        Prefix: '', // 'socialstorm-library/' if needed
+        Prefix: 'socialstorm-library/', // Set this to your library folder prefix
         ContinuationToken: token
       }));
       const keys = (resp.Contents || [])
         .filter(obj => /\.(mp4|mov|webm|mkv)$/i.test(obj.Key))
-        .map(obj => obj.Key);
+        .map(obj => obj.Key.replace(/^socialstorm-library\//, ''));
       allKeys.push(...keys);
       token = resp.NextContinuationToken;
     } while (token);
@@ -200,7 +156,7 @@ async function findBestVideoFromR2(subject) {
 
     if (matchKey) {
       // Use your actual public R2 domain and folder:
-      const url = `https://pub-5d04f1b3024299b5953e63a9555fb8.r2.dev/socialstorm-library/${matchKey}`;
+      const url = `https://${R2_PUBLIC_DOMAIN}/socialstorm-library/${matchKey}`;
       return url;
     }
     return null;
@@ -270,76 +226,8 @@ async function getPixabayVideo(subject) {
   }
 }
 
-// ==== SECTION 7: LOCAL LIBRARY & FUZZY FALLBACKS ====
-function getLocalFallback(subject) {
-  try {
-    if (!fs.existsSync(LOCAL_CLIP_DIR)) {
-      console.warn('[getLocalFallback] Local clips folder missing.');
-      return null;
-    }
-    const files = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
-    if (!files.length) {
-      console.warn('[getLocalFallback] No .mp4 files in local clips!');
-      return null;
-    }
-    // Custom mapping: check for any mapped keyword in file names
-    if (CUSTOM_KEYWORDS[subject]) {
-      for (const token of CUSTOM_KEYWORDS[subject]) {
-        const match = files.find(f => f.toLowerCase().includes(token));
-        if (match) {
-          const local = path.join(LOCAL_CLIP_DIR, match);
-          console.log(`[getLocalFallback] Custom keyword matched: ${local}`);
-          return local;
-        }
-      }
-    }
-    // Strict subject match
-    let strict = files.filter(f => f.toLowerCase().includes(subject.replace(/\s+/g, '').toLowerCase()));
-    if (strict.length > 0) {
-      const pick = strict[Math.floor(Math.random() * strict.length)];
-      const local = path.join(LOCAL_CLIP_DIR, pick);
-      console.log(`[getLocalFallback] Picked subject match: ${local}`);
-      return local;
-    }
-    // Fuzzy match
-    const best = stringSimilarity.findBestMatch(subject.toLowerCase(), files.map(f => f.toLowerCase()));
-    if (best.bestMatch && best.bestMatch.rating > 0.13) {
-      const fuzzyFile = files[best.bestMatchIndex];
-      if (fuzzyFile) {
-        console.warn(`[getLocalFallback] Fuzzy subject fallback: ${fuzzyFile} (score: ${best.bestMatch.rating.toFixed(2)})`);
-        return path.join(LOCAL_CLIP_DIR, fuzzyFile);
-      }
-    }
-    // Absolute random .mp4 fallback
-    if (files.length > 0) {
-      const random = files[Math.floor(Math.random() * files.length)];
-      console.warn(`[getLocalFallback] Random .mp4 fallback: ${random}`);
-      return path.join(LOCAL_CLIP_DIR, random);
-    }
-  } catch (e) {
-    console.warn('[getLocalFallback] error:', e.message);
-  }
-  return null;
-}
-
-function getGenericFallback() {
-  const fallback1 = path.join(LOCAL_CLIP_DIR, 'default.mp4');
-  if (fs.existsSync(fallback1)) {
-    console.warn('[getGenericFallback] Using default.mp4 fallback');
-    return fallback1;
-  }
-  try {
-    const allFiles = fs.readdirSync(LOCAL_CLIP_DIR).filter(f => f.endsWith('.mp4'));
-    if (allFiles.length > 0) {
-      const random = allFiles[Math.floor(Math.random() * allFiles.length)];
-      console.warn('[getGenericFallback] Using any random fallback:', random);
-      return path.join(LOCAL_CLIP_DIR, random);
-    }
-  } catch (e) {}
-  return null;
-}
-
-// ==== SECTION 8: MAIN PICK LOGIC (ENTRY POINT) ====
+// ==== SECTION 6: MAIN PICK LOGIC (ENTRY POINT) ====
+// Priority: 1. R2  2. Pexels  3. Pixabay
 async function pickClipFor(query) {
   console.log(`[pickClipFor] Query: ${query}`);
   let subject = extractMainSubject(query);
@@ -348,56 +236,31 @@ async function pickClipFor(query) {
     subject = 'nature';
   }
 
-  // PRIORITY: 1. R2  2. Local Library  3. Pexels  4. Pixabay  5. Generic fallback
-
-  // Try R2 first (downloads remote files locally if needed)
+  // Try R2 first (returns public URL)
   const r2url = await findBestVideoFromR2(subject);
   if (r2url) {
-    const localR2 = await downloadToLocal(r2url);
-    if (localR2) {
-      console.log(`[pickClipFor] Found from R2: ${localR2}`);
-      return { url: localR2, source: 'r2', subject };
-    }
-  }
-
-  // Try local library next (subject strict/fuzzy/random)
-  const localFallback = getLocalFallback(subject);
-  if (localFallback) {
-    console.log(`[pickClipFor] Using local library fallback: ${localFallback}`);
-    return { url: localFallback, source: 'local', subject };
+    console.log(`[pickClipFor] Found from R2: ${r2url}`);
+    return { url: r2url, source: 'r2', subject };
   }
 
   // Try Pexels
   const pexelsUrl = await getPexelsVideo(subject);
   if (pexelsUrl) {
-    const localPexels = await downloadToLocal(pexelsUrl);
-    if (localPexels) {
-      console.log(`[pickClipFor] Found from Pexels: ${localPexels}`);
-      return { url: localPexels, source: 'pexels', subject };
-    }
+    console.log(`[pickClipFor] Found from Pexels: ${pexelsUrl}`);
+    return { url: pexelsUrl, source: 'pexels', subject };
   }
 
-  // Try Pixabay (optional)
+  // Try Pixabay
   const pixabayUrl = await getPixabayVideo(subject);
   if (pixabayUrl) {
-    const localPixabay = await downloadToLocal(pixabayUrl);
-    if (localPixabay) {
-      console.log(`[pickClipFor] Found from Pixabay: ${localPixabay}`);
-      return { url: localPixabay, source: 'pixabay', subject };
-    }
+    console.log(`[pickClipFor] Found from Pixabay: ${pixabayUrl}`);
+    return { url: pixabayUrl, source: 'pixabay', subject };
   }
 
-  // Ultimate fallback: any default or random .mp4
-  const genericFallback = getGenericFallback();
-  if (genericFallback) {
-    console.warn(`[pickClipFor] Using generic fallback: ${genericFallback}`);
-    return { url: genericFallback, source: 'generic', subject };
-  }
-
-  // If *absolutely nothing* found, log error and return null
+  // Nothing found
   console.error(`[pickClipFor] TOTAL FAILURE: No video found for subject "${subject}"`);
   return null;
 }
 
-// ==== SECTION 9: EXPORTS ====
+// ==== SECTION 7: EXPORTS ====
 module.exports = { pickClipFor };

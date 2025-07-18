@@ -9,6 +9,9 @@ if (require('fs').existsSync(require('path').join(__dirname, 'frontend'))) {
   console.log('[WARNING] No frontend folder found!');
 }
 
+
+
+
 // ==== SECTION 2: ENVIRONMENT & DEPENDENCY SETUP ====
 console.log('[DEBUG] Entered SECTION 2: ENVIRONMENT & DEPENDENCY SETUP');
 require('dotenv').config();
@@ -76,15 +79,42 @@ app.get('/health', (req, res) => {
 
 // ==== SECTION 6: CLOUD R2 CLIENT CONFIGURATION ====
 console.log('[DEBUG] Entered SECTION 6: CLOUD R2 CLIENT CONFIGURATION');
+
+// SAFETY: Load all variables up front with robust fallback and warnings
+const R2_BUCKET = process.env.R2_BUCKET;
+const R2_ENDPOINT = process.env.R2_ENDPOINT;
+const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY;
+const R2_SECRET_KEY = process.env.R2_SECRET_KEY;
+const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || 'pub-5d04f1b3024299b5953e63a9555fb8.r2.dev';
+
+if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY || !R2_SECRET_KEY) {
+  console.error('[R2 CONFIG] Missing one or more required R2 env vars! Double check R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY.');
+  throw new Error('Missing R2 configuration for Cloudflare storage. Aborting startup.');
+}
+
+// DEBUG: Dump config (hide secrets)
+console.log('[DEBUG] R2 CONFIG:', {
+  R2_BUCKET,
+  R2_ENDPOINT,
+  R2_ACCESS_KEY: R2_ACCESS_KEY ? '***' : 'MISSING',
+  R2_SECRET_KEY: R2_SECRET_KEY ? '***' : 'MISSING',
+  R2_PUBLIC_DOMAIN,
+});
+
+// IMPORTANT: Endpoint must be S3-compatible endpoint, *not* the public domain!
 const { S3, Endpoint } = AWS;
 const s3 = new S3({
-  endpoint: new Endpoint(process.env.R2_ENDPOINT),
-  accessKeyId: process.env.R2_ACCESS_KEY,
-  secretAccessKey: process.env.R2_SECRET_KEY,
+  endpoint: new Endpoint(R2_ENDPOINT),
+  accessKeyId: R2_ACCESS_KEY,
+  secretAccessKey: R2_SECRET_KEY,
   signatureVersion: 'v4',
-  region: 'us-east-1',
+  region: 'auto', // 'auto' is valid for Cloudflare R2
 });
+
 console.log('[DEBUG] Cloud R2 client initialized');
+
+
+
 
 
 // ==== SECTION 7: HELPERS ====

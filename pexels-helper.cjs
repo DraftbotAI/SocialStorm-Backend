@@ -47,8 +47,6 @@ if (!fs.existsSync(LOCAL_CLIP_DIR)) {
 // ==== SECTION 3: SMART SUBJECT/CLIP MAPPINGS ====
 // (Edit/add here as you grow the library!)
 const CUSTOM_KEYWORDS = {
-  // Example: 'sandwich': ['sandwich', 'sub', 'hoagie', 'panini'],
-  // Add common food/animal/scene types below (all lowercased, values are possible filename tokens)
   'sandwich': ['sandwich', 'sub', 'hoagie', 'deli', 'bread'],
   'owl': ['owl', 'owlet'],
   'cat': ['cat', 'kitten', 'tabby'],
@@ -201,7 +199,8 @@ async function findBestVideoFromR2(subject) {
     }
 
     if (matchKey) {
-      const url = `https://${R2_BUCKET}.r2.cloudflarestorage.com/${matchKey}`;
+      // Use your actual public R2 domain and folder:
+      const url = `https://pub-5d04f1b3024299b5953e63a9555fb8.r2.dev/socialstorm-library/${matchKey}`;
       return url;
     }
     return null;

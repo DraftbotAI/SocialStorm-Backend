@@ -546,7 +546,7 @@ One line per line, no headers, no extra formatting.
 
 
 
-// ==== SECTION 15 /api/generate-video ENDPOINT (FULL, CORRECTED) ====
+// ==== SECTION 15 /api/generate-video ENDPOINT (FIXED FOLDER LOGIC) ====
 console.log('[DEBUG] Entered SECTION 15: /api/generate-video ENDPOINT');
 app.post('/api/generate-video', (req, res) => {
   const jobId = uuidv4();
@@ -637,6 +637,7 @@ app.post('/api/generate-video', (req, res) => {
           }
 
           // --- FIND MATCHING CLIP ---
+          // pickClipFor must use 'socialstorm-library/' only (see pexels-helper logic!)
           const mediaObj = await pickClipFor(text, Array.from(usedUrls));
           if (!mediaObj || !mediaObj.url) {
             mediaFailCount++;
@@ -733,9 +734,6 @@ app.post('/api/generate-video', (req, res) => {
         }
       }
 
-
-
-
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
       currentStep++;
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
@@ -781,9 +779,9 @@ app.post('/api/generate-video', (req, res) => {
 
       currentStep++;
       progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
-      const key = `videos/${uuidv4()}.mp4`;
 
-      // ===== UPLOAD TO CLOUDFLARE R2 =====
+      // ===== UPLOAD TO CLOUDFLARE R2 TO socialstorm-videos =====
+      const key = `socialstorm-videos/${uuidv4()}.mp4`;
       await s3.upload({
         Bucket: process.env.R2_BUCKET,
         Key: key,
@@ -792,7 +790,10 @@ app.post('/api/generate-video', (req, res) => {
         ACL: 'public-read'
       }).promise();
 
-      progress[jobId] = { percent: 100, status: "Done", key };
+      // Build public URL using your .r2.dev public domain
+      const publicUrl = `https://${process.env.R2_PUBLIC_DOMAIN || 'pub-5d04f1b3024299b5953e63a9555fb8.r2.dev'}/${key}`;
+
+      progress[jobId] = { percent: 100, status: "Done", key, url: publicUrl };
       cleanupJob(jobId, 90 * 1000);
       finished = true;
       clearTimeout(watchdog);

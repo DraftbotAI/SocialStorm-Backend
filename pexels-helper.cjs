@@ -1,13 +1,13 @@
 console.log('[DEBUG] DEPLOY TEST', new Date());
 
-
-
 // ==== SECTION 1: SETUP & DEPENDENCIES ====
 require('dotenv').config();
 const axios = require('axios');
 const stringSimilarity = require('string-similarity');
 const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 const crypto = require('crypto');
+const path = require('path');
+const fs = require('fs');
 
 console.log('[Pexels Helper] Loaded – GOD TIER MATCHING ENABLED.');
 
@@ -20,7 +20,7 @@ const R2_BUCKET = process.env.R2_BUCKET;
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY;
-const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || 'pub-5d04f1b3024299b5953e63a9555fb8.r2.dev';
+const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || 'https://pub-5d04f1b3024299b5953e63a9555fb8.r2.dev';
 
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_KEY = process.env.PIXABAY_API_KEY;
@@ -97,10 +97,8 @@ function sanitizeQuery(raw, maxWords = 10) {
   return cleaned;
 }
 
-
-
 // ==== SECTION 5: DOWNLOADERS & FILE HELPERS ====
-async function downloadToLocal(urls, workDir = TEMP_DIR) {
+async function downloadToLocal(urls, workDir = './tmp') {
   if (!urls) return null;
   if (!Array.isArray(urls)) urls = [urls];
   const downloaded = [];
@@ -201,8 +199,8 @@ async function findBestVideoFromR2(subject) {
     }
 
     if (matchKey) {
-      // Use your actual public R2 domain and folder:
-      const url = `https://${R2_PUBLIC_DOMAIN}/socialstorm-library/${matchKey}`;
+      // Use your actual public R2 domain and folder (no double slashes)
+      const url = `${R2_PUBLIC_DOMAIN}/socialstorm-library/${matchKey}`.replace(/([^:]\/)\/+/g, "$1");
       return url;
     }
     return null;
@@ -307,7 +305,6 @@ async function pickClipFor(query) {
   console.error(`[pickClipFor] TOTAL FAILURE: No video found for subject "${subject}"`);
   return null;
 }
-
 
 // ==== SECTION 7: EXPORTS ====
 module.exports = { pickClipFor };

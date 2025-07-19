@@ -16,7 +16,8 @@ const STOP_WORDS = new Set([
   'and','the','with','into','for','a','to','of','in','on','at','by','from','is','are','was','were','be','has','have','had'
 ]);
 
-const R2_BUCKET = process.env.R2_BUCKET;
+// **THIS IS THE LINE THAT MATTERS:**
+const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || process.env.R2_BUCKET; // <-- Always set R2_LIBRARY_BUCKET=socialstorm-library in your .env!
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY;
@@ -25,7 +26,7 @@ const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || 'https://pub-5d04f1b302
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_KEY = process.env.PIXABAY_API_KEY;
 
-if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
+if (!R2_LIBRARY_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
   console.warn('[Pexels Helper] WARNING: R2 credentials are missing or invalid! Cloud video matching will fail.');
 }
 if (!PEXELS_API_KEY) {
@@ -61,10 +62,8 @@ const CUSTOM_KEYWORDS = {
 
 // ==== SECTION 4: TEXT & SUBJECT HELPERS ====
 
-// Smarter extraction: finds best subject based on mappings, nouns, and direct mentions
 function extractMainSubject(lineRaw) {
   let line = (lineRaw || '').toLowerCase().replace(/[^\w\s]/gi, ' ');
-  // Try explicit mapping first
   for (const key in CUSTOM_KEYWORDS) {
     for (const token of CUSTOM_KEYWORDS[key]) {
       if (line.includes(token)) {
@@ -73,13 +72,11 @@ function extractMainSubject(lineRaw) {
       }
     }
   }
-  // Try known animals/foods/etc
   const match = line.match(/(bald\s*eagle|eagle|cat|dog|owl|lion|tiger|shark|snake|wolf|bear|fox|monkey|horse|dolphin|fish|penguin|whale|pizza|burger|sandwich|salad|beach|mountain|sunset|lake|forest|desert|car|train|plane)/i);
   if (match) {
     console.log(`[extractMainSubject] Regex matched: ${match[0].toLowerCase()}`);
     return match[0].toLowerCase();
   }
-  // Fallback: sanitize and take 1-2 strongest words
   let words = sanitizeQuery(lineRaw, 2).split(' ');
   let subject = words.join(' ') || 'nature';
   console.log(`[extractMainSubject] Fallback subject: ${subject}`);
@@ -140,15 +137,15 @@ async function downloadToLocal(urls, workDir = './tmp') {
 // ==== SECTION 6: REMOTE VIDEO FETCHERS (R2, PEXELS, PIXABAY) ====
 
 async function findBestVideoFromR2(subject) {
-  if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
-    console.warn('[findBestVideoFromR2] R2 credentials not configured, skipping.');
+  if (!R2_LIBRARY_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
+    console.warn('[findBestVideoFromR2] R2 credentials are missing or invalid! Skipping.');
     return null;
   }
   try {
     let allKeys = [], token;
     do {
       const resp = await s3.send(new ListObjectsV2Command({
-        Bucket: R2_BUCKET,
+        Bucket: R2_LIBRARY_BUCKET,
         Prefix: 'socialstorm-library/', // Set this to your library folder prefix
         ContinuationToken: token
       }));
@@ -164,7 +161,6 @@ async function findBestVideoFromR2(subject) {
       return null;
     }
 
-    // Custom mapping: test all tokens for match in file names!
     let matchKey = null;
     if (CUSTOM_KEYWORDS[subject]) {
       for (const token of CUSTOM_KEYWORDS[subject]) {
@@ -175,7 +171,6 @@ async function findBestVideoFromR2(subject) {
         }
       }
     }
-    // Strict subject match
     if (!matchKey) {
       const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
       const matches = allKeys.filter(k => k.toLowerCase().includes(subjectFlat));
@@ -184,7 +179,6 @@ async function findBestVideoFromR2(subject) {
         console.log(`[findBestVideoFromR2] Strict subject match: ${matchKey}`);
       }
     }
-    // Fuzzy fallback
     if (!matchKey) {
       const best = stringSimilarity.findBestMatch(subject.toLowerCase(), allKeys.map(k => k.toLowerCase()));
       if (best.bestMatch.rating > 0.13) {
@@ -192,14 +186,12 @@ async function findBestVideoFromR2(subject) {
         console.log(`[findBestVideoFromR2] Fuzzy fallback: ${matchKey} (score: ${best.bestMatch.rating.toFixed(2)})`);
       }
     }
-    // Random fallback
     if (!matchKey && allKeys.length > 0) {
       matchKey = allKeys[Math.floor(Math.random() * allKeys.length)];
       console.log(`[findBestVideoFromR2] Random fallback: ${matchKey}`);
     }
 
     if (matchKey) {
-      // Use your actual public R2 domain and folder (no double slashes)
       const url = `${R2_PUBLIC_DOMAIN}/socialstorm-library/${matchKey}`.replace(/([^:]\/)\/+/g, "$1");
       return url;
     }
@@ -223,6 +215,10 @@ async function getPexelsVideo(subject) {
     });
 
     const videos = response.data.videos || [];
+    console.log(`[getPexelsVideo] Queried Pexels for "${subject}" and got ${videos.length} results.`);
+    if (videos.length === 0) {
+      console.warn(`[getPexelsVideo] No results from Pexels for "${subject}".`);
+    }
     const subjectFlat = subject.replace(/\s+/g, '').toLowerCase();
     let top = videos.find(v =>
       v.tags?.some(tag => tag.title?.toLowerCase().includes(subjectFlat)) ||
@@ -271,7 +267,7 @@ async function getPixabayVideo(subject) {
 }
 
 // ==== SECTION 6: MAIN PICK LOGIC (ENTRY POINT) ====
-// Priority: 1. R2  2. Pexels  3. Pixabay
+// Priority: 1. R2_LIBRARY_BUCKET  2. Pexels  3. Pixabay
 async function pickClipFor(query) {
   console.log(`[pickClipFor] Query: ${query}`);
   let subject = extractMainSubject(query);
@@ -280,7 +276,7 @@ async function pickClipFor(query) {
     subject = 'nature';
   }
 
-  // Try R2 first (returns public URL)
+  // Try R2_LIBRARY_BUCKET first (returns public URL)
   const r2url = await findBestVideoFromR2(subject);
   if (r2url) {
     console.log(`[pickClipFor] Found from R2: ${r2url}`);

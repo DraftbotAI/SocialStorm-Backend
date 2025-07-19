@@ -79,22 +79,25 @@ app.get('/health', (req, res) => {
 });
 
 
-
-
 // ==== SECTION 6: CLOUD R2 CLIENT CONFIGURATION ====
 console.log('[DEBUG] Entered SECTION 6: CLOUD R2 CLIENT CONFIGURATION');
 
 // SAFETY: Load all variables up front with robust fallback and warnings
-const R2_BUCKET = process.env.R2_BUCKET;
+// These buckets MUST be set in your .env:
+//   R2_LIBRARY_BUCKET=socialstorm-library
+//   R2_VIDEOS_BUCKET=socialstorm-videos
 const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || process.env.R2_BUCKET || 'socialstorm-library';
 const R2_VIDEOS_BUCKET = process.env.R2_VIDEOS_BUCKET || 'socialstorm-videos';
+// If you still want legacy fallback, keep R2_BUCKET for any legacy usages:
+const R2_BUCKET = process.env.R2_BUCKET;
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY;
 const R2_SECRET_KEY = process.env.R2_SECRET_KEY;
 const R2_PUBLIC_DOMAIN = process.env.R2_PUBLIC_DOMAIN || 'pub-5d04f1b3024299b5953e63a9555fb8.r2.dev';
 
-if (!R2_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY || !R2_SECRET_KEY) {
-  console.error('[R2 CONFIG] Missing one or more required R2 env vars! Double check R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY.');
+// Explicitly require BOTH buckets for modern operation:
+if (!R2_LIBRARY_BUCKET || !R2_VIDEOS_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY || !R2_SECRET_KEY) {
+  console.error('[R2 CONFIG] Missing one or more required R2 env vars! Double check R2_LIBRARY_BUCKET, R2_VIDEOS_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY.');
   throw new Error('Missing R2 configuration for Cloudflare storage. Aborting startup.');
 }
 
@@ -122,6 +125,8 @@ const s3 = new S3({
 });
 
 console.log('[DEBUG] Cloud R2 client initialized');
+
+
 
 
 // ==== SECTION 7: HELPERS ====
@@ -927,8 +932,9 @@ app.get('/video/videos/:key', async (req, res) => {
     const key = `socialstorm-videos/${req.params.key}`;
     console.log('[DEBUG] Video request for key:', key);
 
+    // Use R2_VIDEOS_BUCKET for all video serving operations!
     const headData = await s3.headObject({
-      Bucket: process.env.R2_BUCKET,
+      Bucket: R2_VIDEOS_BUCKET,
       Key: key,
     }).promise();
 
@@ -945,7 +951,7 @@ app.get('/video/videos/:key', async (req, res) => {
       const chunkSize = (end - start) + 1;
 
       const stream = s3.getObject({
-        Bucket: process.env.R2_BUCKET,
+        Bucket: R2_VIDEOS_BUCKET,
         Key: key,
         Range: `bytes=${start}-${end}`
       }).createReadStream();
@@ -967,7 +973,7 @@ app.get('/video/videos/:key', async (req, res) => {
     } else {
       // Full download/stream
       const stream = s3.getObject({
-        Bucket: process.env.R2_BUCKET,
+        Bucket: R2_VIDEOS_BUCKET,
         Key: key,
       }).createReadStream();
 

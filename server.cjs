@@ -132,10 +132,26 @@ console.log('[DEBUG] Cloud R2 client initialized');
 // ==== SECTION 7: HELPERS ====
 console.log('[DEBUG] Entered SECTION 7: HELPERS');
 
-// Download helper
+// Download helper (handles both URLs and local file copy)
 async function downloadToFile(url, outPath) {
+  // If url looks like a local file path, just copy
+  if (
+    typeof url === 'string' &&
+    !url.startsWith('http://') &&
+    !url.startsWith('https://')
+  ) {
+    try {
+      fs.copyFileSync(url, outPath);
+      console.log(`[downloadToFile] Copied local file: ${url} -> ${outPath}`);
+      return;
+    } catch (err) {
+      console.error(`[downloadToFile] Local file copy failed: ${err.message}`);
+      throw err;
+    }
+  }
+  // Otherwise, stream download from URL
   const writer = fs.createWriteStream(outPath);
-  const response = await axios.get(url, { responseType: 'stream' });
+  const response = await axios.get(url, { responseType: 'stream', timeout: 20000 });
   return new Promise((resolve, reject) => {
     response.data.pipe(writer);
     let error = null;
@@ -238,6 +254,7 @@ async function pickClipForCloudR2(script, usedIds = []) {
 }
 
 // Do NOT define pickClipFor here. Only import from your helper!
+
 
 
 // ==== SECTION 7.5: SCRIPT NORMALIZER (LIBRARY MATCHING + PROMPT TUNING) ====
@@ -731,13 +748,18 @@ app.post('/api/generate-video', (req, res) => {
           const mediaPath = clipBase + ext;
 
           // --- Download or copy the media clip ---
+          // ALWAYS download remote URLs (R2, Pexels, Pixabay) via downloadToFile!
           if (
             mediaObj.url.startsWith('http://') ||
-            mediaObj.url.startsWith('https://')
+            mediaObj.url.startsWith('https://') ||
+            mediaObj.url.startsWith('pub-') || // handles public R2 domains, if any
+            mediaObj.url.startsWith('pub.')
           ) {
             await downloadToFile(mediaObj.url, mediaPath);
-          } else {
+          } else if (fs.existsSync(mediaObj.url)) {
             fs.copyFileSync(mediaObj.url, mediaPath);
+          } else {
+            throw new Error(`Clip file not found: ${mediaObj.url}`);
           }
 
           // --- Encode audio to m4a ---
@@ -778,6 +800,87 @@ app.post('/api/generate-video', (req, res) => {
           return;
         }
       }
+
+      // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Concatenating scenes..." };
+
+      const listFile = path.join(workDir, 'list.txt');
+      fs.writeFileSync(
+        listFile,
+        scenes.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+      );
+      const concatFile = path.join(workDir, 'concat.mp4');
+
+      await new Promise((resolve, reject) => {
+        ffmpeg()
+          .input(listFile)
+          .inputOptions(['-f concat', '-safe 0'])
+          .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+          .save(concatFile)
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      const final = path.join(workDir, 'final.mp4');
+      let useWatermark = !(paidUser && removeWatermark);
+
+      if (useWatermark) {
+        const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(concatFile)
+            .input(watermarkPath)
+            .complexFilter([
+              '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];' +
+              '[0:v][wm]overlay=W-w-20:H-h-20'
+            ])
+            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+            .save(final)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+      } else {
+        fs.copyFileSync(concatFile, final);
+      }
+
+      currentStep++;
+      progress[jobId] = { percent: Math.round((currentStep / totalSteps) * 100), status: "Uploading to cloud..." };
+
+      // ===== UPLOAD TO CLOUDFLARE R2 TO socialstorm-videos =====
+      const key = `socialstorm-videos/${uuidv4()}.mp4`;
+      await s3.upload({
+        Bucket: R2_VIDEOS_BUCKET,
+        Key: key,
+        Body: fs.createReadStream(final),
+        ContentType: 'video/mp4',
+        ACL: 'public-read'
+      }).promise();
+
+      // Build public URL using your .r2.dev public domain
+      const publicUrl = `https://${R2_PUBLIC_DOMAIN}/${key}`;
+
+      progress[jobId] = { percent: 100, status: "Done", key, url: publicUrl };
+      cleanupJob(jobId, 90 * 1000);
+      finished = true;
+      clearTimeout(watchdog);
+
+    } catch (err) {
+      console.error('[ERROR] Fatal error in video generator:', err);
+      progress[jobId] = { percent: 100, status: "Failed: " + err.message };
+      cleanupJob(jobId, 60 * 1000);
+      finished = true;
+      clearTimeout(watchdog);
+      return;
+    }
+  })();
+});
+console.log('[DEBUG] Video generation route set up successfully');
+
+
+
+
+
 
       // ==== SECTION 17: CONCATENATION, UPLOAD, & FINALIZING VIDEO ====
       currentStep++;

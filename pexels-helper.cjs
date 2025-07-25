@@ -378,7 +378,7 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
     }
   }
 
-  // ===== E) PIXABAY PHOTO =====
+  // ===== E) PIXABAY PHOTO ======
   const photoResults = await Promise.all(
     searchVariants.map(q =>
       promiseTimeout(searchPixabayPhoto(q, keywordsArr, mainSubject, excludeUrls), 7000, "Pixabay photo search timed out")
@@ -403,6 +403,8 @@ async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSub
   // If *everything* fails, return null to let the server generate a fallback color/black video.
   return null;
 }
+
+
 
 // ===== 10) EXPORT =====
 module.exports = { pickClipFor };

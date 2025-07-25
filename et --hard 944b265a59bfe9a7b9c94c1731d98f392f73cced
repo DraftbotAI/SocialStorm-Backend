@@ -1,0 +1,77 @@
+[33mcommit b5352ece7210ebc6bb4983d1be93b42b2f1f2ee4[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 15:02:44 2025 -0400
+
+    Fix module import: use pexels-helper.cjs for CommonJS compatibility
+
+[33mcommit fd7c92f408d2a5eb7990268ba5135c335ff7d908[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 14:47:22 2025 -0400
+
+    Add missing pexels-helper.js helper
+
+[33mcommit 6e0800437319dfb9c4bb7bebb2a62ba3ce4e2125[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 14:44:04 2025 -0400
+
+    Install all backend dependencies
+
+[33mcommit 920105452ba1f37bc2c2736317d9c6916501bba8[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 14:41:51 2025 -0400
+
+    Add uuid dependency
+
+[33mcommit 95f516ac8e388485631077e39305442a7e1acacb[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 14:40:22 2025 -0400
+
+    Add axios dependency
+
+[33mcommit 2341a7047230acb237528ec97bc9efccbd13b505[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 14:23:39 2025 -0400
+
+    Add package.json for Railway deploy
+
+[33mcommit b8ba940d6eab7e4a144b0dfdb961f176db55a70a[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 14:10:31 2025 -0400
+
+    Clean repo, removed secret files
+
+[33mcommit 761fcbaf515c1c3f2e577271bbdb694f9bb676de[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 14:07:32 2025 -0400
+
+    Deploy latest version
+
+[33mcommit f342b731b0802a73ec21597bf6affe2afebc320e[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Wed Jul 9 13:44:01 2025 -0400
+
+    Initial commit for SocialStormAI
+
+[33mcommit 2233a181fcd1bc59ecd6c75e12ceb79f4ca78cb8[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Tue Jun 24 09:27:00 2025 -0400
+
+    Fix backend: replace server.js with server.cjs and update frontend files
+
+[33mcommit 1e82b814dd5b700e34e52ba5125c189cd61cd90e[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Tue Jun 24 08:57:40 2025 -0400
+
+    Fix: set main to server.js
+
+[33mcommit aabfe983d37b354e74e02c3071f3c8d024913843[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Tue Jun 24 08:46:51 2025 -0400
+
+    Initial commit for backend deployment
+
+[33mcommit a348b1c02414646244ab9eeec7efd7a442621364[m
+Author: Andrew Kilman <andrew.j.kilman@gmail.com>
+Date:   Mon Jun 23 10:14:28 2025 -0400
+
+    Initial commit

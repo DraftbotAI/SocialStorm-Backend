@@ -279,6 +279,7 @@ const voices = [
     preview: "/assets/voices/11-lucia.mp3",
     disabled: false
   },
+
   // ===== ELEVENLABS SPECIALTY (ASMR, GENTLE, ETC) =====
   {
     id: "11-aimee-asmr",
@@ -322,6 +323,7 @@ const voices = [
 app.get('/api/voices', (req, res) => {
   res.json({ success: true, voices });
 });
+
 
 
 /* ===========================================================

@@ -65,6 +65,7 @@ const progress = {};
 console.log('[INFO] Progress tracker initialized.');
 
 // ==== LOAD HELPERS ====
+// FIXED: Corrected to use pexels-helper.cjs, not helpers.cjs!
 const {
   splitScriptToScenes,
   generateSceneAudio,
@@ -72,7 +73,7 @@ const {
   combineAudioAndClip,
   assembleFinalVideo,
   cleanupJob
-} = require('./helpers.cjs');
+} = require('./pexels-helper.cjs');
 
 console.log('[INFO] Helper functions loaded.');
 

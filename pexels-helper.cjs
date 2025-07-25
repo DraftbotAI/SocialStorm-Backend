@@ -1,410 +1,236 @@
-// ===== 1) ENV & DEPENDENCIES =====
+/* ===========================================================
+   PEXELS HELPER MODULE – SocialStormAI
+   -----------------------------------------------------------
+   - Searches Cloudflare R2 (S3 API), then Pexels, then Pixabay for matching clips
+   - Returns best video file path or direct URL for scene/keyword
+   - Bulletproof file checks, deduplication, and error handling
+   =========================================================== */
+
 require('dotenv').config();
 const axios = require('axios');
-const stringSimilarity = require('string-similarity');
+const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+const path = require('path');
+const fs = require('fs');
 
-// ===== 2) STOP WORDS FOR QUERY CLEANUP =====
-const STOP_WORDS = new Set([
-  'and','the','with','into','for','a','to','of','in','on','at','by','from'
-]);
-function sanitizeQuery(raw, maxWords = 10) {
-  return raw
-    .replace(/["“”‘’.,!?;:]/g, '')
-    .split(/\s+/)
-    .map(w => w.trim())
-    .filter(w => w && !STOP_WORDS.has(w.toLowerCase()))
-    .slice(0, maxWords)
-    .join(' ');
+
+
+/* ===========================================================
+   SECTION 1: S3/R2 CLIENT SETUP
+   =========================================================== */
+
+const R2_BUCKET = process.env.R2_LIBRARY_BUCKET || process.env.AWS_BUCKET_NAME || "socialstorm-library";
+const R2_ENDPOINT = process.env.R2_ENDPOINT;
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || 'auto',
+  endpoint: R2_ENDPOINT,
+  credentials: {
+    accessKeyId: R2_ACCESS_KEY_ID,
+    secretAccessKey: R2_SECRET_ACCESS_KEY,
+  },
+});
+
+
+/* ===========================================================
+   SECTION 2: PEXELS & PIXABAY CONFIG
+   =========================================================== */
+
+const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
+const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
+const PEXELS_API_URL = 'https://api.pexels.com/videos/search';
+const PIXABAY_API_URL = 'https://pixabay.com/api/videos/';
+
+
+/* ===========================================================
+   SECTION 3: UTILITY – DEDUPLICATION + FILE CHECKS
+   =========================================================== */
+
+// Deduplicate by URL or file key (case-insensitive)
+function dedupeClips(clips) {
+  const seen = new Set();
+  return clips.filter(c => {
+    const id = (c.key || c.url || c.file || '').toLowerCase();
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
-// ===== 3) URL NORMALIZER =====
-function normalizeUrl(url) {
-  if (!url || typeof url !== 'string') return '';
-  return url.trim().toLowerCase().replace(/\/+$/, '');
-}
-
-// ===== 4) SHUFFLE ARRAY =====
-function shuffleArray(arr) {
-  for (let i = arr.length -1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i+1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-// ===== 5) GPT-POWERED KEYWORD EXTRACTOR =====
-async function getSearchKeywords(line) {
-  // Hard timeout: 7 seconds
-  const promise = (async () => {
-    try {
-      const { OpenAI } = require('openai');
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      const resp = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          { role: 'system', content: "Extract 2-5 extremely specific keywords for stock video/image search, focusing on the **most visual subject** of the sentence. Output a comma-separated list. NO sentences, no hashtags." },
-          { role: 'user', content: line }
-        ],
-        temperature: 0.1
-      });
-      let text = resp.choices[0].message.content.trim();
-      return text.replace(/\.$/, '');
-    } catch (err) {
-      return sanitizeQuery(line, 5);
-    }
-  })();
-  return Promise.race([
-    promise,
-    new Promise(resolve => setTimeout(() => resolve(sanitizeQuery(line, 5)), 7000))
-  ]);
-}
-
-// ===== 6) PIXABAY PHOTO FALLBACK =====
-async function searchPixabayPhoto(query, keywords = [], mainSubject = '', excludeUrls = []) {
-  const url = 'https://pixabay.com/api/';
-  const params = {
-    key: process.env.PIXABAY_API_KEY,
-    q: query,
-    safesearch: true,
-    per_page: 20,
-    lang: 'en',
-    image_type: 'photo'
-  };
+// Confirm a file path is a real file (not directory)
+function isRealFile(fp) {
   try {
-    const resp = await axios.get(url, { params, timeout: 6000 });
-    if (resp.data && Array.isArray(resp.data.hits) && resp.data.hits.length > 0) {
-      let filtered = resp.data.hits.filter(img => {
-        const meta = `${img.tags} ${img.user}`.toLowerCase();
-        const imgUrl = normalizeUrl(img.largeImageURL);
-        return mainSubject && meta.includes(mainSubject.toLowerCase()) && !excludeUrls.includes(imgUrl);
-      });
-      if (filtered.length === 0) {
-        filtered = resp.data.hits.filter(img => {
-          const imgUrl = normalizeUrl(img.largeImageURL);
-          return !excludeUrls.includes(imgUrl);
-        });
-      }
-      if (filtered.length > 0) {
-        filtered = shuffleArray(filtered);
-        const best = filtered[0];
-        if (best && best.largeImageURL) {
-          return {
-            type: 'photo',
-            url: best.largeImageURL,
-            score: 0.7,
-            isKenBurns: true,
-            source: 'pixabay',
-            credit: 'Pixabay'
-          };
-        }
-      }
+    return fs.existsSync(fp) && fs.statSync(fp).isFile();
+  } catch (e) {
+    return false;
+  }
+}
+
+
+/* ===========================================================
+   SECTION 4: R2 LIBRARY SEARCH
+   =========================================================== */
+
+async function searchR2Library(keyword) {
+  if (!keyword || !R2_BUCKET || !s3Client) return [];
+  let matches = [];
+  try {
+    // List all files with keyword in the key (filename)
+    const cmd = new ListObjectsV2Command({
+      Bucket: R2_BUCKET,
+      Prefix: '',
+    });
+    const resp = await s3Client.send(cmd);
+    if (resp && resp.Contents && Array.isArray(resp.Contents)) {
+      matches = resp.Contents
+        .filter(obj =>
+          obj.Key &&
+          obj.Key.toLowerCase().includes(keyword.toLowerCase()) &&
+          /\.(mp4|mov|webm|mkv)$/i.test(obj.Key)
+        )
+        .map(obj => ({
+          source: "r2",
+          key: obj.Key,
+          url: `${R2_ENDPOINT}/${R2_BUCKET}/${obj.Key}`,
+        }));
     }
-    return null;
   } catch (err) {
-    console.error('[Pixabay PHOTO ERROR]', err.message);
-    return null;
+    console.error('[PEXELS HELPER][R2] Error:', err);
   }
-}
-
-// ===== 7) PROMISE TIMEOUT WRAPPER =====
-function promiseTimeout(promise, ms, msg = "Timed out") {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))
-  ]);
-}
-
-// ===== 8) MOTIVATIONAL DETECTOR =====
-function isMotivationalQuery(text, mainSubject = '') {
-  const MOTIVATIONAL_WORDS = [
-    'motivation','motivational','inspiration','inspiring','affirmation','affirmations',
-    'inspire','confidence','success','achieve','goal','goals','positive','self love','self improvement','overcome','gratitude','believe','focus','power','dream','dreams'
-  ];
-  const lc = text.toLowerCase() + ' ' + (mainSubject || '').toLowerCase();
-  return MOTIVATIONAL_WORDS.some(w => lc.includes(w));
-}
-
-// ===== 9) MAIN CLIP PICKER =====
-async function pickClipFor(rawQuery, tempDir = './tmp', minScore = 0.13, mainSubject = '', excludeUrls = []) {
-  if (!rawQuery) throw new Error('pickClipFor: query is required');
-  if (!mainSubject) throw new Error('pickClipFor: mainSubject is required');
-  excludeUrls = excludeUrls.map(u => normalizeUrl(u));
-
-  // Step 1: Extract keywords (with timeout)
-  let keywordsRaw = await getSearchKeywords(rawQuery);
-  let keywordsArr = keywordsRaw
-    .split(',')
-    .map(k => k.trim().toLowerCase())
-    .filter(Boolean);
-  let mainQuery = `${mainSubject} ${keywordsArr.join(' ')}`.trim();
-
-  // Search specificity: most-specific → least-specific
-  let searchVariants = [
-    mainQuery,
-    ...(keywordsArr.length >= 1 ? keywordsArr.map(kw => `${mainSubject} ${kw}`) : []),
-    mainSubject
-  ].filter((v, i, arr) => v && arr.indexOf(v) === i);
-
-  // ===== A) SPECIAL LOGIC FOR MOTIVATIONAL/INSPIRATIONAL/AFFIRMATION =====
-  if (isMotivationalQuery(rawQuery, mainSubject)) {
-    const motivationalThemes = [
-      "inspiring people", "crowd cheering", "audience clapping", "mountain sunrise", "running on beach",
-      "reaching summit", "woman smiling confidence", "nature sunrise", "happy people outdoors", "achievement", "success", "celebrating goal",
-      "city sunrise", "hiker sunrise", "triumph", "overcome obstacle", "winning", "motivational", "determined", "hope", "dream", "gratitude"
-    ];
-    const randomThemes = shuffleArray([...motivationalThemes]);
-    for (const theme of randomThemes) {
-      try {
-        const resp = await promiseTimeout(
-          axios.get('https://api.pexels.com/videos/search', {
-            headers: { Authorization: process.env.PEXELS_API_KEY },
-            params: { query: theme, per_page: 10 },
-            timeout: 6000
-          }),
-          7000,
-          "Pexels video search timed out"
-        );
-        const vids = resp.data.videos || [];
-        if (vids.length) {
-          const verticalVids = vids.filter(v =>
-            (v.video_files || []).some(f => f.height / f.width > 0.98)
-          );
-          const picks = verticalVids.length ? verticalVids : vids;
-          shuffleArray(picks);
-          const top = picks[0];
-          const vf = (top.video_files || []).find(f => f.height / f.width > 0.98 && f.width <= 800)
-            || (top.video_files || [])[0];
-          if (vf && vf.link) {
-            return {
-              type: 'video',
-              url: vf.link,
-              score: 1,
-              isKenBurns: false,
-              source: 'pexels'
-            };
-          }
-        }
-      } catch (err) {
-        continue;
-      }
-    }
-    // Try photos if no video found
-    for (const theme of randomThemes) {
-      try {
-        const resp = await promiseTimeout(
-          axios.get('https://api.pexels.com/v1/search', {
-            headers: { Authorization: process.env.PEXELS_API_KEY },
-            params: { query: theme, per_page: 10 },
-            timeout: 6000
-          }),
-          7000,
-          "Pexels photo search timed out"
-        );
-        const pics = resp.data.photos || [];
-        if (pics.length) {
-          shuffleArray(pics);
-          const best = pics[0];
-          if (best && best.src && best.src.large) {
-            return {
-              type: 'photo',
-              url: best.src.large,
-              score: 1,
-              isKenBurns: true,
-              source: 'pexels'
-            };
-          }
-        }
-      } catch (err) {
-        continue;
-      }
-    }
-  }
-
-  // ===== B) PEXELS VIDEO =====
-  for (const query of searchVariants) {
-    try {
-      const resp = await promiseTimeout(
-        axios.get('https://api.pexels.com/videos/search', {
-          headers: { Authorization: process.env.PEXELS_API_KEY },
-          params: { query, per_page: 12 },
-          timeout: 6000
-        }),
-        7000,
-        "Pexels video search timed out"
-      );
-      const vids = resp.data.videos || [];
-      if (vids.length) {
-        let choices = vids
-          .map(v => {
-            const meta = [
-              v.url,
-              v.user?.name || '',
-              Array.isArray(v.tags) ? v.tags.join(' ') : '',
-              v.description || ''
-            ].join(' ');
-            // Vertical-ness boost: prefer vertical
-            const vf = (v.video_files || []).find(f => f.height / f.width > 1.1 && f.width <= 800);
-            const fileToUse = vf || (v.video_files || []).reduce((max, f) => f.width > max.width ? f : max, v.video_files[0]);
-            const scoreBase = stringSimilarity.compareTwoStrings(meta.toLowerCase(), rawQuery.toLowerCase());
-            const score = scoreBase + (vf ? 0.25 : 0);
-            return {
-              ...v,
-              score,
-              bestFile: fileToUse,
-              normUrl: normalizeUrl(fileToUse.link || '')
-            };
-          })
-          .filter(v => v.bestFile && v.bestFile.link && !excludeUrls.includes(v.normUrl));
-        // Sort: high score, vertical, width
-        choices.sort((a, b) =>
-          b.score - a.score ||
-          (b.bestFile.height / b.bestFile.width > 1 ? 1 : -1) - (a.bestFile.height / a.bestFile.width > 1 ? 1 : -1) ||
-          (b.bestFile.width - a.bestFile.width)
-        );
-        // Only accept vertical or square for Shorts!
-        const top = choices.find(c => c.bestFile.height / c.bestFile.width >= 0.98) || choices[0];
-        if (top && top.score >= minScore) {
-          return {
-            type: 'video',
-            url: top.bestFile.link,
-            score: top.score,
-            isKenBurns: false,
-            source: 'pexels'
-          };
-        }
-      }
-    } catch (err) {
-      console.error('[Pexels VIDEO ERROR]', err.message);
-      continue;
-    }
-  }
-
-  // ===== C) PEXELS PHOTO =====
-  for (const query of searchVariants) {
-    try {
-      const resp = await promiseTimeout(
-        axios.get('https://api.pexels.com/v1/search', {
-          headers: { Authorization: process.env.PEXELS_API_KEY },
-          params: { query, per_page: 12 },
-          timeout: 6000
-        }),
-        7000,
-        "Pexels photo search timed out"
-      );
-      const pics = resp.data.photos || [];
-      if (pics.length) {
-        const scored = pics
-          .map(p => {
-            const meta = [
-              p.alt || '',
-              p.photographer || '',
-              (p.tags ? p.tags.join(' ') : '')
-            ].join('');
-            const score = stringSimilarity.compareTwoStrings(meta.toLowerCase(), rawQuery.toLowerCase());
-            const picUrl = normalizeUrl(p.src?.large || '');
-            return { ...p, score, picUrl };
-          })
-          .filter(p => p.picUrl && !excludeUrls.includes(p.picUrl));
-        scored.sort((a, b) => b.score - a.score || 0);
-        if (scored.length) {
-          const best = scored[0];
-          return {
-            type: 'photo',
-            url: best.src.large,
-            score: best.score,
-            isKenBurns: true,
-            source: 'pexels'
-          };
-        }
-      }
-    } catch (err) {
-      console.error('[Pexels PHOTO ERROR]', err.message);
-      continue;
-    }
-  }
-
-  // ===== D) PIXABAY VIDEO =====
-  for (const query of searchVariants) {
-    const url = 'https://pixabay.com/api/videos/';
-    const params = {
-      key: process.env.PIXABAY_API_KEY,
-      q: query,
-      safesearch: true,
-      per_page: 12,
-      lang: 'en',
-      video_type: 'all'
-    };
-    try {
-      const resp = await promiseTimeout(
-        axios.get(url, { params, timeout: 6000 }),
-        7000,
-        "Pixabay video search timed out"
-      );
-      if (resp.data && Array.isArray(resp.data.hits) && resp.data.hits.length > 0) {
-        const scored = resp.data.hits
-          .map(vid => {
-            const meta = `${vid.tags} ${vid.user}`.toLowerCase();
-            const videoUrl =
-              (vid.videos.large && vid.videos.large.url) ||
-              (vid.videos.medium && vid.videos.medium.url) ||
-              (vid.videos.tiny && vid.videos.tiny.url) || '';
-            // Prefer vertical
-            const isVertical = vid.videos.large && vid.videos.large.height / vid.videos.large.width > 1.05;
-            const scoreBase = stringSimilarity.compareTwoStrings(meta, rawQuery.toLowerCase());
-            const score = scoreBase + (isVertical ? 0.2 : 0);
-            return { ...vid, score, videoUrl, normUrl: normalizeUrl(videoUrl) };
-          })
-          .filter(v => v.videoUrl && !excludeUrls.includes(v.normUrl));
-        // Prefer vertical, then best score
-        scored.sort((a, b) =>
-          b.score - a.score ||
-          ((b.videos.large?.height / b.videos.large?.width) - (a.videos.large?.height / a.videos.large?.width)) ||
-          0
-        );
-        const top = scored.find(c => c.videos.large?.height / c.videos.large?.width > 0.98) || scored[0];
-        if (top) {
-          return {
-            type: 'video',
-            url: top.videoUrl,
-            score: top.score,
-            isKenBurns: false,
-            source: 'pixabay'
-          };
-        }
-      }
-    } catch (err) {
-      console.error('[Pixabay VIDEO ERROR]', err.message);
-      continue;
-    }
-  }
-
-  // ===== E) PIXABAY PHOTO ======
-  const photoResults = await Promise.all(
-    searchVariants.map(q =>
-      promiseTimeout(searchPixabayPhoto(q, keywordsArr, mainSubject, excludeUrls), 7000, "Pixabay photo search timed out")
-    )
-  );
-  const pixabayPic = photoResults.find(r => r && r.url);
-  if (pixabayPic) {
-    return pixabayPic;
-  }
-
-  // ===== F) Last Resort: Only use mainSubject photo for Ken Burns effect
-  const pixabayFallback = await promiseTimeout(
-    searchPixabayPhoto(mainSubject, keywordsArr, mainSubject, excludeUrls),
-    7000,
-    "Pixabay fallback photo search timed out"
-  );
-  if (pixabayFallback) {
-    return pixabayFallback;
-  }
-
-  // ===== G) TOTAL FAIL-SAFE =====
-  // If *everything* fails, return null to let the server generate a fallback color/black video.
-  return null;
+  return matches;
 }
 
 
+/* ===========================================================
+   SECTION 5: PEXELS SEARCH
+   =========================================================== */
 
-// ===== 10) EXPORT =====
-module.exports = { pickClipFor };
+async function searchPexels(keyword) {
+  if (!PEXELS_API_KEY || !keyword) return [];
+  try {
+    const resp = await axios.get(PEXELS_API_URL, {
+      headers: { Authorization: PEXELS_API_KEY },
+      params: {
+        query: keyword,
+        per_page: 10,
+        orientation: "landscape"
+      }
+    });
+    if (resp.data && Array.isArray(resp.data.videos)) {
+      return resp.data.videos.map(clip => ({
+        source: "pexels",
+        url: clip.video_files && clip.video_files[0] && clip.video_files[0].link,
+        id: clip.id,
+        width: clip.width,
+        height: clip.height,
+        duration: clip.duration
+      })).filter(c => c.url);
+    }
+  } catch (err) {
+    console.error('[PEXELS HELPER][PEXELS] Error:', err);
+  }
+  return [];
+}
+
+
+/* ===========================================================
+   SECTION 6: PIXABAY SEARCH
+   =========================================================== */
+
+async function searchPixabay(keyword) {
+  if (!PIXABAY_API_KEY || !keyword) return [];
+  try {
+    const resp = await axios.get(PIXABAY_API_URL, {
+      params: {
+        key: PIXABAY_API_KEY,
+        q: keyword,
+        per_page: 10,
+        safesearch: true,
+        video_type: "film"
+      }
+    });
+    if (resp.data && Array.isArray(resp.data.hits)) {
+      return resp.data.hits.map(clip => {
+        const url =
+          clip.videos.medium?.url ||
+          clip.videos.large?.url ||
+          clip.videos.tiny?.url;
+        return {
+          source: "pixabay",
+          url,
+          id: clip.id,
+          width: clip.videos.medium?.width || 0,
+          height: clip.videos.medium?.height || 0,
+          duration: clip.duration || 0
+        };
+      }).filter(c => c.url);
+    }
+  } catch (err) {
+    console.error('[PEXELS HELPER][PIXABAY] Error:', err);
+  }
+  return [];
+}
+
+
+/* ===========================================================
+   SECTION 7: MASTER MATCH FUNCTION
+   =========================================================== */
+
+async function findBestClip(keyword) {
+  let allClips = [];
+
+  // 1. Try R2 library first
+  const r2Clips = await searchR2Library(keyword);
+  if (r2Clips.length > 0) {
+    allClips = allClips.concat(r2Clips);
+  }
+
+  // 2. If not enough, search Pexels
+  if (allClips.length < 3) {
+    const pexelsClips = await searchPexels(keyword);
+    if (pexelsClips.length > 0) {
+      allClips = allClips.concat(pexelsClips);
+    }
+  }
+
+  // 3. If still not enough, search Pixabay
+  if (allClips.length < 3) {
+    const pixabayClips = await searchPixabay(keyword);
+    if (pixabayClips.length > 0) {
+      allClips = allClips.concat(pixabayClips);
+    }
+  }
+
+  // Deduplicate and return
+  const uniqueClips = dedupeClips(allClips);
+
+  // Sort: Prefer R2, then Pexels, then Pixabay, by closest duration to 8s
+  uniqueClips.sort((a, b) => {
+    if (a.source !== b.source) {
+      if (a.source === "r2") return -1;
+      if (b.source === "r2") return 1;
+      if (a.source === "pexels") return -1;
+      if (b.source === "pexels") return 1;
+    }
+    const ad = Math.abs((a.duration || 8) - 8);
+    const bd = Math.abs((b.duration || 8) - 8);
+    return ad - bd;
+  });
+
+  // Return first/best match or empty array
+  return uniqueClips[0] || null;
+}
+
+
+/* ===========================================================
+   SECTION 8: EXPORTS
+   =========================================================== */
+
+module.exports = {
+  findBestClip,
+  searchR2Library,
+  searchPexels,
+  searchPixabay
+};
+

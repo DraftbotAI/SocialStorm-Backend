@@ -721,12 +721,7 @@ app.post('/api/generate-video', (req, res) => {
   })();
 });
 
-function cleanupJob(jobId) {
-  setTimeout(() => {
-    if (progress[jobId]) delete progress[jobId];
-    console.log('[CLEANUP] Job progress removed for:', jobId);
-  }, 4 * 60 * 1000);
-}
+
 
 // ---- Progress polling ----
 app.get('/api/progress/:jobId', (req, res) => {

@@ -340,37 +340,41 @@ app.post('/api/generate-script', async (req, res) => {
   }
 
   try {
-    // --- Prompt engineering for hook, structure, viral format ---
+    // --- Viral, human, clever prompt engineering ---
     const systemPrompt = `
-You are a viral scriptwriter for YouTube Shorts and TikTok.
-Rules:
-- Start with a viral hook as sentence 1.
-- Each sentence should be a single fact or point, ending with a period.
-- Make every fact punchy, funny, or dramatic.
-- No animal metaphors unless video is about animals.
-- Script should fit 1 min or less.
-- After script, output a viral title, SEO description, and up to 10 hashtags (comma-separated).
+You are a viral video scriptwriter for TikTok, Reels, and YouTube Shorts.
 
-Output format:
+**Rules:**
+- The FIRST line must be a dramatic, funny, or surprising HOOK. (Examples: "You’ll never guess what happens next...", "This is why cats secretly rule the world!", "Here’s a fact that will blow your mind:")
+- The REST of the lines should be punchy, fact-packed, and clever—always with a sense of humor or drama. No boring or robotic lines, ever.
+- Make each sentence a separate line. Each line should be short, direct, and easy to read aloud.
+- Never use animal metaphors unless the topic is literally about animals.
+- Use a relatable, clever tone—like a funny friend who’s in on the secret.
+- Never use academic or dry language.
+
+**Output format:**
 Script:
-[first line]
-[next line]
-...
-[end]
+[HOOK LINE (funny or dramatic)]
+[Fact 1 (funny or clever)]
+[Fact 2 (witty, interesting)]
+[Fact 3 (dramatic or relatable)]
+[Fact 4 (memorable/funny)]
+[Fact 5 (if needed)]
 Title:
 [title]
 Description:
 [description]
 Hashtags:
 [hashtag1, hashtag2, ...]
-`;
+    `.trim();
 
     const userPrompt = `Video idea: ${idea}\nScript, title, description, and hashtags:`;
 
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: systemPrompt },
+        { role: "system", content: "You write viral short-form video scripts, always starting with a hook." },
+        { role: "user", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
       temperature: 0.85,
@@ -479,6 +483,7 @@ ${script}
     res.json({ success: false, error: "AI error. Try again later." });
   }
 });
+
 
 
 /* ===========================================================

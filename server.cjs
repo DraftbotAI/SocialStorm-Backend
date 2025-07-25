@@ -79,7 +79,7 @@ console.log('[INFO] Helper functions loaded.');
 
 
 
-/* ===========================================================
+/* ============================================================
    SECTION 2: BASIC ROUTES & STATIC FILE SERVING
    -----------------------------------------------------------
    - Serve frontend files (HTML, assets)

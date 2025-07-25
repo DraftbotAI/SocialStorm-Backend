@@ -35,9 +35,7 @@ const requiredEnvVars = [
   'AWS_REGION',
   'R2_LIBRARY_BUCKET',
   'R2_ENDPOINT',
-  'CLOUDINARY_API_KEY',
-  'CLOUDINARY_API_SECRET',
-  'CLOUDINARY_CLOUD_NAME',
+
   'OPENAI_API_KEY'
 ];
 const missingEnv = requiredEnvVars.filter(key => !process.env[key]);
@@ -465,16 +463,13 @@ Then add metadata: viral title, SEO description, and hashtags.`
 
 
 
-
-
-/* =========================================================== 
+/* ===========================================================
    SECTION 5: VIDEO GENERATION ENDPOINT
    -----------------------------------------------------------
    - POST /api/generate-video
    - Handles script, voice, branding, watermark, outro, background music
    - Bulletproof file/dir safety; logs every step
    =========================================================== */
-
 
 console.log('[INIT] Video generation endpoint initialized');
 
@@ -632,65 +627,31 @@ app.post('/api/generate-video', (req, res) => {
           .on('error', reject);
       });
 
-      // --- Step 6: Watermark/Outro/Branding (Windows-safe, Arial) ---
-      let finalOut = path.join(workDir, 'final.mp4');
-      let ffmpegCmd = ffmpeg().input(concatOut);
-
-      // Watermark for free users only
-      if (!paidUser || !removeWatermark) {
-        const watermark = path.join(__dirname, 'frontend', 'assets', 'watermark.png');
-        if (fs.existsSync(watermark)) {
-          ffmpegCmd = ffmpegCmd
-            .complexFilter([
-              {
-                filter: 'overlay',
-                options: { x: '(main_w-overlay_w)-16', y: '(main_h-overlay_h)-16' }
-              }
-            ]);
-          console.log('[FINAL] Watermark overlay added');
-        }
+      // --- Step 6: Append outro (always) ---
+      const outro = path.join(__dirname, 'frontend', 'assets', 'outro.mp4');
+      let finalOut = concatOut;
+      if (fs.existsSync(outro) && fs.statSync(outro).isFile()) {
+        const outroConcatList = path.join(workDir, 'outrolist.txt');
+        fs.writeFileSync(outroConcatList,
+          `file '${concatOut.replace(/\\/g, '/')}'\nfile '${outro.replace(/\\/g, '/')}'\n`);
+        const outroOut = path.join(workDir, 'final_with_outro.mp4');
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(outroConcatList)
+            .inputOptions(['-f', 'concat', '-safe', '0'])
+            .outputOptions(['-c', 'copy'])
+            .save(outroOut)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+        finalOut = outroOut;
+        console.log('[FINAL] Outro appended.');
       }
 
-      ffmpegCmd
-        .outputOptions([
-          '-c:v', 'libx264',
-          '-c:a', 'aac',
-          '-preset', 'veryfast',
-          '-movflags', '+faststart'
-        ])
-        .save(finalOut);
-
-      console.log('[FINAL] Adding watermark and encoding...');
-      await new Promise((resolve, reject) => {
-        ffmpegCmd.on('end', resolve).on('error', reject);
-      });
-
-      // --- Step 7: Append outro for free users (if exists) ---
-      if (!paidUser || !removeWatermark) {
-        const outro = path.join(__dirname, 'frontend', 'assets', 'outro.mp4');
-        if (fs.existsSync(outro) && fs.statSync(outro).isFile()) {
-          const outroConcatList = path.join(workDir, 'outrolist.txt');
-          fs.writeFileSync(outroConcatList,
-            `file '${finalOut.replace(/\\/g, '/')}'\nfile '${outro.replace(/\\/g, '/')}'\n`);
-          const outroOut = path.join(workDir, 'final_with_outro.mp4');
-          await new Promise((resolve, reject) => {
-            ffmpeg()
-              .input(outroConcatList)
-              .inputOptions(['-f', 'concat', '-safe', '0'])
-              .outputOptions(['-c', 'copy'])
-              .save(outroOut)
-              .on('end', resolve)
-              .on('error', reject);
-          });
-          finalOut = outroOut;
-          console.log('[FINAL] Outro appended for free user');
-        }
-      }
-
-      // --- Step 8: Upload to S3/R2, set up public URL ---
+      // --- Step 7: Upload to S3/R2, set up public URL ---
       const videoKey = `${jobId}.mp4`;
       const videoData = fs.readFileSync(finalOut);
-      console.log(`[UPLOAD] Uploading final.mp4 to bucket as ${videoKey}`);
+      console.log(`[UPLOAD] Uploading final video to bucket as ${videoKey}`);
       await s3Client.send(new PutObjectCommand({
         Bucket: process.env.AWS_BUCKET_NAME,
         Key: videoKey,
@@ -699,7 +660,7 @@ app.post('/api/generate-video', (req, res) => {
         ContentType: 'video/mp4'
       }));
 
-      // --- Step 9: Cleanup local files ---
+      // --- Step 8: Cleanup local files ---
       setTimeout(() => {
         try {
           console.log('[CLEANUP] Removing temp job folder:', workDir);
@@ -721,13 +682,14 @@ app.post('/api/generate-video', (req, res) => {
   })();
 });
 
-
-
 // ---- Progress polling ----
 app.get('/api/progress/:jobId', (req, res) => {
   const jobId = req.params.jobId;
   res.json(progress[jobId] || { percent: 100, status: "Expired." });
 });
+
+
+
 
 
 

@@ -7,6 +7,7 @@
     "start": "node server.cjs"
   },
   "dependencies": {
+    "@google-cloud/text-to-speech": "^6.2.0",
     "aws-sdk": "^2.1692.0",
     "axios": "^1.11.0",
     "cors": "^2.8.5",

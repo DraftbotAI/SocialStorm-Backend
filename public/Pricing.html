@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pricing - SocialStorm AI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #fff;
+      color: #0a2342;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    a { text-decoration: none; color: inherit; }
+    ul { list-style: none; }
+    nav {
+      position: sticky; top: 0; background: #10141a;
+      display: flex; justify-content: center; align-items: center;
+      padding: 1rem 2rem; z-index: 1000; gap: 4rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.14);
+      min-height: 112px;
+    }
+    nav .logo { position: absolute; left: 2rem; cursor: pointer; display: flex; align-items: center; }
+    nav .logo img {
+      height: 200px;
+      display: block;
+      background: transparent;
+      border-radius: 12px;
+      object-fit: contain;
+      max-width: 340px;
+      max-height: 200px;
+      box-shadow: 0 2px 12px #00e0fe11;
+      /* no circle, no black box! */
+    }
+    nav ul { display: flex; gap: 2rem; }
+    nav ul li a {
+      color: #fff; font-weight: 700; font-size: 1.09rem; letter-spacing: 0.03em;
+      transition: color 0.2s;
+    }
+    nav ul li a:hover,
+    nav ul li[aria-current="page"] a {
+      color: #00e0fe;
+      text-shadow: 0 0 8px #00e0fe55;
+    }
+    nav .btn-primary {
+      position: absolute; right: 2rem;
+      background: #00e0fe; color: #111; font-weight: 900;
+      padding: 0.65rem 1.5rem; border: none; border-radius: 8px;
+      cursor: pointer; font-size: 1.13rem;
+      box-shadow: 0 4px 14px #00e0fe44;
+      transition: background 0.2s;
+      letter-spacing: 0.01em;
+    }
+    nav .btn-primary:hover { background: #00b3c4; }
+    main.page-content {
+      flex: 1 0 auto;
+      width: 100%;
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 3.5rem 2rem 2rem 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 22px #00e0fe10;
+    }
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 900;
+      color: #0a2342;
+      margin-bottom: 2.5rem;
+      letter-spacing: -1px;
+      text-align: center;
+    }
+    .pricing-cards {
+      display: flex;
+      gap: 2.5rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      width: 100%;
+      margin-bottom: 2.2rem;
+    }
+    .card {
+      background: #f7fbff;
+      border-radius: 14px;
+      padding: 34px 30px 30px 30px;
+      width: 304px;
+      box-shadow: 0 10px 30px #00e0fe14;
+      transition: transform 0.2s, box-shadow 0.2s;
+      text-align: left;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .card.popular {
+      border: 2px solid #00e0fe;
+      box-shadow: 0 16px 40px #00e0fe21;
+    }
+    .card .badge {
+      position: absolute;
+      top: -20px;
+      right: 22px;
+      background: #00e0fe;
+      color: #10141a;
+      font-size: 0.97rem;
+      font-weight: 900;
+      padding: 7px 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px #00e0fe33;
+      letter-spacing: 0.03em;
+    }
+    .card h2 {
+      font-size: 1.31rem;
+      margin-bottom: 10px;
+      color: #00b3c4;
+      font-weight: 900;
+      letter-spacing: 0.01em;
+    }
+    .price {
+      font-size: 2.2rem;
+      font-weight: 800;
+      margin-bottom: 12px;
+      color: #0a2342;
+    }
+    .features {
+      list-style: none;
+      padding: 0;
+      margin-bottom: 18px;
+      color: #355a78;
+      font-size: 1.01rem;
+      text-align: left;
+      width: 100%;
+    }
+    .features li {
+      margin-bottom: 10px;
+      padding-left: 20px;
+      position: relative;
+      line-height: 1.45;
+    }
+    .features li::before {
+      content: "✓";
+      color: #00e0fe;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    .btn {
+      background: #00e0fe;
+      border: none;
+      color: #10141a;
+      padding: 13px 0;
+      border-radius: 8px;
+      font-size: 1.09rem;
+      font-weight: 900;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+      width: 100%;
+      letter-spacing: 0.01em;
+      margin-top: auto;
+      box-shadow: 0 6px 18px #00e0fe2a;
+    }
+    .btn:hover { background: #00b3c4; color: #fff; }
+    .thumb-upsell {
+      background: linear-gradient(90deg, #eaf7fb 40%, #d8f8fd 100%);
+      border-left: 5px solid #00e0fe;
+      border-radius: 12px;
+      padding: 2rem 2.3rem 1.5rem 2.2rem;
+      max-width: 670px;
+      margin: 34px auto 0 auto;
+      font-size: 1.16rem;
+      color: #0a2342;
+      box-shadow: 0 6px 22px #00e0fe18;
+      text-align: left;
+    }
+    .thumb-upsell strong { color: #00b3c4; }
+    .thumb-price {
+      font-size: 1.12rem;
+      color: #0086b3;
+      font-weight: 900;
+      margin-left: 7px;
+    }
+    @media (max-width: 900px) {
+      main.page-content { padding: 2.1rem 0.6rem 1rem 0.6rem; }
+      .pricing-cards { gap: 1.4rem; }
+      .card { width: 98vw; max-width: 380px; }
+      .thumb-upsell { padding: 1.3rem 0.7rem; }
+    }
+    @media (max-width: 700px) {
+      nav ul { gap: 0.7rem; }
+      nav { gap: 1.5rem; min-height: 60px; }
+      nav .logo img { height: 72px; }
+      .card .badge { right: 12px; }
+      h1 { font-size: 1.3rem; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="logo" onclick="location.href='index.html'">
+      <img src="logo.png" alt="SocialStorm Logo" />
+    </div>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="video.html">Create Video</a></li>
+      <li><a href="pricing.html" aria-current="page">Pricing</a></li>
+      <li><a href="about.html">About</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+    <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
+  </nav>
+
+  <main class="page-content">
+    <h1>Simple, No-Bull Pricing</h1>
+    <div class="pricing-cards">
+      <!-- Free Plan -->
+      <div class="card">
+        <h2>Free</h2>
+        <div class="price">$0</div>
+        <ul class="features">
+          <li>3 videos per week</li>
+          <li>Google voices only</li>
+          <li>Watermark on videos</li>
+          <li>No thumbnail packs</li>
+          <li>Test SocialStorm with zero risk</li>
+        </ul>
+        <button class="btn" onclick="location.href='signup.html'">Start Free</button>
+      </div>
+      <!-- Creator Plan -->
+      <div class="card popular">
+        <span class="badge">Best Value</span>
+        <h2>Creator</h2>
+        <div class="price">$19.99 <span style="font-size:1rem;">/month</span></div>
+        <ul class="features">
+          <li>30 videos per month</li>
+          <li>Premium voices (sample ElevenLabs & more)</li>
+          <li>No watermark</li>
+          <li>1 auto-thumbnail per video</li>
+          <li>Thumbnail pack upsell available</li>
+        </ul>
+        <button class="btn" onclick="location.href='signup.html'">Go Creator</button>
+      </div>
+      <!-- Pro Plan -->
+      <div class="card">
+        <h2>Pro</h2>
+        <div class="price">$59.99 <span style="font-size:1rem;">/month</span></div>
+        <ul class="features">
+          <li>Unlimited videos</li>
+          <li>All ElevenLabs voices unlocked</li>
+          <li>Priority processing</li>
+          <li>Auto-thumbnail generation</li>
+          <li>10-pack thumbnail tool included</li>
+          <li>Early access to new features</li>
+        </ul>
+        <button class="btn" onclick="location.href='signup.html'">Go Pro</button>
+      </div>
+    </div>
+    <div class="thumb-upsell">
+      <strong>Want your video to stand out?</strong><br>
+      <b>Thumbnail Packs</b> <span class="thumb-price">$9.99 for 10</span> (one-time per topic) or <span class="thumb-price">$15/month</span> for 30 packs.<br>
+      <ul style="margin:12px 0 0 0; padding-left:1.1em;">
+        <li>10 clickable, proven thumbnail styles for your topic</li>
+        <li>Instant preview, pick your favorites</li>
+        <li>Available to Free & Creator plans after each video</li>
+        <li><b>Pro plan includes one 10-pack for every video—no extra charge</b></li>
+      </ul>
+      <div style="margin-top:10px; font-size:0.97em;">
+        <b>Promo:</b> Get 1 free thumbnail pack per month by sharing SocialStorm on social media (see details after signup).
+      </div>
+    </div>
+  </main>
+
+  <div id="chatbot-bubble" title="Chat with Sparkie!">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><rect x="7" y="11" width="10" height="2" rx="1"/><circle cx="9" cy="9" r="1.2"/><circle cx="15" cy="9" r="1.2"/></svg>
+  </div>
+  <footer>
+    &copy; 2025 SocialStorm AI. Built for creators who want to win.
+  </footer>
+</body>
+</html>

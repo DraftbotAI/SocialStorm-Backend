@@ -92,10 +92,10 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 app.use(express.static(PUBLIC_DIR));
 console.log('[INFO] Static file directory mounted:', PUBLIC_DIR);
 
-// === ROOT TEST ===
+// === ROOT SERVES FRONTEND ===
 app.get('/', (req, res) => {
   console.log('[REQ] GET /');
-  res.send('🌀 SocialStormAI backend is running.');
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
 // === HEALTH CHECK ===
@@ -116,6 +116,7 @@ app.get('/api/progress/:jobId', (req, res) => {
     res.json({ percent: 100, status: 'Done (or not found)' });
   }
 });
+
 
 
 

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Contact - SocialStorm AI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #fff;
+      color: #0a2342;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    a { text-decoration: none; color: #00b3c4; transition: color 0.18s; }
+    a:hover { color: #0091a8; }
+    ul { list-style: none; }
+    nav {
+      position: sticky; top: 0; background: #10141a;
+      display: flex; justify-content: center; align-items: center;
+      padding: 1rem 2rem; z-index: 1000; gap: 4rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.14);
+      min-height: 112px;
+    }
+    nav .logo { position: absolute; left: 2rem; cursor: pointer; display: flex; align-items: center; }
+    nav .logo img {
+      height: 200px;
+      display: block;
+      background: transparent;
+      border-radius: 12px;
+      object-fit: contain;
+      max-width: 340px;
+      max-height: 200px;
+      box-shadow: 0 2px 12px #00e0fe11;
+    }
+    nav ul { display: flex; gap: 2rem; }
+    nav ul li a {
+      color: #fff; font-weight: 700; font-size: 1.09rem; letter-spacing: 0.03em;
+      transition: color 0.2s;
+    }
+    nav ul li a:hover,
+    nav ul li[aria-current="page"] a {
+      color: #00e0fe;
+      text-shadow: 0 0 8px #00e0fe55;
+    }
+    nav .btn-primary {
+      position: absolute; right: 2rem;
+      background: #00e0fe; color: #111; font-weight: 900;
+      padding: 0.65rem 1.5rem; border: none; border-radius: 8px;
+      cursor: pointer; font-size: 1.13rem;
+      box-shadow: 0 4px 14px #00e0fe44;
+      transition: background 0.2s;
+      letter-spacing: 0.01em;
+    }
+    nav .btn-primary:hover { background: #00b3c4; }
+    main.page-content {
+      max-width: 600px;
+      width: 98vw;
+      margin: 50px auto 32px;
+      padding: 2.5rem 1.3rem 1.5rem;
+      border-radius: 16px;
+      background: linear-gradient(110deg, #f7fbff 70%, #eaf7fb 100%);
+      box-shadow: 0 4px 24px #00e0fe14;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+    h1 {
+      text-align: center;
+      color: #0a2342;
+      font-weight: 900;
+      font-size: 2.25rem;
+      margin-bottom: 0.7rem;
+      user-select: none;
+      letter-spacing: -1px;
+    }
+    .contact-lead {
+      font-size: 1.14rem;
+      color: #355a78;
+      max-width: 460px;
+      margin: 0 auto 14px;
+      font-weight: 600;
+      text-align: center;
+    }
+    .contact-email {
+      font-size: 1.13rem;
+      color: #00b3c4;
+      font-weight: 700;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: center;
+      user-select: text;
+    }
+    .contact-email svg { vertical-align: middle; margin-right: 4px; }
+    .social-row {
+      display: flex;
+      gap: 18px;
+      justify-content: center;
+      margin: 8px 0 12px 0;
+    }
+    .social-row a {
+      color: #00b3c4;
+      font-size: 1.85rem;
+      border-radius: 8px;
+      padding: 3px 6px;
+      background: #eaf7fb;
+      transition: background 0.18s, color 0.18s;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .social-row a:hover { background: #00e0fe; color: #fff; }
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      width: 100%;
+      max-width: 460px;
+      background: #fff;
+      padding: 20px 20px 14px 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 16px #00e0fe08;
+      margin-top: 12px;
+    }
+    label {
+      font-weight: 700;
+      color: #0a2342;
+      user-select: none;
+    }
+    input[type="text"], input[type="email"], textarea {
+      padding: 12px 15px;
+      font-size: 1rem;
+      border-radius: 8px;
+      border: 2px solid #00aaff;
+      outline: none;
+      font-family: monospace;
+      color: #0a2342;
+      resize: vertical;
+      background: #f7fbff;
+    }
+    textarea { min-height: 120px; }
+    button[type="submit"] {
+      background: #00e0fe;
+      color: #10141a;
+      border: none;
+      padding: 14px;
+      border-radius: 8px;
+      font-weight: 900;
+      font-size: 1.1rem;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.2s, color 0.2s;
+      margin-top: 7px;
+      box-shadow: 0 4px 12px #00e0fe21;
+      letter-spacing: 0.01em;
+    }
+    button[type="submit"]:hover {
+      background: #00b3c4; color: #fff;
+    }
+    #formMessage {
+      text-align: center;
+      font-weight: 700;
+      color: #00b3c4;
+      margin-top: 10px;
+      min-height: 1.6em;
+      user-select: none;
+    }
+    @media (max-width: 700px) {
+      nav ul { gap: 0.7rem; }
+      nav { gap: 1.5rem; min-height: 60px; }
+      nav .logo img { height: 72px; }
+      main.page-content { padding: 1.1rem 0.3rem 1rem; }
+      h1 { font-size: 1.33rem; }
+      .contact-email { font-size: 1.02rem; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="logo" onclick="location.href='index.html'">
+      <img src="logo.png" alt="SocialStorm Logo" />
+    </div>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="video.html">Create Video</a></li>
+      <li><a href="pricing.html">Pricing</a></li>
+      <li><a href="about.html">About</a></li>
+      <li><a href="contact.html" aria-current="page">Contact</a></li>
+    </ul>
+    <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
+  </nav>
+
+  <main class="page-content">
+    <h1>Contact SocialStormAI</h1>
+    <div class="contact-lead">
+      Got questions, partnership ideas, or just want to say hi?  
+      <br>We love hearing from creators.
+    </div>
+    <div class="contact-email">
+      <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 7l10 7 10-7"/></svg>
+      <a href="mailto:andrew@socialstormai.com">andrew@socialstormai.com</a>
+    </div>
+    <div class="social-row">
+      <a href="https://twitter.com/" target="_blank" aria-label="X / Twitter">
+        <svg width="25" height="25" fill="currentColor" viewBox="0 0 32 32"><path d="M32 6.1a13 13 0 0 1-3.8 1 6.4 6.4 0 0 0 2.8-3.6 12.8 12.8 0 0 1-4.1 1.6A6.4 6.4 0 0 0 22 4c-3.5 0-6.3 2.9-6.3 6.4 0 .5 0 .9.1 1.4A18.1 18.1 0 0 1 2.2 5a6.4 6.4 0 0 0 2 8.6c-.6 0-1.2-.2-1.7-.5v.1c0 3.1 2.1 5.6 5 6.2a6.7 6.7 0 0 1-2.9.1c.8 2.6 3.2 4.6 6 4.6A12.8 12.8 0 0 1 0 26.7c3.1 2 6.8 3.1 10.7 3.1 12.8 0 19.8-10.6 19.8-19.8v-.9A14.3 14.3 0 0 0 32 6.1z"/></svg>
+      </a>
+      <a href="https://facebook.com/" target="_blank" aria-label="Facebook">
+        <svg width="24" height="24" fill="currentColor" viewBox="0 0 32 32"><path d="M29 0H3C1.3 0 0 1.3 0 3v26c0 1.7 1.3 3 3 3h13v-11h-4v-4h4v-3c0-4.1 2.5-6.3 6.2-6.3 1.8 0 3.6.3 3.6.3v4h-2c-2 0-2.6 1.2-2.6 2.4v3h4.5l-.7 4h-3.8V32h7c1.7 0 3-1.3 3-3V3c0-1.7-1.3-3-3-3z"/></svg>
+      </a>
+      <a href="mailto:andrew@socialstormai.com" aria-label="Email">
+        <svg width="23" height="23" fill="currentColor" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 7l10 7 10-7"/></svg>
+      </a>
+    </div>
+    <form id="contactForm" autocomplete="off">
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" placeholder="Your full name" required />
+
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" placeholder="you@example.com" required />
+
+      <label for="message">Message</label>
+      <textarea id="message" name="message" placeholder="Write your message here..." required></textarea>
+
+      <button type="submit">Send Message</button>
+    </form>
+    <div id="formMessage" role="alert" aria-live="polite"></div>
+  </main>
+  <footer>
+    &copy; 2025 SocialStorm AI. Built for creators who want to win.
+  </footer>
+  <script>
+    const form = document.getElementById('contactForm');
+    const formMessage = document.getElementById('formMessage');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      formMessage.textContent = 'Sending...';
+
+      const formData = {
+        name: form.name.value.trim(),
+        email: form.email.value.trim(),
+        message: form.message.value.trim(),
+      };
+
+      if (!formData.name || !formData.email || !formData.message) {
+        formMessage.textContent = 'Please fill out all fields.';
+        return;
+      }
+
+      try {
+        // Replace with your backend endpoint
+        const response = await fetch('/api/contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        });
+
+        if (response.ok) {
+          formMessage.textContent = 'Thanks for reaching out! We’ll get back to you soon.';
+          form.reset();
+        } else {
+          formMessage.textContent = 'Oops! Something went wrong. Please try again later.';
+        }
+      } catch (err) {
+        formMessage.textContent = 'Network error. Please check your connection and try again.';
+      }
+    });
+  </script>
+</body>
+</html>

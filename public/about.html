@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>About Us - SocialStorm AI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #fff;
+      color: #0a2342;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    a { text-decoration: none; color: #00b3c4; transition: color 0.18s; }
+    a:hover { color: #0091a8; }
+    ul { list-style: none; }
+    nav {
+      position: sticky; top: 0; background: #10141a;
+      display: flex; justify-content: center; align-items: center;
+      padding: 1rem 2rem; z-index: 1000; gap: 4rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.14);
+      min-height: 112px;
+    }
+    nav .logo { position: absolute; left: 2rem; cursor: pointer; display: flex; align-items: center; }
+    nav .logo img {
+      height: 200px;
+      display: block;
+      background: transparent;
+      border-radius: 12px;
+      object-fit: contain;
+      max-width: 340px;
+      max-height: 200px;
+      box-shadow: 0 2px 12px #00e0fe11;
+    }
+    nav ul { display: flex; gap: 2rem; }
+    nav ul li a {
+      color: #fff; font-weight: 700; font-size: 1.09rem; letter-spacing: 0.03em;
+      transition: color 0.2s;
+    }
+    nav ul li a:hover,
+    nav ul li[aria-current="page"] a {
+      color: #00e0fe;
+      text-shadow: 0 0 8px #00e0fe55;
+    }
+    nav .btn-primary {
+      position: absolute; right: 2rem;
+      background: #00e0fe; color: #111; font-weight: 900;
+      padding: 0.65rem 1.5rem; border: none; border-radius: 8px;
+      cursor: pointer; font-size: 1.13rem;
+      box-shadow: 0 4px 14px #00e0fe44;
+      transition: background 0.2s;
+      letter-spacing: 0.01em;
+    }
+    nav .btn-primary:hover { background: #00b3c4; }
+    main.page-content {
+      max-width: 900px;
+      width: 98vw;
+      margin: 40px auto 30px;
+      padding: 2.5rem 1.5rem 1.7rem 1.5rem;
+      border-radius: 16px;
+      background: linear-gradient(110deg, #f7fbff 75%, #eaf7fb 100%);
+      box-shadow: 0 4px 24px #00e0fe14;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2rem;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #0a2342;
+      font-weight: 900;
+      font-size: 2.5rem;
+      letter-spacing: -1px;
+      user-select: none;
+    }
+    .about-lead {
+      font-size: 1.19rem;
+      color: #355a78;
+      font-weight: 600;
+      margin-bottom: 10px;
+      text-align: center;
+      max-width: 700px;
+    }
+    .about-highlight {
+      color: #00b3c4;
+      font-weight: 900;
+      font-size: 1.21rem;
+      margin-bottom: 10px;
+      text-align: center;
+      letter-spacing: 0.01em;
+      user-select: none;
+    }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit,minmax(250px,1fr));
+      gap: 2.1rem;
+      width: 100%;
+      margin: 12px 0 32px 0;
+    }
+    .feature-card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 22px #00e0fe11;
+      padding: 1.7rem 1.1rem 1.2rem;
+      text-align: center;
+      color: #0a2342;
+      border: 1.5px solid #00e0fe10;
+      transition: transform 0.23s, box-shadow 0.23s;
+      font-size: 1.04rem;
+      min-height: 175px;
+    }
+    .feature-card:hover {
+      transform: translateY(-7px) scale(1.022);
+      box-shadow: 0 10px 34px #00e0fe14;
+      border-color: #00e0fe33;
+    }
+    .feature-card h3 {
+      color: #00e0fe;
+      font-size: 1.21rem;
+      font-weight: 800;
+      margin-bottom: 0.47rem;
+    }
+    section.mission {
+      width: 100%;
+      margin: 26px 0 0 0;
+      background: #eaf7fb;
+      border-radius: 10px;
+      padding: 2.1rem 2rem 1.7rem 2rem;
+      box-shadow: 0 10px 30px #00e0fe0c;
+      user-select: none;
+    }
+    section.mission h2 {
+      color: #00b3c4;
+      font-weight: 900;
+      margin-bottom: 1rem;
+      font-size: 1.5rem;
+      text-align: center;
+      letter-spacing: -0.5px;
+    }
+    section.mission p {
+      color: #0a2342;
+      font-size: 1.13rem;
+      text-align: center;
+      font-weight: 600;
+    }
+    .cta-bar {
+      background: linear-gradient(90deg, #00e0fe 40%, #00b3c4 100%);
+      color: #10141a;
+      font-weight: 900;
+      font-size: 1.18rem;
+      border-radius: 10px;
+      margin: 28px auto 8px auto;
+      text-align: center;
+      padding: 1.19rem 1.2rem 1.04rem 1.2rem;
+      max-width: 520px;
+      box-shadow: 0 6px 22px #00e0fe11;
+      letter-spacing: 0.01em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.18s;
+    }
+    .cta-bar:hover { background: #00b3c4; color: #fff; }
+    @media (max-width: 900px) {
+      main.page-content { padding: 1.2rem 0.6rem 1rem 0.6rem; }
+    }
+    @media (max-width: 700px) {
+      nav ul { gap: 0.7rem; }
+      nav { gap: 1.5rem; min-height: 60px; }
+      nav .logo img { height: 72px; }
+      h1 { font-size: 1.3rem; }
+      .features-grid { grid-template-columns: 1fr; gap: 1.1rem;}
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="logo" onclick="location.href='index.html'">
+      <img src="logo.png" alt="SocialStorm Logo" />
+    </div>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="video.html">Create Video</a></li>
+      <li><a href="pricing.html">Pricing</a></li>
+      <li><a href="about.html" aria-current="page">About</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+    <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
+  </nav>
+
+  <main class="page-content">
+    <h1>About SocialStormAI</h1>
+    <div class="about-lead">
+      SocialStormAI helps anyone—beginners or pros—turn ideas into viral-ready YouTube Shorts and TikToks. Our platform is built to remove the pain and guesswork from short-form content creation.
+    </div>
+    <div class="about-highlight">
+      Script. Voice. Clips. Thumbnails. SEO. <br>All done in one place.
+    </div>
+
+    <div class="features-grid" aria-label="Platform features">
+      <div class="feature-card">
+        <h3>One-Click Script Generator</h3>
+        <div>Sparkie writes viral intros, facts, and closings for you. Just describe your idea.</div>
+      </div>
+      <div class="feature-card">
+        <h3>Scene-by-Scene Editing</h3>
+        <div>Each line of your script gets a matching stock video and natural AI voiceover.</div>
+      </div>
+      <div class="feature-card">
+        <h3>20+ Real Voices</h3>
+        <div>Choose from bold, chill, ASMR, or even New York/New Jersey accents. No robots, only human-sounding results.</div>
+      </div>
+      <div class="feature-card">
+        <h3>Instant Cloud Delivery</h3>
+        <div>Your video is ready to download, share, or link within seconds—no export wait.</div>
+      </div>
+      <div class="feature-card">
+        <h3>Smart Metadata</h3>
+        <div>Auto-generated SEO title, tags, and description to help you go viral faster.</div>
+      </div>
+      <div class="feature-card">
+        <h3>Clickable Thumbnail Packs</h3>
+        <div>Boost your views with 10+ styles per topic—created for you by AI. (Pro plan gets unlimited!)</div>
+      </div>
+    </div>
+
+    <section class="mission" aria-labelledby="mission-heading">
+      <h2 id="mission-heading">Our Mission</h2>
+      <p>To give every creator the power to make pro-quality video content—without wasting time, money, or energy. SocialStormAI is your shortcut to audience growth and online success, no editor needed.</p>
+    </section>
+
+    <div class="cta-bar" onclick="location.href='pricing.html'">
+      Try SocialStormAI risk-free &nbsp;→
+    </div>
+  </main>
+  <footer>
+    &copy; 2025 SocialStorm AI. Built for creators who want to win.
+  </footer>
+</body>
+</html>

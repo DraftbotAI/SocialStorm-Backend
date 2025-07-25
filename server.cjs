@@ -1,89 +1,121 @@
 /* ===========================================================
    SECTION 1: SETUP & DEPENDENCIES
    -----------------------------------------------------------
-   - Loads all environment variables and core node modules
-   - Sets up Express app, AWS, OpenAI, FFmpeg
-   - Includes utilities and logging config
+   - Load env, modules, API keys, paths
+   - Configure AWS + OpenAI + FFmpeg
    =========================================================== */
+
+console.log('\n========== [BOOTING SERVER] ==========');
+console.log('[INFO] Booting SocialStormAI backend...');
+console.log('[INFO] Loading dependencies...');
 
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
 const path = require('path');
 const fs = require('fs');
+const util = require('util');
+const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = process.env.FFMPEG_PATH || require('ffmpeg-static');
 ffmpeg.setFfmpegPath(ffmpegPath);
-console.log('[DEBUG] Using ffmpeg binary:', ffmpegPath);
-const util = require('util');
-const { v4: uuidv4 } = require('uuid');
-const AWS = require('aws-sdk'); // For Polly
+console.log('[INFO] FFmpeg path set to:', ffmpegPath);
+
+const { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } = require("@aws-sdk/client-s3");
+const AWS = require('aws-sdk');
 const { OpenAI } = require('openai');
 
+console.log('[INFO] Dependencies loaded.');
 
-// ==== IMPORT ALL SCENE/GENERATION HELPERS NEEDED FOR SECTION 15 ====
-// (Add your helper requires here, e.g. splitScriptToScenes, matchVideoClip, etc.)
+// === ENV CHECK ===
+const requiredEnvVars = [
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_REGION',
+  'R2_LIBRARY_BUCKET',
+  'R2_ENDPOINT',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+  'CLOUDINARY_CLOUD_NAME',
+  'OPENAI_API_KEY'
+];
+const missingEnv = requiredEnvVars.filter(key => !process.env[key]);
+if (missingEnv.length > 0) {
+  console.error('[FATAL] Missing environment variables:', missingEnv);
+  process.exit(1);
+}
+console.log('[INFO] All required environment variables are present.');
 
-// ==== EXPRESS APP INITIALIZATION ====
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-// ==== AWS & S3 CLIENT SETUP ====
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  }
-});
-
-// ==== POLLY (AWS TTS) SETUP ====
+// ==== AWS CONFIG ====
 AWS.config.update({
-  region: process.env.AWS_REGION,
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION
 });
+console.log('[INFO] AWS SDK configured.');
 
-// ==== OPENAI (for GPT/LLM) SETUP ====
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// ==== EXPRESS INIT ====
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json({ limit: '12mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// ==== GENERAL UTILITIES ====
-const PUBLIC_VIDEO_DIR = path.join(__dirname, 'public', 'videos');
-if (!fs.existsSync(PUBLIC_VIDEO_DIR)) fs.mkdirSync(PUBLIC_VIDEO_DIR, { recursive: true });
+// ==== JOB PROGRESS MAP ====
+const progress = {};
+console.log('[INFO] Progress tracker initialized.');
 
-const JOBS_DIR = path.join(__dirname, 'jobs');
-if (!fs.existsSync(JOBS_DIR)) fs.mkdirSync(JOBS_DIR, { recursive: true });
+// ==== LOAD HELPERS ====
+const {
+  splitScriptToScenes,
+  generateSceneAudio,
+  findMatchingClip,
+  combineAudioAndClip,
+  assembleFinalVideo,
+  cleanupJob
+} = require('./helpers.cjs');
 
-console.log('[DEBUG] Environment variables and dependencies loaded.');
-
-
+console.log('[INFO] Helper functions loaded.');
 
 
 
 /* ===========================================================
-   SECTION 2: STATIC ASSETS & ROUTING
+   SECTION 2: BASIC ROUTES & STATIC FILE SERVING
    -----------------------------------------------------------
-   - Serves frontend and static files
-   - Health check and base API endpoints
+   - Serve frontend files (HTML, assets)
+   - Health check + root status
    =========================================================== */
 
-// ==== STATIC FILES (Frontend) ====
-app.use(express.static(path.join(__dirname, 'frontend')));
+console.log('[INFO] Setting up static file routes...');
 
-// ==== HEALTH CHECK ====
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString() });
+const PUBLIC_DIR = path.join(__dirname, 'public');
+app.use(express.static(PUBLIC_DIR));
+console.log('[INFO] Static file directory mounted:', PUBLIC_DIR);
+
+// === ROOT TEST ===
+app.get('/', (req, res) => {
+  console.log('[REQ] GET /');
+  res.send('🌀 SocialStormAI backend is running.');
 });
 
-// ==== ROOT ====
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+// === HEALTH CHECK ===
+app.get('/api/status', (req, res) => {
+  console.log('[REQ] GET /api/status');
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// === PROGRESS CHECK ===
+app.get('/api/progress/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  console.log(`[REQ] GET /api/progress/${jobId}`);
+  if (progress[jobId]) {
+    console.log(`[INFO] Returning progress for job ${jobId}:`, progress[jobId]);
+    res.json(progress[jobId]);
+  } else {
+    console.warn(`[WARN] No progress found for job ${jobId}`);
+    res.json({ percent: 100, status: 'Done (or not found)' });
+  }
 });
 
 
@@ -93,12 +125,15 @@ app.get('/', (req, res) => {
    -----------------------------------------------------------
    - Returns all available voices with metadata
    - No placeholders, all live voices with descriptions/tier/preview
+   - Logs total voices, breakdown by tier, and request info
    =========================================================== */
+
+console.log('[INFO] Registering /api/voices endpoint...');
 
 const voices = [
   // ===== FREE (AWS POLLY) VOICES =====
   {
-    id: "polly-matthew", // <-- this is the ID your FE/backend must use!
+    id: "polly-matthew",
     name: "Matthew",
     description: "Warm, natural American male (Free Tier)",
     tier: "Free",
@@ -118,34 +153,16 @@ const voices = [
   {
     id: "polly-joey",
     name: "Joey",
-    description: "Clear, relatable American male (Free Tier)",
+    description: "Conversational American male (Free Tier)",
     tier: "Free",
     provider: "Amazon Polly",
     preview: "/assets/voices/polly-joey.mp3",
     disabled: false
   },
   {
-    id: "polly-brian",
-    name: "Brian",
-    description: "British male (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-brian.mp3",
-    disabled: false
-  },
-  {
-    id: "polly-russell",
-    name: "Russell",
-    description: "Australian male (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-russell.mp3",
-    disabled: false
-  },
-  {
     id: "polly-kimberly",
     name: "Kimberly",
-    description: "Young American female (Free Tier)",
+    description: "Young, relatable American female (Free Tier)",
     tier: "Free",
     provider: "Amazon Polly",
     preview: "/assets/voices/polly-kimberly.mp3",
@@ -154,355 +171,303 @@ const voices = [
   {
     id: "polly-amy",
     name: "Amy",
-    description: "British female (Free Tier)",
+    description: "Clear and professional British female (Free Tier)",
     tier: "Free",
     provider: "Amazon Polly",
     preview: "/assets/voices/polly-amy.mp3",
     disabled: false
   },
   {
+    id: "polly-brian",
+    name: "Brian",
+    description: "British male, upbeat and sharp (Free Tier)",
+    tier: "Free",
+    provider: "Amazon Polly",
+    preview: "/assets/voices/polly-brian.mp3",
+    disabled: false
+  },
+  {
+    id: "polly-russell",
+    name: "Russell",
+    description: "Australian male, fun and clear (Free Tier)",
+    tier: "Free",
+    provider: "Amazon Polly",
+    preview: "/assets/voices/polly-russell.mp3",
+    disabled: false
+  },
+  {
     id: "polly-salli",
     name: "Salli",
-    description: "Energetic American female (Free Tier)",
+    description: "Neutral, friendly American female (Free Tier)",
     tier: "Free",
     provider: "Amazon Polly",
     preview: "/assets/voices/polly-salli.mp3",
     disabled: false
   },
 
-  // ===== ELEVENLABS STANDARD (PAID) =====
+  // ===== PRO (ELEVENLABS) VOICES =====
   {
-    id: "11-mike",
+    id: "11labs-mike",
     name: "Mike",
-    description: "Viral, dynamic male (English, ElevenLabs)",
+    description: "Polished, professional American male (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-mike.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-mike.mp3",
+    disabled: true
   },
   {
-    id: "11-jackson",
+    id: "11labs-jackson",
     name: "Jackson",
-    description: "Casual American male (ElevenLabs)",
+    description: "Casual, confident American male (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-jackson.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-jackson.mp3",
+    disabled: true
   },
   {
-    id: "11-tyler",
+    id: "11labs-tyler",
     name: "Tyler",
-    description: "Serious American male (ElevenLabs)",
+    description: "Bold, high-energy male voice (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-tyler.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-tyler.mp3",
+    disabled: true
   },
   {
-    id: "11-olivia",
+    id: "11labs-olivia",
     name: "Olivia",
-    description: "Natural American female (ElevenLabs)",
+    description: "Casual, upbeat American female (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-olivia.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-olivia.mp3",
+    disabled: true
   },
   {
-    id: "11-emily",
+    id: "11labs-emily",
     name: "Emily",
-    description: "Soothing, energetic female (ElevenLabs)",
+    description: "Warm, storytelling American female (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-emily.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-emily.mp3",
+    disabled: true
   },
   {
-    id: "11-sophia",
+    id: "11labs-sophia",
     name: "Sophia",
-    description: "Bright, friendly female (ElevenLabs)",
+    description: "Smooth, classy female voice (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-sophia.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-sophia.mp3",
+    disabled: true
   },
   {
-    id: "11-james",
+    id: "11labs-james",
     name: "James",
-    description: "Deep, authoritative male (ElevenLabs)",
+    description: "Deep, powerful male narrator (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-james.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-james.mp3",
+    disabled: true
   },
   {
-    id: "11-amelia",
+    id: "11labs-amelia",
     name: "Amelia",
-    description: "Relatable, calm female (ElevenLabs)",
+    description: "Soft, comforting female tone (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-amelia.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-amelia.mp3",
+    disabled: true
   },
   {
-    id: "11-pierre",
+    id: "11labs-pierre",
     name: "Pierre",
-    description: "French male (ElevenLabs)",
+    description: "French-accented male, smooth and formal (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-pierre.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-pierre.mp3",
+    disabled: true
   },
   {
-    id: "11-claire",
+    id: "11labs-claire",
     name: "Claire",
-    description: "French female (ElevenLabs)",
+    description: "French-accented female, elegant and soft (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-claire.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-claire.mp3",
+    disabled: true
   },
   {
-    id: "11-diego",
+    id: "11labs-diego",
     name: "Diego",
-    description: "Spanish male (ElevenLabs)",
+    description: "Spanish-accented male, dynamic and bold (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-diego.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-diego.mp3",
+    disabled: true
   },
   {
-    id: "11-lucia",
+    id: "11labs-lucia",
     name: "Lucia",
-    description: "Spanish female (ElevenLabs)",
+    description: "Spanish-accented female, passionate and clear (Pro)",
     tier: "Pro",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-lucia.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-lucia.mp3",
+    disabled: true
   },
 
-  // ===== ELEVENLABS SPECIALTY (ASMR, GENTLE, ETC) =====
+  // ===== ASMR PRO (WHISPER-TIER) =====
   {
-    id: "11-aimee-asmr",
+    id: "11labs-aimee-asmr",
     name: "Aimee (ASMR Pro)",
-    description: "ASMR professional female (ElevenLabs ASMR)",
-    tier: "ASMR Pro",
+    description: "Whisper-soft ASMR female (Pro, ASMR)",
+    tier: "ASMR",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-aimee-asmr.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-aimee-asmr.mp3",
+    disabled: true
   },
   {
-    id: "11-dr-lovelace",
-    name: "Dr. Lovelace (ASMR Pro)",
-    description: "Whispered ASMR male (ElevenLabs ASMR)",
-    tier: "ASMR Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11-dr-lovelace.mp3",
-    disabled: false
-  },
-  {
-    id: "11-james-whitmore",
+    id: "11labs-james-whitmore",
     name: "James Whitmore (ASMR Pro)",
-    description: "Deep male, gentle ASMR (ElevenLabs ASMR)",
-    tier: "ASMR Pro",
+    description: "Soothing, wise storyteller male (Pro, ASMR)",
+    tier: "ASMR",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-james-whitmore.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-james-whitmore.mp3",
+    disabled: true
   },
   {
-    id: "11-aimee-gentle",
-    name: "Aimee (ASMR Gentle)",
-    description: "Soft, gentle ASMR female (ElevenLabs Gentle)",
-    tier: "ASMR Gentle",
+    id: "11labs-dr-lovelace",
+    name: "Dr. Lovelace (ASMR Pro)",
+    description: "Intimate, breathy female whisper (Pro, ASMR)",
+    tier: "ASMR",
     provider: "ElevenLabs",
-    preview: "/assets/voices/11-aimee-gentle.mp3",
-    disabled: false
+    preview: "/assets/voices/11labs-dr-lovelace.mp3",
+    disabled: true
   }
 ];
 
-// ==== GET ALL VOICES (for frontend selection) ====
 app.get('/api/voices', (req, res) => {
+  console.log(`[REQ] GET /api/voices @ ${new Date().toISOString()}`);
+  const count = voices.length;
+  const byTier = {
+    Free: voices.filter(v => v.tier === 'Free').length,
+    Pro: voices.filter(v => v.tier === 'Pro').length,
+    ASMR: voices.filter(v => v.tier === 'ASMR').length
+  };
+  console.log(`[INFO] Returning ${count} voices → Free: ${byTier.Free}, Pro: ${byTier.Pro}, ASMR: ${byTier.ASMR}`);
   res.json({ success: true, voices });
 });
 
 
 
+
+
 /* ===========================================================
-   SECTION 4: SCRIPT GENERATION & METADATA ENDPOINTS
+   SECTION 4: /api/generate-script ENDPOINT
    -----------------------------------------------------------
-   - /api/generate-script: Takes user idea, returns viral script & metadata
-   - /api/generate-metadata: Accepts script, returns title, description, tags
-   - Uses OpenAI for high-quality, viral output
+   - Accepts a video idea
+   - Calls OpenAI to generate a punchy, scene-ready script
+   - Returns metadata: title, description, hashtags
+   - Logs every input, output, error, and GPT call
    =========================================================== */
 
-// ---- /api/generate-script ----
+console.log('[INFO] Registering /api/generate-script endpoint...');
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 app.post('/api/generate-script', async (req, res) => {
-  const { idea } = req.body;
-  if (!idea || typeof idea !== "string" || idea.length < 2) {
-    return res.json({ success: false, error: "Enter a video idea to start." });
+  const idea = req.body.idea?.trim();
+  const timestamp = new Date().toISOString();
+  console.log(`[REQ] POST /api/generate-script @ ${timestamp}`);
+  console.log(`[INPUT] idea = "${idea}"`);
+
+  if (!idea) {
+    console.warn('[WARN] Missing idea in request body');
+    return res.status(400).json({ success: false, error: "Missing idea" });
   }
 
   try {
-    // Advanced prompt engineering for viral results
-    const systemPrompt = `
-You are a viral video scriptwriter for TikTok, YouTube Shorts, and Reels.
-
-Instructions:
-- The FIRST line is always a dramatic, funny, or surprising HOOK that makes people watch. Be clickbait if needed!
-- Every other line is a punchy, clever, or funny fact that builds curiosity or reveals something new.
-- Use everyday language with clever twists—never dry or academic.
-- Each sentence is its own line (no walls of text).
-- Never use animal metaphors unless the topic is about animals.
-- Total script must fit in 1 minute (about 8-12 lines max).
-- After the script, generate a viral YouTube title, a clickable SEO description (2-3 lines, very engaging), and up to 10 viral hashtags (comma separated, no # symbol, target the main topic).
-
-Format (no changes!):
-Script:
-[hook]
-[line 2]
-[line 3]
-...
-[end]
-Title:
-[viral, clickable title]
-Description:
-[SEO-optimized, curiosity-inducing description]
-Hashtags:
-[tag1, tag2, tag3, ...]
-    `.trim();
-
-    const userPrompt = `Video idea: ${idea}\nScript, title, description, and hashtags:`;
-
-    // Logging for debugging
-    console.log('[SCRIPT GEN] Input idea:', idea);
-
-    const gptResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
+    console.log('[GPT] Calling OpenAI for full script...');
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-1106-preview",
+      temperature: 0.8,
+      max_tokens: 800,
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
-      temperature: 0.87,
-      max_tokens: 950,
-      top_p: 1
+        {
+          role: "system",
+          content: `You're a viral short-form script writer for YouTube Shorts and TikToks.
+You always start with a strong hook sentence that grabs attention.
+You write punchy, one-line scenes with humor, drama, or mystery.
+No animal metaphors. Avoid robotic or academic tone.
+Write 6–10 short sentences max, one per line. No intro or summary.
+Then add metadata: viral title, SEO description, and hashtags.`
+        },
+        {
+          role: "user",
+          content: `Write a viral short-form script about: ${idea}`
+        }
+      ]
     });
 
-    const text = gptResponse.choices[0].message.content || '';
-    // Debug output
-    console.log('[SCRIPT GEN] Raw GPT Output:', text);
+    const raw = completion.choices?.[0]?.message?.content?.trim() || '';
+    console.log('[GPT] Response received. Raw length:', raw.length);
+    console.log('[RAW OUTPUT START]\n' + raw + '\n[RAW OUTPUT END]');
 
-    // Parse script/metadata
     let script = '';
     let title = '';
     let description = '';
-    let hashtags = '';
+    let tags = '';
 
-    // Regex block extraction (robust to avoid blank metadata)
-    const scriptMatch = text.match(/Script:\s*([\s\S]+?)\nTitle:/i);
-    const titleMatch = text.match(/Title:\s*([^\n]+)\nDescription:/i);
-    const descMatch = text.match(/Description:\s*([\s\S]+?)\nHashtags:/i);
-    const tagsMatch = text.match(/Hashtags:\s*([\s\S]+)/i);
+    // Parse output: first lines = script, last = metadata
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+    const metaStart = lines.findIndex(l => /^title\s*[:\-]/i.test(l));
 
-    script = scriptMatch ? scriptMatch[1].trim() : '';
-    title = titleMatch ? titleMatch[1].trim() : '';
-    description = descMatch ? descMatch[1].trim() : '';
-    hashtags = tagsMatch ? tagsMatch[1].trim().replace(/#/g, '') : '';
-
-    // Remove empty lines from script
-    script = script.split('\n').map(line => line.trim()).filter(Boolean).join('\n');
-
-    if (!script || !title) {
-      console.error('[SCRIPT GEN] Missing script or title. Full output:', text);
-      return res.json({ success: false, error: "AI script generation failed. Please try again." });
+    if (metaStart === -1) {
+      console.warn('[WARN] Could not find metadata section. Returning fallback.');
+      script = lines.join('\n');
+    } else {
+      script = lines.slice(0, metaStart).join('\n');
+      const metaLines = lines.slice(metaStart);
+      for (const line of metaLines) {
+        if (/^title\s*[:\-]/i.test(line))       title = line.split(/[:\-]/)[1]?.trim() || '';
+        else if (/^description\s*[:\-]/i.test(line)) description = line.split(/[:\-]/)[1]?.trim() || '';
+        else if (/^(tags|hashtags)\s*[:\-]/i.test(line)) tags = line.split(/[:\-]/)[1]?.trim() || '';
+      }
     }
+
+    if (!script) {
+      console.error('[ERROR] No script extracted from GPT response.');
+      return res.status(500).json({ success: false, error: "Script parsing failed" });
+    }
+
+    // Default fallbacks
+    if (!title) title = idea.length < 60 ? idea : idea.slice(0, 57) + "...";
+    if (!description) description = `Here's a quick look at "${idea}" – stay tuned.`;
+    if (!tags) tags = "#shorts #viral";
+
+    console.log('[PARSED] script lines:', script.split('\n').length);
+    console.log('[PARSED] title:', title);
+    console.log('[PARSED] description:', description);
+    console.log('[PARSED] tags:', tags);
 
     res.json({
       success: true,
       script,
       title,
       description,
-      tags: hashtags
+      hashtags: tags
     });
+
   } catch (err) {
-    console.error('[ERROR] /api/generate-script:', err);
-    res.json({ success: false, error: "AI error. Try again later." });
-  }
-});
-
-// ---- /api/generate-metadata ----
-app.post('/api/generate-metadata', async (req, res) => {
-  const { script } = req.body;
-  if (!script || typeof script !== "string" || script.length < 10) {
-    return res.json({ success: false, error: "Enter a script first." });
-  }
-
-  try {
-    // Aggressive metadata optimization for virality and SEO
-    const prompt = `
-You are an expert in viral video metadata (YouTube Shorts/TikTok).
-Given a script, generate:
-- A viral, curiosity-driven title (max 12 words, NO generic titles)
-- An SEO-optimized, engaging description (max 3 lines, must include main topic and tease the content)
-- Up to 10 viral hashtags (comma separated, no # symbol, must be clickable and trending in the topic's niche)
-
-Format (do not change!):
-Title: [title]
-Description: [desc]
-Hashtags: [tag1, tag2, ...]
-
-Script:
-${script}
-    `.trim();
-
-    // Logging for debugging
-    console.log('[META GEN] Input script:', script);
-
-    const gptResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: prompt }
-      ],
-      temperature: 0.82,
-      max_tokens: 400,
-      top_p: 1
-    });
-
-    const text = gptResponse.choices[0].message.content || '';
-    // Debug output
-    console.log('[META GEN] Raw GPT Output:', text);
-
-    let title = '';
-    let description = '';
-    let hashtags = '';
-
-    const titleMatch = text.match(/Title:\s*([^\n]+)\nDescription:/i);
-    const descMatch = text.match(/Description:\s*([\s\S]+?)\nHashtags:/i);
-    const tagsMatch = text.match(/Hashtags:\s*([\s\S]+)/i);
-
-    title = titleMatch ? titleMatch[1].trim() : '';
-    description = descMatch ? descMatch[1].trim() : '';
-    hashtags = tagsMatch ? tagsMatch[1].trim().replace(/#/g, '') : '';
-
-    if (!title || !description) {
-      console.error('[META GEN] Failed to extract metadata. Full output:', text);
-      return res.json({ success: false, error: "Failed to generate metadata." });
-    }
-
-    res.json({
-      success: true,
-      title,
-      description,
-      tags: hashtags
-    });
-  } catch (err) {
-    console.error('[ERROR] /api/generate-metadata:', err);
-    res.json({ success: false, error: "AI error. Try again later." });
+    console.error('[FATAL] Script generation failed:', err);
+    res.status(500).json({ success: false, error: "Script generation failed" });
   }
 });
 
 
 
 
-/* ===========================================================
+
+/* =========================================================== 
    SECTION 5: VIDEO GENERATION ENDPOINT
    -----------------------------------------------------------
    - POST /api/generate-video
@@ -511,10 +476,13 @@ ${script}
    =========================================================== */
 
 const progress = {}; // Job status by jobId
+console.log('[INIT] Video generation endpoint initialized');
 
 app.post('/api/generate-video', (req, res) => {
+  console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
   progress[jobId] = { percent: 0, status: 'starting' };
+  console.log(`[INFO] New job started: ${jobId}`);
   res.json({ jobId });
 
   (async () => {
@@ -523,6 +491,7 @@ app.post('/api/generate-video', (req, res) => {
       if (!finished && progress[jobId]) {
         progress[jobId] = { percent: 100, status: "Failed: Timed out." };
         cleanupJob(jobId);
+        console.warn(`[WATCHDOG] Job ${jobId} timed out and cleaned up.`);
       }
     }, 12 * 60 * 1000); // 12 min max
 
@@ -537,26 +506,34 @@ app.post('/api/generate-video', (req, res) => {
 
     try {
       // --- Validate and extract payload ---
+      console.log('[INPUT] Payload:', req.body);
       script = req.body.script || '';
       selectedVoice = req.body.voice || 'polly-matthew';
       paidUser = !!req.body.paidUser;
       removeWatermark = !!req.body.removeWatermark;
 
       if (!script || typeof script !== "string" || script.length < 10) {
+        console.warn('[WARN] Invalid or empty script');
         progress[jobId] = { percent: 100, status: "Failed: No script." };
         return cleanupJob(jobId);
       }
       if (!selectedVoice || typeof selectedVoice !== "string") {
+        console.warn('[WARN] Invalid or missing voice');
         progress[jobId] = { percent: 100, status: "Failed: No voice." };
         return cleanupJob(jobId);
       }
 
       // --- Working directory for this job ---
       workDir = path.join(JOBS_DIR, jobId);
-      if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
+      if (!fs.existsSync(workDir)) {
+        fs.mkdirSync(workDir, { recursive: true });
+        console.log('[FS] Created working dir:', workDir);
+      }
 
       // --- Step 1: Split script into scenes ---
+      console.log('[INFO] Splitting script into lines...');
       const lines = script.split('\n').map(line => line.trim()).filter(Boolean);
+      console.log('[INFO] Scene count:', lines.length);
       totalSteps = lines.length + 3; // audio, merge, finalize
 
       // --- Step 2: Generate scene audio (Polly for now, future: ElevenLabs) ---
@@ -565,10 +542,9 @@ app.post('/api/generate-video', (req, res) => {
       for (const line of lines) {
         currentStep++;
         progress[jobId] = { percent: Math.round(100 * currentStep / totalSteps), status: `Generating audio for scene ${sceneIdx}` };
-        // TTS request (Polly for free, ElevenLabs for paid, etc)
         let voiceId = "Matthew";
         if (selectedVoice.startsWith("polly-")) voiceId = selectedVoice.replace("polly-", "");
-        // Polly call (sync for reliability)
+        console.log(`[TTS] Synthesizing scene ${sceneIdx} with Polly voice: ${voiceId}`);
         const polly = new AWS.Polly();
         const audioRes = await polly.synthesizeSpeech({
           OutputFormat: 'mp3',
@@ -578,6 +554,7 @@ app.post('/api/generate-video', (req, res) => {
         }).promise();
         const audioPath = path.join(workDir, `scene${sceneIdx}.mp3`);
         fs.writeFileSync(audioPath, audioRes.AudioStream);
+        console.log(`[TTS] Saved audio to ${audioPath}`);
         audioFiles.push(audioPath);
         sceneIdx++;
       }
@@ -588,11 +565,9 @@ app.post('/api/generate-video', (req, res) => {
       for (const line of lines) {
         currentStep++;
         progress[jobId] = { percent: Math.round(100 * currentStep / totalSteps), status: `Selecting video for scene ${sceneIdx}` };
-        // For revert: fallback to local library or stock folder. (Future: GPT matching)
-        // We'll use a placeholder clip here for revert; update logic as needed.
+        console.log(`[CLIP] Selecting clip for scene ${sceneIdx}`);
         let videoPath = path.join(__dirname, 'frontend', 'assets', 'stock_clips', `clip${sceneIdx}.mp4`);
         if (!fs.existsSync(videoPath)) videoPath = path.join(__dirname, 'frontend', 'assets', 'stock_clips', `clip1.mp4`);
-        // ==== DIR/FILE SAFETY: Skip if path is not a file ====
         if (fs.existsSync(videoPath) && fs.statSync(videoPath).isFile()) {
           videoFiles.push(videoPath);
         } else {
@@ -609,7 +584,6 @@ app.post('/api/generate-video', (req, res) => {
         const vPath = videoFiles[i];
         const aPath = audioFiles[i];
         const outPath = path.join(workDir, `scene${i+1}_out.mp4`);
-        // Only merge if video and audio exist (safety)
         if (
           fs.existsSync(vPath) && fs.statSync(vPath).isFile() &&
           fs.existsSync(aPath) && fs.statSync(aPath).isFile()
@@ -629,6 +603,7 @@ app.post('/api/generate-video', (req, res) => {
               .on('end', resolve)
               .on('error', reject);
           });
+          console.log(`[MERGE] Scene ${i+1} complete.`);
           sceneFiles.push(outPath);
         } else {
           console.error('[EISDIR FAILSAFE] Skipped merge: file missing or is directory.', vPath, aPath);
@@ -638,14 +613,15 @@ app.post('/api/generate-video', (req, res) => {
       // --- Step 5: Concat all scenes ---
       currentStep++;
       progress[jobId] = { percent: Math.round(100 * currentStep / totalSteps), status: "Concatenating scenes" };
-      // Make a filelist.txt for ffmpeg concat
       const fileListPath = path.join(workDir, 'filelist.txt');
       const concatList = sceneFiles
         .filter(p => fs.existsSync(p) && fs.statSync(p).isFile())
         .map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n');
+      console.log('[CONCAT] Writing filelist.txt with', sceneFiles.length, 'scenes');
       fs.writeFileSync(fileListPath, concatList);
 
       const concatOut = path.join(workDir, 'concat.mp4');
+      console.log('[CONCAT] Running ffmpeg concat...');
       await new Promise((resolve, reject) => {
         ffmpeg()
           .input(fileListPath)
@@ -671,6 +647,7 @@ app.post('/api/generate-video', (req, res) => {
                 options: { x: '(main_w-overlay_w)-16', y: '(main_h-overlay_h)-16' }
               }
             ]);
+          console.log('[FINAL] Watermark overlay added');
         }
       }
 
@@ -683,6 +660,7 @@ app.post('/api/generate-video', (req, res) => {
         ])
         .save(finalOut);
 
+      console.log('[FINAL] Adding watermark and encoding...');
       await new Promise((resolve, reject) => {
         ffmpegCmd.on('end', resolve).on('error', reject);
       });
@@ -705,12 +683,14 @@ app.post('/api/generate-video', (req, res) => {
               .on('error', reject);
           });
           finalOut = outroOut;
+          console.log('[FINAL] Outro appended for free user');
         }
       }
 
       // --- Step 8: Upload to S3/R2, set up public URL ---
       const videoKey = `${jobId}.mp4`;
       const videoData = fs.readFileSync(finalOut);
+      console.log(`[UPLOAD] Uploading final.mp4 to bucket as ${videoKey}`);
       await s3Client.send(new PutObjectCommand({
         Bucket: process.env.AWS_BUCKET_NAME,
         Key: videoKey,
@@ -722,15 +702,17 @@ app.post('/api/generate-video', (req, res) => {
       // --- Step 9: Cleanup local files ---
       setTimeout(() => {
         try {
+          console.log('[CLEANUP] Removing temp job folder:', workDir);
           fs.rmSync(workDir, { recursive: true, force: true });
-        } catch (e) {}
+        } catch (e) { console.error('[CLEANUP ERROR]', e); }
       }, 60000); // wait 1 min
 
+      console.log('[DONE] Video processing complete:', videoKey);
       progress[jobId] = { percent: 100, status: "Done! Click play.", key: videoKey };
       finished = true;
       clearTimeout(watchdog);
     } catch (err) {
-      console.error('[ERROR] /api/generate-video:', err);
+      console.error('[FAIL] Job failed:', err);
       progress[jobId] = { percent: 100, status: "Failed: " + (err.message || err), error: err.message || err };
       cleanupJob(jobId);
       finished = true;
@@ -742,6 +724,7 @@ app.post('/api/generate-video', (req, res) => {
 function cleanupJob(jobId) {
   setTimeout(() => {
     if (progress[jobId]) delete progress[jobId];
+    console.log('[CLEANUP] Job progress removed for:', jobId);
   }, 4 * 60 * 1000);
 }
 
@@ -750,6 +733,7 @@ app.get('/api/progress/:jobId', (req, res) => {
   const jobId = req.params.jobId;
   res.json(progress[jobId] || { percent: 100, status: "Expired." });
 });
+
 
 
 /* ===========================================================
@@ -767,27 +751,40 @@ const { createCanvas, loadImage, registerFont } = require('canvas');
 const fontPath = path.join(__dirname, 'frontend', 'assets', 'fonts', 'LuckiestGuy-Regular.ttf');
 if (fs.existsSync(fontPath)) {
   registerFont(fontPath, { family: 'LuckiestGuy' });
+  console.log('[FONT] Registered LuckiestGuy font:', fontPath);
+} else {
+  console.warn('[FONT] LuckiestGuy font missing:', fontPath);
 }
 
 app.post('/api/generate-thumbnails', async (req, res) => {
+  console.log('[REQ] POST /api/generate-thumbnails');
   try {
     const { topic = '', caption = '' } = req.body;
+    console.log('[INPUT] topic:', topic, 'caption:', caption);
     let label = (caption && caption.length > 2) ? caption : topic;
-    if (!label || label.length < 2) return res.json({ success: false, error: "Enter a topic or caption." });
+    if (!label || label.length < 2) {
+      console.warn('[WARN] Missing topic or caption. User must enter at least 2 chars.');
+      return res.json({ success: false, error: "Enter a topic or caption." });
+    }
 
     const baseThumbsDir = path.join(__dirname, 'frontend', 'assets', 'thumbnail_templates');
+    console.log('[DIR] Loading template dir:', baseThumbsDir);
+
     // Simple: pick 10 random template backgrounds (PNG/SVG)
     const allTemplates = fs.readdirSync(baseThumbsDir)
       .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
       .map(f => path.join(baseThumbsDir, f));
+    console.log('[DIR] Found', allTemplates.length, 'thumbnail template files.');
     // Bulletproof: skip dirs, only files
     const templateFiles = allTemplates.filter(f => fs.statSync(f).isFile());
+    console.log('[DIR] Usable template files:', templateFiles.length);
 
     // If <10 available, repeat
     let picks = [];
     for (let i = 0; i < 10; i++) {
       picks.push(templateFiles[i % templateFiles.length]);
     }
+    console.log('[PICK] Template picks for batch:', picks);
 
     let previews = [];
     for (let i = 0; i < 10; i++) {
@@ -819,9 +816,11 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
       const dataUrl = canvas.toDataURL('image/png');
       previews.push({ idx: i + 1, dataUrl });
+      console.log(`[PREVIEW] Generated preview ${i+1}/10`);
     }
 
     // Make ZIP (for unlock/download)
+    console.log('[ZIP] Creating ZIP of thumbnails...');
     const zip = new JSZip();
     for (let i = 0; i < previews.length; i++) {
       // Remove watermark for zip
@@ -842,12 +841,14 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       ctx.fillText(label, 240, 148, 420);
 
       zip.file(`SocialStorm-thumbnail-${i+1}.png`, canvas.toBuffer('image/png'));
+      console.log(`[ZIP] Added thumbnail ${i+1}/10 to ZIP`);
     }
     const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
     // Store ZIP to temp dir for download
     const zipName = `thumbs_${uuidv4()}.zip`;
     const zipPath = path.join(JOBS_DIR, zipName);
     fs.writeFileSync(zipPath, zipBuf);
+    console.log('[ZIP] Wrote ZIP to', zipPath);
 
     // Provide previews as dataUrl, and link to download ZIP for "unlock"
     res.json({
@@ -855,6 +856,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       previews,
       zip: `/download/thumbs/${zipName}`
     });
+    console.log('[DONE] Thumbnail generation and ZIP done.');
   } catch (err) {
     console.error('[ERROR] /api/generate-thumbnails:', err);
     res.json({ success: false, error: "Failed to generate thumbnails." });
@@ -867,20 +869,34 @@ app.post('/api/generate-thumbnails', async (req, res) => {
    -----------------------------------------------------------
    - Download ZIPs, serve videos directly from S3/R2 or temp
    - Bulletproof path checking, never serves a directory
+   - GOD-TIER LOGGING: logs all requests, file operations, S3 keys, and errors
    =========================================================== */
 
 // ---- Download ZIP for thumbnails ----
 app.get('/download/thumbs/:zipName', (req, res) => {
   const file = path.join(JOBS_DIR, req.params.zipName);
+  console.log('[REQ] GET /download/thumbs/' + req.params.zipName);
+  console.log('[FILE] Attempting download:', file);
+
   if (fs.existsSync(file) && fs.statSync(file).isFile()) {
+    console.log('[FILE] ZIP exists, serving download...');
     res.download(file, err => {
       if (!err) {
+        console.log('[FILE] Downloaded successfully, will delete in 2.5s:', file);
         setTimeout(() => {
-          try { fs.unlinkSync(file); } catch (e) {}
+          try {
+            fs.unlinkSync(file);
+            console.log('[FILE] Deleted ZIP after download:', file);
+          } catch (e) {
+            console.error('[FILE] Failed to delete ZIP after download:', file, e);
+          }
         }, 2500);
+      } else {
+        console.error('[FILE] Error sending download:', file, err);
       }
     });
   } else {
+    console.warn('[WARN] ZIP file not found or not a file:', file);
     res.status(404).send('File not found');
   }
 });
@@ -888,19 +904,23 @@ app.get('/download/thumbs/:zipName', (req, res) => {
 // ---- Serve generated video from S3/R2 ----
 app.get('/video/:key', async (req, res) => {
   const key = req.params.key;
+  console.log('[REQ] GET /video/' + key);
   try {
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
     });
+    console.log('[S3] Fetching video from bucket:', process.env.AWS_BUCKET_NAME, 'Key:', key);
     const response = await s3Client.send(command);
 
     res.setHeader('Content-Type', 'video/mp4');
     if (response.ContentLength)
       res.setHeader('Content-Length', response.ContentLength);
 
+    console.log('[S3] Streaming video to client:', key);
     response.Body.pipe(res);
   } catch (err) {
+    console.error('[ERROR] /video/:key', key, err);
     res.status(404).send('Video not found');
   }
 });
@@ -911,18 +931,23 @@ app.get('/video/:key', async (req, res) => {
    -----------------------------------------------------------
    - POST /api/contact
    - Accepts form message, sends to admin email or logs
+   - GOD-TIER LOGGING: logs all inputs, results, errors
    =========================================================== */
 
 app.post('/api/contact', async (req, res) => {
+  console.log('[REQ] POST /api/contact');
   try {
     const { name = '', email = '', message = '' } = req.body;
+    console.log('[CONTACT INPUT] Name:', name, 'Email:', email, 'Message:', message);
     if (!name || !email || !message) {
+      console.warn('[WARN] Missing contact form fields.');
       return res.json({ success: false, error: "Please fill out all fields." });
     }
     // Normally: send email via SendGrid/Mailgun/etc. Here, just log.
-    console.log(`[CONTACT] From: ${name} <${email}>  ${message}`);
+    console.log(`[CONTACT] Message received from: ${name} <${email}>  Message: ${message}`);
     res.json({ success: true, status: "Message received!" });
   } catch (err) {
+    console.error('[ERROR] /api/contact:', err);
     res.json({ success: false, error: "Failed to send message." });
   }
 });
@@ -933,15 +958,15 @@ app.post('/api/contact', async (req, res) => {
    -----------------------------------------------------------
    - 404 catchall
    - Start server on chosen port
+   - GOD-TIER LOGGING: logs server startup and bad routes
    =========================================================== */
 
 app.use((req, res) => {
+  console.warn('[404] Route not found:', req.originalUrl);
   res.status(404).send('Not found');
 });
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`SocialStormAI backend running on port ${PORT}`);
+  console.log(`🟢 SocialStormAI backend running on port ${PORT}`);
 });
-
-

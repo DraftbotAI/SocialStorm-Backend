@@ -57,7 +57,7 @@ console.log('[INFO] AWS SDK configured.');
 
 // ==== EXPRESS INIT ====
 const app = express();
-const PORT = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json({ limit: '12mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -475,7 +475,7 @@ Then add metadata: viral title, SEO description, and hashtags.`
    - Bulletproof file/dir safety; logs every step
    =========================================================== */
 
-const progress = {}; // Job status by jobId
+
 console.log('[INIT] Video generation endpoint initialized');
 
 app.post('/api/generate-video', (req, res) => {

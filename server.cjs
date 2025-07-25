@@ -342,70 +342,76 @@ app.post('/api/generate-script', async (req, res) => {
   }
 
   try {
-    // --- Viral, human, clever prompt engineering ---
+    // Advanced prompt engineering for viral results
     const systemPrompt = `
-You are a viral video scriptwriter for TikTok, Reels, and YouTube Shorts.
+You are a viral video scriptwriter for TikTok, YouTube Shorts, and Reels.
 
-**Rules:**
-- The FIRST line must be a dramatic, funny, or surprising HOOK. (Examples: "You’ll never guess what happens next...", "This is why cats secretly rule the world!", "Here’s a fact that will blow your mind:")
-- The REST of the lines should be punchy, fact-packed, and clever—always with a sense of humor or drama. No boring or robotic lines, ever.
-- Make each sentence a separate line. Each line should be short, direct, and easy to read aloud.
-- Never use animal metaphors unless the topic is literally about animals.
-- Use a relatable, clever tone—like a funny friend who’s in on the secret.
-- Never use academic or dry language.
+Instructions:
+- The FIRST line is always a dramatic, funny, or surprising HOOK that makes people watch. Be clickbait if needed!
+- Every other line is a punchy, clever, or funny fact that builds curiosity or reveals something new.
+- Use everyday language with clever twists—never dry or academic.
+- Each sentence is its own line (no walls of text).
+- Never use animal metaphors unless the topic is about animals.
+- Total script must fit in 1 minute (about 8-12 lines max).
+- After the script, generate a viral YouTube title, a clickable SEO description (2-3 lines, very engaging), and up to 10 viral hashtags (comma separated, no # symbol, target the main topic).
 
-**Output format:**
+Format (no changes!):
 Script:
-[HOOK LINE (funny or dramatic)]
-[Fact 1 (funny or clever)]
-[Fact 2 (witty, interesting)]
-[Fact 3 (dramatic or relatable)]
-[Fact 4 (memorable/funny)]
-[Fact 5 (if needed)]
+[hook]
+[line 2]
+[line 3]
+...
+[end]
 Title:
-[title]
+[viral, clickable title]
 Description:
-[description]
+[SEO-optimized, curiosity-inducing description]
 Hashtags:
-[hashtag1, hashtag2, ...]
+[tag1, tag2, tag3, ...]
     `.trim();
 
     const userPrompt = `Video idea: ${idea}\nScript, title, description, and hashtags:`;
 
+    // Logging for debugging
+    console.log('[SCRIPT GEN] Input idea:', idea);
+
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: "You write viral short-form video scripts, always starting with a hook." },
-        { role: "user", content: systemPrompt },
+        { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
       temperature: 0.87,
-      max_tokens: 900,
+      max_tokens: 950,
       top_p: 1
     });
 
     const text = gptResponse.choices[0].message.content || '';
-    // Parse into script/metadata
+    // Debug output
+    console.log('[SCRIPT GEN] Raw GPT Output:', text);
+
+    // Parse script/metadata
     let script = '';
     let title = '';
     let description = '';
     let hashtags = '';
 
-    // Regex block extraction
+    // Regex block extraction (robust to avoid blank metadata)
     const scriptMatch = text.match(/Script:\s*([\s\S]+?)\nTitle:/i);
-    const titleMatch = text.match(/Title:\s*(.+)\nDescription:/i);
+    const titleMatch = text.match(/Title:\s*([^\n]+)\nDescription:/i);
     const descMatch = text.match(/Description:\s*([\s\S]+?)\nHashtags:/i);
     const tagsMatch = text.match(/Hashtags:\s*([\s\S]+)/i);
 
     script = scriptMatch ? scriptMatch[1].trim() : '';
     title = titleMatch ? titleMatch[1].trim() : '';
     description = descMatch ? descMatch[1].trim() : '';
-    hashtags = tagsMatch ? tagsMatch[1].trim() : '';
+    hashtags = tagsMatch ? tagsMatch[1].trim().replace(/#/g, '') : '';
 
-    // Remove empty lines
+    // Remove empty lines from script
     script = script.split('\n').map(line => line.trim()).filter(Boolean).join('\n');
 
     if (!script || !title) {
+      console.error('[SCRIPT GEN] Missing script or title. Full output:', text);
       return res.json({ success: false, error: "AI script generation failed. Please try again." });
     }
 
@@ -422,7 +428,6 @@ Hashtags:
   }
 });
 
-
 // ---- /api/generate-metadata ----
 app.post('/api/generate-metadata', async (req, res) => {
   const { script } = req.body;
@@ -431,45 +436,54 @@ app.post('/api/generate-metadata', async (req, res) => {
   }
 
   try {
+    // Aggressive metadata optimization for virality and SEO
     const prompt = `
-You are a viral short-form video copywriter for YouTube Shorts, TikTok, and Reels.
+You are an expert in viral video metadata (YouTube Shorts/TikTok).
 Given a script, generate:
-- **A clickbait viral title** that triggers curiosity, FOMO, or surprise — use big emotions, controversy, or a wild promise. No boring titles!
-- **A punchy, modern, engaging description** (2-3 lines) that teases the video, promises a payoff, hooks the scroller, and includes a call-to-action like "Watch till the end!" or "Comment your favorite tip below!"
-- **10 high-viral hashtags** (comma-separated), mixing relevant, trending, and big-view tags. Always return 10.
+- A viral, curiosity-driven title (max 12 words, NO generic titles)
+- An SEO-optimized, engaging description (max 3 lines, must include main topic and tease the content)
+- Up to 10 viral hashtags (comma separated, no # symbol, must be clickable and trending in the topic's niche)
 
-Format your output *exactly* as:
+Format (do not change!):
 Title: [title]
-Description: [description]
-Hashtags: [tag1, tag2, tag3, ...]
+Description: [desc]
+Hashtags: [tag1, tag2, ...]
+
 Script:
 ${script}
-`;
+    `.trim();
+
+    // Logging for debugging
+    console.log('[META GEN] Input script:', script);
 
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: prompt }
       ],
-      temperature: 0.95,
-      max_tokens: 350,
+      temperature: 0.82,
+      max_tokens: 400,
       top_p: 1
     });
 
     const text = gptResponse.choices[0].message.content || '';
+    // Debug output
+    console.log('[META GEN] Raw GPT Output:', text);
+
     let title = '';
     let description = '';
     let hashtags = '';
 
-    const titleMatch = text.match(/Title:\s*(.+)\nDescription:/i);
+    const titleMatch = text.match(/Title:\s*([^\n]+)\nDescription:/i);
     const descMatch = text.match(/Description:\s*([\s\S]+?)\nHashtags:/i);
     const tagsMatch = text.match(/Hashtags:\s*([\s\S]+)/i);
 
     title = titleMatch ? titleMatch[1].trim() : '';
     description = descMatch ? descMatch[1].trim() : '';
-    hashtags = tagsMatch ? tagsMatch[1].trim() : '';
+    hashtags = tagsMatch ? tagsMatch[1].trim().replace(/#/g, '') : '';
 
     if (!title || !description) {
+      console.error('[META GEN] Failed to extract metadata. Full output:', text);
       return res.json({ success: false, error: "Failed to generate metadata." });
     }
 

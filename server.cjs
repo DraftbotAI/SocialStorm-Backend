@@ -340,59 +340,60 @@ app.post('/api/generate-script', async (req, res) => {
   }
 
   try {
-    // --- Viral, human, clever prompt engineering ---
+    // ---- Prompt Engineering ----
     const systemPrompt = `
-You are a viral video scriptwriter for TikTok, Reels, and YouTube Shorts.
+You are a viral short-form video scriptwriter for TikTok, Reels, and YouTube Shorts.
 
 **Rules:**
-- The FIRST line must be a dramatic, funny, or surprising HOOK. (Examples: "You’ll never guess what happens next...", "This is why cats secretly rule the world!", "Here’s a fact that will blow your mind:")
-- The REST of the lines should be punchy, fact-packed, and clever—always with a sense of humor or drama. No boring or robotic lines, ever.
-- Make each sentence a separate line. Each line should be short, direct, and easy to read aloud.
+- The FIRST line is a dramatic, funny, or surprising HOOK. ("You’ll never guess what happens next...", "Here’s a fact that will blow your mind:")
+- The REST of the lines are punchy, clever, and fact-packed. No boring or robotic lines—every line must have a sense of humor or drama.
+- Each sentence should be its own line. Keep every line short, punchy, and easy to read aloud.
 - Never use animal metaphors unless the topic is literally about animals.
-- Use a relatable, clever tone—like a funny friend who’s in on the secret.
-- Never use academic or dry language.
+- Use a relatable, modern, smart tone—like a clever friend sharing cool secrets.
+- Absolutely never use academic, dry, or generic language.
 
 **Output format:**
 Script:
-[HOOK LINE (funny or dramatic)]
-[Fact 1 (funny or clever)]
-[Fact 2 (witty, interesting)]
-[Fact 3 (dramatic or relatable)]
-[Fact 4 (memorable/funny)]
-[Fact 5 (if needed)]
+[HOOK LINE]
+[Fact 1]
+[Fact 2]
+[Fact 3]
+[Fact 4]
+[Fact 5]
 Title:
-[title]
+[Best viral clickable YouTube/TikTok title]
 Description:
-[description]
+[SEO description, click-worthy, max 3 lines]
 Hashtags:
-[hashtag1, hashtag2, ...]
+[#tag1, #tag2, #tag3, ...]
     `.trim();
 
-    const userPrompt = `Video idea: ${idea}\nScript, title, description, and hashtags:`;
+    const userPrompt = `Video idea: ${idea}\nWrite the script, title, description, and hashtags in the format above.`;
 
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: "You write viral short-form video scripts, always starting with a hook." },
-        { role: "user", content: systemPrompt },
+        { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      temperature: 0.85,
+      temperature: 0.9,
       max_tokens: 900,
       top_p: 1
     });
 
     const text = gptResponse.choices[0].message.content || '';
+    console.log('[DEBUG] GPT RAW SCRIPT GENERATION RESPONSE:', text);
+
     // Parse into script/metadata
     let script = '';
     let title = '';
     let description = '';
     let hashtags = '';
 
-    // Regex block extraction
-    const scriptMatch = text.match(/Script:\s*([\s\S]+?)\nTitle:/i);
-    const titleMatch = text.match(/Title:\s*(.+)\nDescription:/i);
-    const descMatch = text.match(/Description:\s*([\s\S]+?)\nHashtags:/i);
+    // Regex block extraction (handles \r, extra whitespace, etc.)
+    const scriptMatch = text.match(/Script:\s*([\s\S]+?)\n\s*Title:/i);
+    const titleMatch = text.match(/Title:\s*([\s\S]+?)\n\s*Description:/i);
+    const descMatch = text.match(/Description:\s*([\s\S]+?)\n\s*Hashtags:/i);
     const tagsMatch = text.match(/Hashtags:\s*([\s\S]+)/i);
 
     script = scriptMatch ? scriptMatch[1].trim() : '';
@@ -400,7 +401,7 @@ Hashtags:
     description = descMatch ? descMatch[1].trim() : '';
     hashtags = tagsMatch ? tagsMatch[1].trim() : '';
 
-    // Remove empty lines
+    // Remove empty lines, trim all script lines
     script = script.split('\n').map(line => line.trim()).filter(Boolean).join('\n');
 
     if (!script || !title) {
@@ -420,7 +421,6 @@ Hashtags:
   }
 });
 
-
 // ---- /api/generate-metadata ----
 app.post('/api/generate-metadata', async (req, res) => {
   const { script } = req.body;
@@ -430,38 +430,39 @@ app.post('/api/generate-metadata', async (req, res) => {
 
   try {
     const prompt = `
-You are a YouTube/TikTok metadata expert. 
+You are a YouTube/TikTok metadata expert.
 Given a script, create:
-- Viral title (1 line)
-- Clickable SEO description (max 3 lines)
-- Up to 10 hashtags (comma-separated)
+- A viral, must-click title (1 line, not clickbait, but bold)
+- An SEO description (max 3 lines, clickable, with emotional/viral language)
+- Up to 10 relevant hashtags (comma-separated, trending tags only)
 
 Format:
-Title: [title]
-Description: [desc]
-Hashtags: [tag1, tag2, ...]
-
+Title: [viral title]
+Description: [clickable SEO description]
+Hashtags: [#tag1, #tag2, ...]
 Script:
 ${script}
-`;
+    `.trim();
 
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: prompt }
       ],
-      temperature: 0.8,
+      temperature: 0.85,
       max_tokens: 350,
       top_p: 1
     });
 
     const text = gptResponse.choices[0].message.content || '';
+    console.log('[DEBUG] GPT RAW METADATA RESPONSE:', text);
+
     let title = '';
     let description = '';
     let hashtags = '';
 
-    const titleMatch = text.match(/Title:\s*(.+)\nDescription:/i);
-    const descMatch = text.match(/Description:\s*([\s\S]+?)\nHashtags:/i);
+    const titleMatch = text.match(/Title:\s*([\s\S]+?)\n\s*Description:/i);
+    const descMatch = text.match(/Description:\s*([\s\S]+?)\n\s*Hashtags:/i);
     const tagsMatch = text.match(/Hashtags:\s*([\s\S]+)/i);
 
     title = titleMatch ? titleMatch[1].trim() : '';

@@ -445,17 +445,9 @@ module.exports = {
 
 /* ===========================================================
    SECTION 4: /api/generate-script ENDPOINT
-   -----------------------------------------------------------
-   - Accepts a video idea
-   - Calls OpenAI to generate a punchy, scene-ready script
-   - Returns metadata: title, description, hashtags
-   - Logs every input, output, error, and GPT call
    =========================================================== */
 
 console.log('[INFO] Registering /api/generate-script endpoint...');
-
-const { OpenAI } = require('openai');
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); // ✅ REQUIRED
 
 app.post('/api/generate-script', async (req, res) => {
   const idea = req.body.idea?.trim();
@@ -489,7 +481,8 @@ Description: Uncover the wildest secret spaces hidden inside the world’s most 
 Tags: secrets landmarks travel viral history
     `.trim();
 
-    const completion = await openai.chat.completions.create({
+    // === GPT-3.5 fallback-compatible
+    const completion = await openai.createChatCompletion({
       model: "gpt-4-1106-preview",
       temperature: 0.84,
       max_tokens: 900,
@@ -498,27 +491,24 @@ Tags: secrets landmarks travel viral history
       ]
     });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() || '';
+    const raw = completion?.data?.choices?.[0]?.message?.content?.trim() || '';
     console.log('[GPT] Raw output:\n' + raw);
 
-    // === Parse
+    // === Parse Output ===
     let scriptLines = [];
     let title = '';
     let description = '';
     let tags = '';
 
     const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
-
     const titleIdx = lines.findIndex(l => /^title\s*:/i.test(l));
-    const descIdx = lines.findIndex(l => /^description\s*:/i.test(l));
-    const tagsIdx = lines.findIndex(l => /^tags?\s*:/i.test(l));
+    const descIdx  = lines.findIndex(l => /^description\s*:/i.test(l));
+    const tagsIdx  = lines.findIndex(l => /^tags?\s*:/i.test(l));
 
     const metaStart = [titleIdx, descIdx, tagsIdx].filter(x => x > -1).sort((a,b) => a - b)[0] || lines.length;
-
     scriptLines = lines.slice(0, metaStart).filter(l =>
       !/^title\s*:/i.test(l) && !/^description\s*:/i.test(l) && !/^tags?\s*:/i.test(l)
     );
-
     if (scriptLines.length > 10) scriptLines = scriptLines.slice(0, 10);
 
     for (const l of lines.slice(metaStart)) {
@@ -531,9 +521,7 @@ Tags: secrets landmarks travel viral history
     if (!description) description = `Here's a quick look at "${idea}" – stay tuned.`;
     if (!tags) tags = "shorts viral";
 
-    if (!scriptLines.length) {
-      scriptLines = ['Something went wrong generating the script.'];
-    }
+    if (!scriptLines.length) scriptLines = ['Something went wrong generating the script.'];
 
     console.log('[PARSED] script lines:', scriptLines.length, scriptLines);
     console.log('[PARSED] title:', title);
@@ -553,6 +541,7 @@ Tags: secrets landmarks travel viral history
     res.status(500).json({ success: false, error: "Script generation failed" });
   }
 });
+
 
 
 

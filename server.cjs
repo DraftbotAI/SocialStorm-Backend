@@ -135,6 +135,50 @@ app.get('/api/progress/:jobId', (req, res) => {
   }
 });
 
+// =====================================================
+// SCENE TTS GENERATOR: POLLY OR ELEVENLABS (HELPER)
+// =====================================================
+
+async function generateSceneAudio(text, voiceId, outputPath, ttsProvider) {
+  console.log(`[TTS] Generating audio with provider: ${ttsProvider}, voice: ${voiceId}`);
+
+  if (ttsProvider.toLowerCase() === 'polly' || ttsProvider === 'Amazon Polly') {
+    // --- AWS Polly TTS ---
+    const polly = new AWS.Polly({
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      region: process.env.AWS_REGION
+    });
+    const params = {
+      OutputFormat: 'mp3',
+      Text: text,
+      VoiceId: voiceId.replace('polly-', ''), // e.g., "polly-Matthew" → "Matthew"
+      Engine: 'neural'
+    };
+    const data = await polly.synthesizeSpeech(params).promise();
+    fs.writeFileSync(outputPath, data.AudioStream);
+    console.log(`[TTS] Polly audio saved: ${outputPath}`);
+    return outputPath;
+  }
+
+  if (ttsProvider.toLowerCase() === 'elevenlabs') {
+    // --- ElevenLabs TTS ---
+    const res = await axios.post(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      { text, model_id: 'eleven_monolingual_v1' },
+      {
+        headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY },
+        responseType: 'arraybuffer'
+      }
+    );
+    fs.writeFileSync(outputPath, res.data);
+    console.log(`[TTS] ElevenLabs audio saved: ${outputPath}`);
+    return outputPath;
+  }
+
+  throw new Error(`Unknown TTS provider: ${ttsProvider}`);
+}
+
 
 
 

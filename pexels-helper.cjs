@@ -1,36 +1,36 @@
 // ==========================================
-// Pexels + Scene Helper for SocialStormAI
+// Pexels + Scene Helper for SocialStormAI (GPT-Subject + Best Match)
 // ------------------------------------------
-// Priority: Cloudflare R2 → Pexels → Pixabay
-// Functions:
-// - splitScriptToScenes(script)
-// - findClipForScene(sceneText)
+// Priority: R2, Pexels, Pixabay (all sources scored, best returned)
+// - GPT-4.1-powered main subject extractor per scene
+// - Scene 1+2 both use subject from Scene 2 (anchor)
+// - Returns best-matching clip across all sources
 // ==========================================
 
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+const { OpenAI } = require('openai');
 
 // === ENV & BUCKET SETUP ===
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// Prefer explicit library bucket/env, fallback if missing
 const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || process.env.R2_BUCKET || 'socialstorm-library';
-const R2_REGION = 'auto'; // For Cloudflare R2 always 'auto'
+const R2_REGION = 'auto';
 const R2_ENDPOINT = process.env.R2_ENDPOINT || '';
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
 
-// Env sanity warnings
 if (!PEXELS_API_KEY) console.warn('[PEXELS HELPER] WARNING: No PEXELS_API_KEY set!');
 if (!PIXABAY_API_KEY) console.warn('[PEXELS HELPER] WARNING: No PIXABAY_API_KEY set!');
+if (!OPENAI_API_KEY) console.warn('[PEXELS HELPER] WARNING: No OPENAI_API_KEY set!');
 if (!R2_LIBRARY_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
   console.warn('[PEXELS HELPER] WARNING: Missing Cloudflare R2 credentials or endpoint!');
 }
 
-// ---- S3Client for R2 library ----
 const s3 = new S3Client({
   region: R2_REGION,
   endpoint: R2_ENDPOINT,
@@ -40,16 +40,14 @@ const s3 = new S3Client({
   },
 });
 
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
 // === Split script into scene objects ===
 function splitScriptToScenes(script) {
   console.log(`[SCENE SPLIT] Splitting script into scenes...`);
-  if (!script || typeof script !== 'string') {
-    console.error(`[SCENE SPLIT] Invalid script input.`);
-    return [];
-  }
-  // Split on period, but keep lines tight (handles edge cases)
-  const lines = script
-    .split(/\.\s+|\.$/g)
+  if (!script) return [];
+  let lines = Array.isArray(script) ? script : script
+    .split(/\r?\n/)
     .map(line => line.trim())
     .filter(line => line.length > 0);
 
@@ -57,96 +55,98 @@ function splitScriptToScenes(script) {
     id: `scene${index + 1}`,
     text,
   }));
-
   console.log(`[SCENE SPLIT] Split into ${scenes.length} scenes.`);
   return scenes;
 }
 
-// === Main scene matching function ===
-async function findClipForScene(sceneText) {
-  console.log(`[MATCH] Starting match for scene: "${sceneText}"`);
-
-  const query = extractVisualKeyword(sceneText);
-  if (!query) {
-    console.warn(`[MATCH] No keyword could be extracted from: "${sceneText}"`);
+// === GPT-4.1 subject extractor ===
+async function extractMainSubject(line, videoTopic = '') {
+  if (!OPENAI_API_KEY) return null;
+  try {
+    // Extremely focused visual subject prompt, NO metaphors
+    const system = `You extract the REAL, VISUAL SUBJECT of a short scene line for a YouTube Short. Only return the best visual subject (landmark, object, place, person, etc). NO metaphors or quotes. If more than one thing, pick the most famous or most related to topic: "${videoTopic}". One short answer, no extra words.`;
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-1106-preview",
+      temperature: 0,
+      max_tokens: 15,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: line }
+      ]
+    });
+    const out = completion.choices?.[0]?.message?.content?.trim() || '';
+    console.log(`[SUBJECT] "${line}" → "${out}"`);
+    return out;
+  } catch (err) {
+    console.error('[SUBJECT EXTRACTOR ERROR]', err.message);
     return null;
   }
-  console.log(`[MATCH] Extracted keyword: "${query}"`);
-
-  // 1. R2 Library (main source)
-  try {
-    const r2 = await searchR2Library(query);
-    if (r2) {
-      console.log(`[MATCH] ✅ Matched from R2`);
-      return r2;
-    }
-  } catch (err) {
-    console.error(`[R2 ERROR] Exception: ${err.message}`);
-  }
-
-  // 2. Pexels fallback
-  try {
-    const pexels = await fetchFromPexels(query);
-    if (pexels) {
-      console.log(`[MATCH] ✅ Matched from Pexels`);
-      return pexels;
-    }
-  } catch (err) {
-    console.error(`[PEXELS ERROR] Exception: ${err.message}`);
-  }
-
-  // 3. Pixabay fallback
-  try {
-    const pixabay = await fetchFromPixabay(query);
-    if (pixabay) {
-      console.log(`[MATCH] ✅ Matched from Pixabay`);
-      return pixabay;
-    }
-  } catch (err) {
-    console.error(`[PIXABAY ERROR] Exception: ${err.message}`);
-  }
-
-  console.warn(`[MATCH] ❌ No match found for: "${query}"`);
-  return null;
 }
 
-// === Smarter keyword extractor ===
-function extractVisualKeyword(text) {
-  const stopwords = [
-    'the', 'a', 'an', 'this', 'that', 'and', 'or', 'but', 'with', 'without',
-    'to', 'of', 'in', 'on', 'at', 'for', 'from', 'by', 'is', 'are', 'it', 'as', 'was'
-  ];
-  const words = text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, '') // remove punctuation
-    .split(/\s+/)
-    .filter(w => w.length > 2 && !stopwords.includes(w));
+// === Main scene matching function ===
+// Usage: await findClipForScene(sceneText, sceneNum, scriptLines, videoTopic)
+async function findClipForScene(sceneText, sceneNum = 1, scriptLines = [], videoTopic = '') {
+  // Use scene 2's main subject for both 1 & 2
+  let visualSubject;
+  if (sceneNum === 1 && scriptLines && scriptLines.length > 1) {
+    visualSubject = await extractMainSubject(scriptLines[1], videoTopic);
+    console.log(`[MATCH] (Scene 1) Using subject from scene 2: "${visualSubject}"`);
+  } else {
+    visualSubject = await extractMainSubject(sceneText, videoTopic);
+    console.log(`[MATCH] Scene ${sceneNum} subject: "${visualSubject}"`);
+  }
+  if (!visualSubject) {
+    console.warn(`[MATCH] No subject extracted from: "${sceneText}"`);
+    return null;
+  }
 
-  // Prioritize first N meaningful words
-  let result = words.slice(0, 5).join(' ');
-  if (!result && words.length > 0) result = words[0];
-  console.log(`[KEYWORD] From input: "${text}" → "${result}"`);
-  return result;
+  // Run all three searches in parallel, collect results
+  const [r2Url, pexelsUrl, pixabayUrl] = await Promise.all([
+    searchR2Library(visualSubject),
+    fetchFromPexels(visualSubject),
+    fetchFromPixabay(visualSubject)
+  ]);
+
+  // Score results (prefer R2, then Pexels, then Pixabay, but if none contain the *exact* keyword fallback to first found)
+  const candidates = [
+    { source: 'R2', url: r2Url },
+    { source: 'Pexels', url: pexelsUrl },
+    { source: 'Pixabay', url: pixabayUrl },
+  ].filter(c => !!c.url);
+
+  if (candidates.length === 0) {
+    console.warn(`[MATCH] ❌ No match found for: "${visualSubject}"`);
+    return null;
+  }
+
+  // Simple scoring: prefer match with subject/keyword in filename/url, prefer R2, then Pexels, then Pixabay
+  const subjectLc = visualSubject.toLowerCase();
+  let best = candidates[0];
+  for (const c of candidates) {
+    if (c.url.toLowerCase().includes(subjectLc)) {
+      best = c;
+      if (c.source === 'R2') break; // R2 with match is ideal
+    }
+  }
+  console.log(`[MATCH] ✅ Best match from ${best.source}: ${best.url}`);
+  return best.url;
 }
 
-// === Search Cloudflare R2 for matching video ===
+// === R2 Search ===
 async function searchR2Library(keyword) {
+  if (!keyword) return null;
   console.log(`[R2] Searching R2 for: "${keyword}"`);
   try {
     const command = new ListObjectsV2Command({ Bucket: R2_LIBRARY_BUCKET });
     const data = await s3.send(command);
-
     if (!data.Contents || !Array.isArray(data.Contents)) {
       console.warn('[R2] No files found in library bucket.');
       return null;
     }
-
-    // Sort by best match (first that contains keyword, favoring start of filename)
     const matches = data.Contents
       .map(obj => obj.Key)
       .filter(key => key && key.toLowerCase().includes(keyword.toLowerCase()))
       .sort((a, b) => a.toLowerCase().indexOf(keyword) - b.toLowerCase().indexOf(keyword));
-
     if (matches.length > 0) {
       const key = matches[0];
       const r2Url = `${R2_ENDPOINT.replace(/\/$/, '')}/${R2_LIBRARY_BUCKET}/${key}`;
@@ -163,10 +163,7 @@ async function searchR2Library(keyword) {
 
 // === Fetch from Pexels ===
 async function fetchFromPexels(query) {
-  if (!PEXELS_API_KEY) {
-    console.warn(`[PEXELS] No API key set.`);
-    return null;
-  }
+  if (!PEXELS_API_KEY) return null;
   console.log(`[PEXELS] Searching Pexels for: "${query}"`);
   try {
     const res = await axios.get(`https://api.pexels.com/videos/search`, {
@@ -175,7 +172,6 @@ async function fetchFromPexels(query) {
     });
     const video = res.data.videos?.[0];
     if (video && video.video_files?.length) {
-      // Prefer SD or lower, fallback to first file
       const file = video.video_files.find(f => f.quality === 'sd' && f.width <= 720) || video.video_files[0];
       if (file && file.link) {
         console.log(`[PEXELS] ✅ Clip found: ${file.link}`);
@@ -191,10 +187,7 @@ async function fetchFromPexels(query) {
 
 // === Fetch from Pixabay ===
 async function fetchFromPixabay(query) {
-  if (!PIXABAY_API_KEY) {
-    console.warn(`[PIXABAY] No API key set.`);
-    return null;
-  }
+  if (!PIXABAY_API_KEY) return null;
   console.log(`[PIXABAY] Searching Pixabay for: "${query}"`);
   try {
     const res = await axios.get(`https://pixabay.com/api/videos/`, {
@@ -207,7 +200,6 @@ async function fetchFromPixabay(query) {
     });
     const hits = res.data.hits;
     if (hits && hits.length > 0) {
-      // Try medium, fallback to small
       const url = hits[0].videos?.medium?.url || hits[0].videos?.small?.url;
       if (url) {
         console.log(`[PIXABAY] ✅ Clip found: ${url}`);
@@ -225,6 +217,7 @@ async function fetchFromPixabay(query) {
 module.exports = {
   splitScriptToScenes,
   findClipForScene,
+  extractMainSubject, // in case you want to use it elsewhere
 };
 
-console.log('\n===========[ PEXELS HELPER LOADED | GOD TIER LOGGING READY ]============');
+console.log('\n===========[ PEXELS HELPER LOADED | GPT SUBJECT + BEST MATCH | GOD TIER LOGGING READY ]============');

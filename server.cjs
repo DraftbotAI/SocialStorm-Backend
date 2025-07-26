@@ -443,7 +443,6 @@ module.exports = {
 
 
 
-
 /* ===========================================================
    SECTION 4: /api/generate-script ENDPOINT
    -----------------------------------------------------------
@@ -469,24 +468,38 @@ app.post('/api/generate-script', async (req, res) => {
   }
 
   try {
-    console.log('[GPT] Calling OpenAI for full script...');
+    console.log('[GPT] Calling OpenAI for viral script...');
     const completion = await openai.chat.completions.create({
       model: "gpt-4-1106-preview",
-      temperature: 0.8,
+      temperature: 0.84,
       max_tokens: 800,
       messages: [
         {
           role: "system",
-          content: `You're a viral short-form script writer for YouTube Shorts and TikToks.
-You always start with a strong hook sentence that grabs attention.
-You write punchy, one-line scenes with humor, drama, or mystery.
-No animal metaphors. Avoid robotic or academic tone.
-Write 6–10 short sentences max, one per line. No intro or summary.
-Then add metadata: viral title, SEO description, and hashtags.`
+          content: `
+You're a viral short-form script writer for YouTube Shorts and TikToks.
+Start with a strong, funny or dramatic HOOK (scene 1), always punchy.
+Each following line is a new scene—one sentence per scene, no dialogue.
+No animal metaphors, no emojis, no hashtags, no quotes, no intro/outro lines.
+Make every line factually interesting, clever, and have a sense of humor or drama.
+NEVER include "Title:", "Description:" or "Tags:" in the script lines.
+Do NOT repeat lines. No summary. 6-10 lines max.
+At the end, provide exactly:
+Title: [Viral title, dramatic/funny, no quotes]
+Description: [SEO, friendly, what the short is about, no hashtags]
+Tags: [list, max 5, separated by spaces, no commas]
+            `.trim()
         },
         {
           role: "user",
-          content: `Write a viral short-form script about: ${idea}`
+          content: `Write a viral short-form script about: ${idea}
+Format:
+[SCENE 1: HOOK]
+[SCENE 2: ...]
+[...]
+Title: ...
+Description: ...
+Tags: ...`
         }
       ]
     });
@@ -495,49 +508,53 @@ Then add metadata: viral title, SEO description, and hashtags.`
     console.log('[GPT] Response received. Raw length:', raw.length);
     console.log('[RAW OUTPUT START]\n' + raw + '\n[RAW OUTPUT END]');
 
-    let script = '';
+    // Parse the script and metadata
+    let scriptLines = [];
     let title = '';
     let description = '';
     let tags = '';
 
-    // Parse output: first lines = script, last = metadata
+    // 1. Extract lines before Title/Description/Tags
     const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
-    const metaStart = lines.findIndex(l => /^title\s*[:\-]/i.test(l));
+    let metaIndex = lines.findIndex(l => /^title\s*[:\-]/i.test(l));
+    if (metaIndex === -1) metaIndex = lines.findIndex(l => /^description\s*[:\-]/i.test(l));
+    if (metaIndex === -1) metaIndex = lines.findIndex(l => /^tags?\s*[:\-]/i.test(l));
+    if (metaIndex === -1) metaIndex = lines.length; // fallback
 
-    if (metaStart === -1) {
-      console.warn('[WARN] Could not find metadata section. Returning fallback.');
-      script = lines.join('\n');
-    } else {
-      script = lines.slice(0, metaStart).join('\n');
-      const metaLines = lines.slice(metaStart);
-      for (const line of metaLines) {
-        if (/^title\s*[:\-]/i.test(line))       title = line.split(/[:\-]/)[1]?.trim() || '';
-        else if (/^description\s*[:\-]/i.test(line)) description = line.split(/[:\-]/)[1]?.trim() || '';
-        else if (/^(tags|hashtags)\s*[:\-]/i.test(line)) tags = line.split(/[:\-]/)[1]?.trim() || '';
-      }
+    scriptLines = lines.slice(0, metaIndex)
+      .map(l => l.replace(/^\[?scene\s*\d+\:?\]?\s*/i, '')) // Remove [Scene N:] prefixes if present
+      .map(l => l.replace(/^[-\s]+/, ''))                  // Remove leading dashes or spaces
+      .filter(l => l.length > 0 && !/^title\s*[:\-]/i.test(l) && !/^description\s*[:\-]/i.test(l) && !/^tags?\s*[:\-]/i.test(l));
+
+    // 2. Extract metadata fields
+    for (const line of lines.slice(metaIndex)) {
+      if (/^title\s*[:\-]/i.test(line))       title = line.split(/[:\-]/)[1]?.trim() || '';
+      else if (/^description\s*[:\-]/i.test(line)) description = line.split(/[:\-]/)[1]?.trim() || '';
+      else if (/^(tags?|hashtags?)\s*[:\-]/i.test(line)) tags = line.split(/[:\-]/)[1]?.trim() || '';
     }
 
-    if (!script) {
-      console.error('[ERROR] No script extracted from GPT response.');
-      return res.status(500).json({ success: false, error: "Script parsing failed" });
-    }
-
-    // Default fallbacks
+    // 3. Fallbacks if needed
     if (!title) title = idea.length < 60 ? idea : idea.slice(0, 57) + "...";
     if (!description) description = `Here's a quick look at "${idea}" – stay tuned.`;
     if (!tags) tags = "#shorts #viral";
+    if (!scriptLines.length) scriptLines = ['Something went wrong generating the script.'];
 
-    console.log('[PARSED] script lines:', script.split('\n').length);
+    // Log final results
+    console.log('[PARSED] script lines:', scriptLines.length);
+    scriptLines.forEach((l, idx) => console.log(`[SCENE ${idx + 1}] ${l}`));
     console.log('[PARSED] title:', title);
     console.log('[PARSED] description:', description);
     console.log('[PARSED] tags:', tags);
 
+    // Return
     res.json({
       success: true,
-      script,
-      title,
-      description,
-      hashtags: tags
+      script: scriptLines,
+      metadata: {
+        title,
+        description,
+        hashtags: tags
+      }
     });
 
   } catch (err) {
@@ -545,6 +562,7 @@ Then add metadata: viral title, SEO description, and hashtags.`
     res.status(500).json({ success: false, error: "Script generation failed" });
   }
 });
+
 
 
 
@@ -585,7 +603,8 @@ app.post('/api/generate-video', (req, res) => {
         script = '',
         voice = '',
         paidUser = false,
-        removeWatermark = false
+        removeWatermark = false,
+        title = '' // If you capture the main topic/title from /generate-script, pass it here
       } = req.body || {};
       console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Watermark removed: ${removeWatermark}`);
 
@@ -635,6 +654,8 @@ app.post('/api/generate-video', (req, res) => {
 
       // Main scene processing loop
       let scenePaths = [];
+      let firstClipUrl = null; // For hook/topic continuity
+
       for (let i = 0; i < scenes.length; i++) {
         const { id: sceneId, text: sceneText } = scenes[i];
         const sceneBase = sceneId;
@@ -660,7 +681,20 @@ app.post('/api/generate-video', (req, res) => {
         // === Find video clip for scene ===
         let clipUrl = null;
         try {
-          clipUrl = await findClipForScene(sceneText);
+          // Special rule: scene 0 (hook) and scene 1 (main subject) should use the same main subject clip for visual continuity
+          if (i === 1 && firstClipUrl) {
+            clipUrl = firstClipUrl;
+            console.log(`[VIDEO] Using first scene's clip again for scene 2 for topic continuity: ${clipUrl}`);
+          } else {
+            // Pass all context for best GPT-powered matching
+            clipUrl = await findClipForScene(
+              sceneText,
+              i,
+              scenes.map(s => s.text),
+              title || ''
+            );
+            if (i === 0) firstClipUrl = clipUrl; // Save for scene 2
+          }
         } catch (err) {
           console.error(`[ERR] Video clip match failed for scene ${i + 1}:`, err);
         }

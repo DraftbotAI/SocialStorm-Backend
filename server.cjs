@@ -294,6 +294,9 @@ Then add metadata: viral title, SEO description, and hashtags.`
 
 console.log('[INIT] Video generation endpoint initialized');
 
+// --- Import findBestClip helper at the top of your file ---
+const { findBestClip } = require('./pexels-helper.cjs');
+
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -350,7 +353,7 @@ app.post('/api/generate-video', (req, res) => {
       console.log('[INFO] Splitting script into lines...');
       const lines = script.split('\n').map(line => line.trim()).filter(Boolean);
       console.log('[INFO] Scene count:', lines.length);
-      totalSteps = lines.length + 3; // audio, merge, finalize
+      totalSteps = lines.length * 2 + 6; // audio + video + extra steps
 
       // --- Step 2: Generate scene audio (Polly for now, future: ElevenLabs) ---
       let audioFiles = [];
@@ -375,19 +378,30 @@ app.post('/api/generate-video', (req, res) => {
         sceneIdx++;
       }
 
-      // --- Step 3: Select video clips for each scene ---
+      // --- Step 3: Select video clips for each scene (R2 > Pexels > Pixabay) ---
       let videoFiles = [];
       sceneIdx = 1;
       for (const line of lines) {
         currentStep++;
         progress[jobId] = { percent: Math.round(100 * currentStep / totalSteps), status: `Selecting video for scene ${sceneIdx}` };
-        console.log(`[CLIP] Selecting clip for scene ${sceneIdx}`);
-        let videoPath = path.join(__dirname, 'frontend', 'assets', 'stock_clips', `clip${sceneIdx}.mp4`);
-        if (!fs.existsSync(videoPath)) videoPath = path.join(__dirname, 'frontend', 'assets', 'stock_clips', `clip1.mp4`);
-        if (fs.existsSync(videoPath) && fs.statSync(videoPath).isFile()) {
-          videoFiles.push(videoPath);
+        console.log(`[CLIP] Selecting clip for scene ${sceneIdx}: "${line}"`);
+        // --- NEW: Use findBestClip from helper with god tier logging ---
+        const match = await findBestClip(line);
+        if (match && match.url) {
+          const ext = path.extname(match.url).split('?')[0] || '.mp4';
+          const videoPath = path.join(workDir, `scene${sceneIdx}${ext}`);
+          try {
+            // Download the video clip to the working dir
+            console.log(`[CLIP] Downloading: ${match.url}`);
+            const vidRes = await axios.get(match.url, { responseType: 'arraybuffer' });
+            fs.writeFileSync(videoPath, vidRes.data);
+            console.log(`[CLIP] Saved to ${videoPath} (${vidRes.data.length} bytes)`);
+            videoFiles.push(videoPath);
+          } catch (e) {
+            console.error(`[CLIP-ERROR] Failed to download: ${match.url}`, e);
+          }
         } else {
-          console.error('[EISDIR FAILSAFE] Video path not a file:', videoPath);
+          console.error(`[CLIP-FAIL] No video found for scene ${sceneIdx}: "${line}"`);
         }
         sceneIdx++;
       }
@@ -401,8 +415,8 @@ app.post('/api/generate-video', (req, res) => {
         const aPath = audioFiles[i];
         const outPath = path.join(workDir, `scene${i+1}_out.mp4`);
         if (
-          fs.existsSync(vPath) && fs.statSync(vPath).isFile() &&
-          fs.existsSync(aPath) && fs.statSync(aPath).isFile()
+          vPath && fs.existsSync(vPath) && fs.statSync(vPath).isFile() &&
+          aPath && fs.existsSync(aPath) && fs.statSync(aPath).isFile()
         ) {
           await new Promise((resolve, reject) => {
             ffmpeg()
@@ -508,6 +522,7 @@ app.get('/api/progress/:jobId', (req, res) => {
   const jobId = req.params.jobId;
   res.json(progress[jobId] || { percent: 100, status: "Expired." });
 });
+
 
 
 

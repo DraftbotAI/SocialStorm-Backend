@@ -287,150 +287,204 @@ Then add metadata: viral title, SEO description, and hashtags.`
 /* ===========================================================
    SECTION 5: VIDEO GENERATION ENDPOINT
    -----------------------------------------------------------
-   POST /api/generate-video
-   Full video generation flow with voice, branding,
-   watermark, outro, background music, progress tracking
+   - POST /api/generate-video
+   - Handles script, voice, branding, watermark, outro, background music
+   - Bulletproof file/dir safety; logs every step
    =========================================================== */
 
 console.log('[INIT] Video generation endpoint initialized');
 
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
-
   const jobId = uuidv4();
   progress[jobId] = { percent: 0, status: 'starting' };
   console.log(`[INFO] New job started: ${jobId}`);
-
   res.json({ jobId });
 
   (async () => {
     let finished = false;
     const watchdog = setTimeout(() => {
       if (!finished && progress[jobId]) {
-        progress[jobId] = { percent: 100, status: 'Failed: Timed out.' };
+        progress[jobId] = { percent: 100, status: "Failed: Timed out." };
         cleanupJob(jobId);
         console.warn(`[WATCHDOG] Job ${jobId} timed out and was cleaned up`);
       }
-    }, 10 * 60 * 1000); // 10 minutes timeout
+    }, 12 * 60 * 1000); // 12 minutes
 
-    // Working directory for this job
-    let workDir = null;
     try {
+      // Parse inputs
       const {
-        script,
-        voice,
+        script = '',
+        voice = '',
         paidUser = false,
-        removeWatermark = false,
-        addBackgroundMusic = true
-      } = req.body;
+        removeWatermark = false
+      } = req.body || {};
+      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Watermark removed: ${removeWatermark}`);
 
+      // Validate
       if (!script || !voice) {
-        throw new Error('Missing required parameters: script and voice');
+        progress[jobId] = { percent: 100, status: 'Failed: Missing script or voice.' };
+        cleanupJob(jobId);
+        clearTimeout(watchdog);
+        return;
       }
 
-      // Step 1: Create temp working directory
-      workDir = path.join(JOBS_DIR, jobId);
-      if (!fs.existsSync(workDir)) {
-        fs.mkdirSync(workDir, { recursive: true });
-      }
-      console.log(`[${jobId}] Working directory created: ${workDir}`);
+      // Prepare work dir
+      const workDir = path.join(__dirname, 'renders', jobId);
+      if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
+      console.log(`[STEP] Work dir created: ${workDir}`);
 
-      progress[jobId] = { percent: 5, status: 'Parsing script into scenes...' };
-
-      // Step 2: Split script into scenes
+      // Split script to scenes
       const scenes = splitScriptToScenes(script);
-      console.log(`[${jobId}] Script split into ${scenes.length} scenes`);
+      if (!scenes.length) {
+        progress[jobId] = { percent: 100, status: 'Failed: Script split error.' };
+        cleanupJob(jobId);
+        clearTimeout(watchdog);
+        return;
+      }
+      console.log(`[STEP] Script split to ${scenes.length} scenes.`);
 
-      progress[jobId] = { percent: 10, status: 'Generating audio for scenes...' };
-
-      // Step 3: Generate audio for each scene
+      // Main scene processing loop
+      let scenePaths = [];
       for (let i = 0; i < scenes.length; i++) {
-        progress[jobId] = {
-          percent: 10 + Math.floor((i / scenes.length) * 30),
-          status: `Generating audio for scene ${i + 1} / ${scenes.length}`
-        };
-        console.log(`[${jobId}] Generating audio for scene ${i + 1}`);
+        const sceneText = scenes[i];
+        const sceneBase = `scene${i + 1}`;
+        const audioPath = path.join(workDir, `${sceneBase}-audio.mp3`);
+        const videoPath = path.join(workDir, `${sceneBase}-video.mp4`);
+        const outputScenePath = path.join(workDir, `${sceneBase}-final.mp4`);
 
-        const audioPath = await generateSceneAudio(scenes[i], voice, workDir, i);
-        scenes[i].audioPath = audioPath;
+        progress[jobId] = { percent: Math.round((i / scenes.length) * 70), status: `Processing scene ${i + 1}...` };
+        console.log(`[SCENE] Processing scene ${i + 1}/${scenes.length}: "${sceneText}"`);
+
+        // === Generate audio for scene ===
+        try {
+          // Only generate audio with actual TTS provider (Polly, ElevenLabs)
+          let ttsProvider = 'polly';
+          let ttsConfig = {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+            region: process.env.AWS_REGION
+          };
+
+          // You can expand here for other TTS providers (ElevenLabs, etc.)
+          await generateSceneAudio(sceneText, voice, audioPath, ttsProvider, ttsConfig);
+          console.log(`[AUDIO] Audio generated at: ${audioPath}`);
+        } catch (err) {
+          console.error(`[ERR] Audio generation failed for scene ${i + 1}:`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Audio generation error for scene ${i + 1}` };
+          cleanupJob(jobId);
+          clearTimeout(watchdog);
+          return;
+        }
+
+        // === Find video clip for scene ===
+        let visualSubject = '';
+        try {
+          visualSubject = await getVisualSubject(sceneText, process.env.OPENAI_API_KEY);
+          if (!visualSubject) visualSubject = sceneText;
+        } catch (err) {
+          visualSubject = sceneText;
+        }
+        let clipResult = null;
+        try {
+          clipResult = await findBestClip(
+            visualSubject,
+            process.env.OPENAI_API_KEY,
+            r2Client,
+            process.env.R2_LIBRARY_BUCKET,
+            process.env.PEXELS_API_KEY,
+            process.env.PIXABAY_API_KEY
+          );
+        } catch (err) {
+          console.error(`[ERR] Video clip match failed for scene ${i + 1}:`, err);
+        }
+        if (!clipResult || !clipResult.url) {
+          progress[jobId] = { percent: 100, status: `Failed: No video found for scene ${i + 1}` };
+          cleanupJob(jobId);
+          clearTimeout(watchdog);
+          return;
+        }
+        console.log(`[VIDEO] Clip for scene ${i + 1}:`, clipResult);
+
+        // === Download or copy video ===
+        try {
+          if (clipResult.source === 'r2') {
+            // R2: Copy from R2 to local path
+            await downloadR2FileToLocal(r2Client, process.env.R2_LIBRARY_BUCKET, clipResult.url, videoPath);
+            console.log(`[VIDEO] Downloaded from R2: ${videoPath}`);
+          } else {
+            // Pexels/Pixabay: Download via HTTP
+            await downloadRemoteFileToLocal(clipResult.url, videoPath);
+            console.log(`[VIDEO] Downloaded from remote: ${videoPath}`);
+          }
+        } catch (err) {
+          console.error(`[ERR] Video download failed for scene ${i + 1}:`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Download error for scene ${i + 1}` };
+          cleanupJob(jobId);
+          clearTimeout(watchdog);
+          return;
+        }
+
+        // === Combine audio & video for scene ===
+        try {
+          await combineAudioAndVideo(audioPath, videoPath, outputScenePath);
+          scenePaths.push(outputScenePath);
+          console.log(`[STEP] Scene ${i + 1} combined: ${outputScenePath}`);
+        } catch (err) {
+          console.error(`[ERR] Combine audio/video failed for scene ${i + 1}:`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Scene combine error for scene ${i + 1}` };
+          cleanupJob(jobId);
+          clearTimeout(watchdog);
+          return;
+        }
       }
 
-      progress[jobId] = { percent: 45, status: 'Finding matching clips for scenes...' };
-
-      // Step 4: Find matching video clip for each scene
-      for (let i = 0; i < scenes.length; i++) {
-        progress[jobId] = {
-          percent: 45 + Math.floor((i / scenes.length) * 20),
-          status: `Finding clip for scene ${i + 1} / ${scenes.length}`
-        };
-        console.log(`[${jobId}] Finding clip for scene ${i + 1}`);
-
-        const clipPath = await findMatchingClip(scenes[i].text, workDir, i);
-        scenes[i].clipPath = clipPath;
+      // === Stitch all scenes together ===
+      progress[jobId] = { percent: 80, status: 'Stitching all scenes...' };
+      const stitchedPath = path.join(workDir, `stitched.mp4`);
+      try {
+        await stitchScenes(scenePaths, stitchedPath);
+        console.log(`[STEP] Scenes stitched to: ${stitchedPath}`);
+      } catch (err) {
+        console.error(`[ERR] Stitched scenes failed:`, err);
+        progress[jobId] = { percent: 100, status: 'Failed: Scene stitching error' };
+        cleanupJob(jobId);
+        clearTimeout(watchdog);
+        return;
       }
 
-      progress[jobId] = { percent: 65, status: 'Combining audio and video clips...' };
-
-      // Step 5: Combine audio and clip for each scene
-      for (let i = 0; i < scenes.length; i++) {
-        progress[jobId] = {
-          percent: 65 + Math.floor((i / scenes.length) * 20),
-          status: `Combining audio and clip for scene ${i + 1} / ${scenes.length}`
-        };
-        console.log(`[${jobId}] Combining audio and clip for scene ${i + 1}`);
-
-        const combinedPath = await combineAudioAndClip(scenes[i].audioPath, scenes[i].clipPath, workDir, i);
-        scenes[i].combinedPath = combinedPath;
+      // === Add watermark/outro/background music as needed ===
+      let finalOutputPath = path.join(workDir, `final.mp4`);
+      try {
+        await addFinalTouches(
+          stitchedPath,
+          finalOutputPath,
+          { watermark: !removeWatermark, outro: !removeWatermark, backgroundMusic: true }
+        );
+        console.log(`[STEP] Final touches applied: ${finalOutputPath}`);
+      } catch (err) {
+        console.error(`[ERR] Final touches failed:`, err);
+        progress[jobId] = { percent: 100, status: 'Failed: Final touches error' };
+        cleanupJob(jobId);
+        clearTimeout(watchdog);
+        return;
       }
 
-      progress[jobId] = { percent: 85, status: 'Assembling final video...' };
-
-      // Step 6: Assemble final video from scenes
-      const concatPath = await assembleFinalVideo(scenes, workDir);
-
-      let finalPath = concatPath;
-
-      // Step 7: Apply outro and watermark if needed
-      if (paidUser && !removeWatermark) {
-        progress[jobId] = { percent: 90, status: 'Appending outro and watermark...' };
-        console.log(`[${jobId}] Adding outro and watermark`);
-
-        finalPath = await applyOutroAndWatermark(concatPath, workDir, jobId);
-      }
-
-      // Step 8: Add background music if requested
-      if (addBackgroundMusic) {
-        progress[jobId] = { percent: 95, status: 'Adding background music...' };
-        console.log(`[${jobId}] Adding background music`);
-
-        finalPath = await addBackgroundMusicToVideo(finalPath, workDir);
-      }
-
-      // Step 9: Upload final video to storage (e.g., Cloudflare R2 or AWS S3)
-      progress[jobId] = { percent: 98, status: 'Uploading final video...' };
-      console.log(`[${jobId}] Uploading final video`);
-
-      const uploadKey = `${jobId}.mp4`;
-      await uploadFileToStorage(finalPath, uploadKey);
-
-      progress[jobId] = { percent: 100, status: 'Done', key: uploadKey };
+      // === Job done ===
+      progress[jobId] = { percent: 100, status: 'Done', key: path.relative(path.join(__dirname, 'renders'), finalOutputPath) };
       finished = true;
-
-      // Cleanup temp files
-      cleanupJob(jobId);
       clearTimeout(watchdog);
-
-      console.log(`[${jobId}] Job completed successfully`);
-
-    } catch (error) {
-      console.error(`[${jobId}] Video generation failed:`, error);
-      progress[jobId] = { percent: 100, status: `Failed: ${error.message}` };
       cleanupJob(jobId);
-      finished = true;
+      console.log(`[DONE] Video generation complete for job ${jobId}`);
+    } catch (err) {
+      console.error(`[ERR] Video generation flow crashed:`, err);
+      progress[jobId] = { percent: 100, status: 'Failed: Server error' };
+      cleanupJob(jobId);
       clearTimeout(watchdog);
     }
   })();
 });
+
 
 
 

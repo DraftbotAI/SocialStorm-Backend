@@ -1,281 +1,210 @@
+console.log('============= [PEXELS HELPER LOADED AT RUNTIME] =============');
+console.log('[DEBUG] DEPLOY TEST', new Date());
+
 /* ===========================================================
-   PEXELS-HELPER.CJS - SocialStormAI
-   -----------------------------------------------------------
-   - Splits scripts into scenes
-   - Finds matching clips (R2, Pexels, Pixabay), NO DUPES
-   - Generates scene audio (copies sample mp3)
-   - Combines audio & video
-   - Assembles final video
-   - Cleans up temp files
-   - Fully async-safe, verbose logging, error-proof
+   SECTION 1: SETUP & DEPENDENCIES
    =========================================================== */
-
-const fs = require('fs');
-const path = require('path');
+require('dotenv').config();
 const axios = require('axios');
-const { exec } = require('child_process');
-const util = require('util');
+const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+const path = require('path');
+const fs = require('fs');
+const { OpenAI } = require('openai');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = process.env.FFMPEG_PATH || require('ffmpeg-static');
-ffmpeg.setFfmpegPath(ffmpegPath);
+console.log('[Pexels Helper] Loaded – HARD FILTERING + MAX RELEVANCE MODE.');
 
-// === CONFIG ===
-const R2_BUCKET = process.env.R2_LIBRARY_BUCKET;
-const R2_ENDPOINT = process.env.R2_ENDPOINT;
-const AWS = require('aws-sdk');
-const s3 = new AWS.S3({
-  endpoint: R2_ENDPOINT,
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION,
-  signatureVersion: 'v4'
-});
+/* ========== DEBUG: ENV VARS ========== */
+console.log('[DEBUG] ENV R2_LIBRARY_BUCKET:', process.env.R2_LIBRARY_BUCKET);
+console.log('[DEBUG] ENV R2_ENDPOINT:', process.env.R2_ENDPOINT);
+console.log('[DEBUG] ENV R2_ACCESS_KEY_ID:', process.env.R2_ACCESS_KEY_ID);
+console.log('[DEBUG] ENV R2_SECRET_ACCESS_KEY:', process.env.R2_SECRET_ACCESS_KEY ? '***' : 'MISSING');
 
-// === UTILS ===
-const sleep = ms => new Promise(res => setTimeout(res, ms));
-const execPromise = util.promisify(exec);
 
-function log(msg, ...args) {
-  console.log(`[PEXELS-HELPER] ${msg}`, ...args);
-}
 
-// === 1. Split Script Into Scenes ===
+/* ===========================================================
+   SECTION 2: SPLIT SCRIPT TO SCENES
+   - Splits input script into array of scene lines
+   =========================================================== */
 function splitScriptToScenes(script) {
-  if (!script || typeof script !== 'string') return [];
-  const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
-  log(`splitScriptToScenes: Split into ${lines.length} scenes`);
-  return lines.map((text, idx) => ({
-    idx,
-    text,
-    audioPath: null,
-    clipPath: null,
-    combinedPath: null,
-  }));
+  if (!script) return [];
+  // Accepts period or new line as delimiter, trims lines, removes empty
+  return script.split(/[\n\.]+/).map(l => l.trim()).filter(Boolean);
 }
 
-// === 2. Generate Scene Audio (copy sample mp3) ===
-async function generateSceneAudio(scene, voice, workDir, idx) {
-  const outPath = path.join(workDir, `scene${idx + 1}-audio.mp3`);
-  const sampleAudioPath = path.join(__dirname, 'sample-audio.mp3');
-  if (!fs.existsSync(sampleAudioPath)) {
-    throw new Error(`Missing sample-audio.mp3 in backend folder!`);
-  }
-  fs.copyFileSync(sampleAudioPath, outPath);
-  log(`Audio copied for scene ${idx + 1}: ${outPath}`);
-  return outPath;
-}
 
-// === 3. Find Matching Clip (R2, then Pexels, then Pixabay), No Dupes ===
-async function findMatchingClip(query, workDir, idx, usedClipsSet = new Set()) {
-  log(`Scene ${idx + 1}: Searching for clip matching "${query}"`);
-  // 1. Try R2 first
-  let clipPath = null;
-  let source = null;
-  let triedClips = [];
 
+/* ===========================================================
+   SECTION 3: GPT SUBJECT EXTRACTOR (VISUAL MATCH PHRASE PICKER)
+   - Uses GPT-4.1 to pull clean visual subject/landmark/object per line
+   =========================================================== */
+async function getVisualSubject(line, openaiApiKey) {
+  if (!line) return '';
   try {
-    const r2Clips = await listR2ClipsMatching(query);
-    for (const file of r2Clips) {
-      if (!usedClipsSet.has(file.Key)) {
-        triedClips.push(file.Key);
-        const localClipPath = path.join(workDir, `scene${idx + 1}-r2.mp4`);
-        await downloadFromR2(file.Key, localClipPath);
-        clipPath = localClipPath;
-        usedClipsSet.add(file.Key);
-        source = 'R2';
-        log(`Scene ${idx + 1}: Found R2 clip: ${file.Key}`);
-        break;
-      }
+    const openai = new OpenAI({ apiKey: openaiApiKey });
+    const prompt = `Given this line from a script for a YouTube Short, extract the single most visually matchable object, landmark, or subject. Respond with just a single noun phrase—no explanation, no animals, no metaphors, no jokes.\n\nLine: "${line}"\n\nVisual subject:`;
+    const completion = await openai.completions.create({
+      model: "gpt-4-1106-preview",
+      prompt,
+      max_tokens: 14,
+      temperature: 0.13,
+      n: 1,
+      stop: ['\n']
+    });
+    const subject = (completion.choices && completion.choices[0] && completion.choices[0].text || '').trim();
+    return subject;
+  } catch (e) {
+    console.warn('[PEXELS-HELPER] Failed to get GPT visual subject:', e);
+    return '';
+  }
+}
+
+
+
+/* ===========================================================
+   SECTION 4: S3 (R2) VIDEO CLIP SEARCH
+   - Attempts to find a matching video in Cloudflare R2 library
+   =========================================================== */
+async function searchR2LibraryForClip(query, s3, bucketName) {
+  try {
+    const command = new ListObjectsV2Command({ Bucket: bucketName });
+    const response = await s3.send(command);
+    if (!response.Contents) return null;
+    // Super basic: just look for filename includes query (case-insensitive)
+    const files = response.Contents.map(obj => obj.Key || '').filter(Boolean);
+    const match = files.find(f => f.toLowerCase().includes(query.toLowerCase()));
+    if (match) {
+      return match;
     }
+    return null;
   } catch (err) {
-    log(`Scene ${idx + 1}: R2 search failed: ${err.message}`);
+    console.error('[PEXELS-HELPER] R2 search error:', err);
+    return null;
   }
-
-  // 2. Fallback: Try Pexels
-  if (!clipPath) {
-    try {
-      const pexelsClips = await searchPexelsVideos(query);
-      for (const clip of pexelsClips) {
-        if (!usedClipsSet.has(clip.id)) {
-          triedClips.push(clip.id);
-          const localClipPath = path.join(workDir, `scene${idx + 1}-pexels.mp4`);
-          await downloadVideoUrl(clip.video_files[0].link, localClipPath);
-          clipPath = localClipPath;
-          usedClipsSet.add(clip.id);
-          source = 'Pexels';
-          log(`Scene ${idx + 1}: Found Pexels clip: ${clip.id}`);
-          break;
-        }
-      }
-    } catch (err) {
-      log(`Scene ${idx + 1}: Pexels search failed: ${err.message}`);
-    }
-  }
-
-  // 3. Fallback: Try Pixabay
-  if (!clipPath) {
-    try {
-      const pixabayClips = await searchPixabayVideos(query);
-      for (const clip of pixabayClips) {
-        if (!usedClipsSet.has(clip.id)) {
-          triedClips.push(clip.id);
-          const localClipPath = path.join(workDir, `scene${idx + 1}-pixabay.mp4`);
-          await downloadVideoUrl(clip.videos.medium.url, localClipPath);
-          clipPath = localClipPath;
-          usedClipsSet.add(clip.id);
-          source = 'Pixabay';
-          log(`Scene ${idx + 1}: Found Pixabay clip: ${clip.id}`);
-          break;
-        }
-      }
-    } catch (err) {
-      log(`Scene ${idx + 1}: Pixabay search failed: ${err.message}`);
-    }
-  }
-
-  if (!clipPath) {
-    log(`Scene ${idx + 1}: No clip found for query "${query}" (tried: ${triedClips.join(', ')})`);
-    throw new Error(`No clip found for: ${query}`);
-  }
-
-  log(`Scene ${idx + 1}: Using ${source} clip: ${clipPath}`);
-  return clipPath;
 }
 
-// === 4. Combine Audio and Clip ===
-async function combineAudioAndClip(audioPath, clipPath, workDir, idx) {
-  const outPath = path.join(workDir, `scene${idx + 1}-combo.mp4`);
-  log(`Combining audio (${audioPath}) and video (${clipPath}) → ${outPath}`);
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(clipPath)
-      .input(audioPath)
-      .outputOptions([
-        '-map 0:v:0',
-        '-map 1:a:0',
-        '-c:v copy',
-        '-c:a aac',
-        '-shortest'
-      ])
-      .on('end', () => {
-        log(`Combined scene ${idx + 1} → ${outPath}`);
-        resolve(outPath);
-      })
-      .on('error', (err) => {
-        log(`ERROR combining scene ${idx + 1}: ${err.message}`);
-        reject(err);
-      })
-      .save(outPath);
-  });
-}
 
-// === 5. Assemble Final Video ===
-async function assembleFinalVideo(scenes, workDir) {
-  const concatListPath = path.join(workDir, 'concat.txt');
-  const outputPath = path.join(workDir, 'final.mp4');
+
+/* ===========================================================
+   SECTION 5: PEXELS API VIDEO CLIP SEARCH
+   - Fallback: queries Pexels API for video matching the visual subject
+   =========================================================== */
+async function searchPexelsForClip(query, apiKey) {
   try {
-    // Write ffmpeg concat list
-    fs.writeFileSync(concatListPath, scenes.map(scene =>
-      `file '${scene.combinedPath.replace(/\\/g, '/')}'`
-    ).join('\n'));
+    const resp = await axios.get('https://api.pexels.com/videos/search', {
+      headers: { Authorization: apiKey },
+      params: { query, per_page: 5 }
+    });
+    if (resp.data && resp.data.videos && resp.data.videos.length > 0) {
+      // Return the best-matching clip URL
+      const clip = resp.data.videos[0];
+      return clip.video_files[0].link;
+    }
+    return null;
+  } catch (err) {
+    console.error('[PEXELS-HELPER] Pexels search error:', err);
+    return null;
+  }
+}
 
-    log(`Assembling final video using list: ${concatListPath}`);
-    await execPromise(`${ffmpegPath} -f concat -safe 0 -i "${concatListPath}" -c copy "${outputPath}"`);
-    log(`Final video assembled: ${outputPath}`);
+
+
+/* ===========================================================
+   SECTION 6: PIXABAY API VIDEO CLIP SEARCH
+   - Final fallback: queries Pixabay API for matching video
+   =========================================================== */
+async function searchPixabayForClip(query, apiKey) {
+  try {
+    const resp = await axios.get('https://pixabay.com/api/videos/', {
+      params: { key: apiKey, q: query, per_page: 3 }
+    });
+    if (resp.data && resp.data.hits && resp.data.hits.length > 0) {
+      // Return the best-matching clip URL
+      const clip = resp.data.hits[0];
+      return clip.videos.medium.url;
+    }
+    return null;
+  } catch (err) {
+    console.error('[PEXELS-HELPER] Pixabay search error:', err);
+    return null;
+  }
+}
+
+
+
+/* ===========================================================
+   SECTION 7: MAIN CLIP MATCHER (ALL SOURCES)
+   - Checks R2 library, then Pexels, then Pixabay, returns first match
+   =========================================================== */
+async function findBestClip(query, openaiApiKey, r2Client, bucket, pexelsApiKey, pixabayApiKey) {
+  // Try Cloudflare R2 first
+  let clip = await searchR2LibraryForClip(query, r2Client, bucket);
+  if (clip) {
+    console.log(`[PEXELS-HELPER] R2 match: ${clip}`);
+    return { source: 'r2', url: clip };
+  }
+  // Try Pexels
+  clip = await searchPexelsForClip(query, pexelsApiKey);
+  if (clip) {
+    console.log(`[PEXELS-HELPER] Pexels match: ${clip}`);
+    return { source: 'pexels', url: clip };
+  }
+  // Try Pixabay
+  clip = await searchPixabayForClip(query, pixabayApiKey);
+  if (clip) {
+    console.log(`[PEXELS-HELPER] Pixabay match: ${clip}`);
+    return { source: 'pixabay', url: clip };
+  }
+  return null;
+}
+
+
+
+/* ===========================================================
+   SECTION 8: AUDIO GENERATION HELPERS (POLLY, ELEVENLABS, ETC)
+   - Generates audio for a scene using TTS provider and returns local file path
+   =========================================================== */
+async function generateSceneAudio(text, voice, outputPath, ttsProvider, ttsConfig) {
+  if (!text || !voice || !outputPath) throw new Error('Missing params for audio generation');
+  // Use the real TTS logic, no sample-audio.mp3 fallback
+  if (ttsProvider === 'polly') {
+    // AWS Polly logic
+    const AWS = require('aws-sdk');
+    const polly = new AWS.Polly({
+      accessKeyId: ttsConfig.accessKeyId,
+      secretAccessKey: ttsConfig.secretAccessKey,
+      region: ttsConfig.region
+    });
+    const params = {
+      Text: text,
+      OutputFormat: 'mp3',
+      VoiceId: voice
+    };
+    const data = await polly.synthesizeSpeech(params).promise();
+    fs.writeFileSync(outputPath, data.AudioStream);
     return outputPath;
-  } catch (err) {
-    log(`ERROR assembling final video: ${err.message}`);
-    throw err;
+  } else if (ttsProvider === 'elevenlabs') {
+    // ElevenLabs logic (implement as needed)
+    // Placeholder — implement actual ElevenLabs call
+    throw new Error('ElevenLabs TTS not implemented in pexels-helper.cjs');
+  } else {
+    throw new Error('Unknown TTS provider: ' + ttsProvider);
   }
 }
 
-// === 6. Cleanup Job ===
-function cleanupJob(jobId) {
-  // Remove job folder and all contents
-  try {
-    const jobDir = path.join(__dirname, 'jobs', jobId);
-    if (fs.existsSync(jobDir)) {
-      fs.rmSync(jobDir, { recursive: true, force: true });
-      log(`Job folder cleaned up: ${jobDir}`);
-    }
-  } catch (err) {
-    log(`ERROR cleaning up job ${jobId}: ${err.message}`);
-  }
-}
 
-// === Helper: List R2 Clips Matching Query ===
-async function listR2ClipsMatching(query) {
-  const prefix = query
-    .toLowerCase()
-    .replace(/[^a-z0-9\- ]/gi, '')
-    .replace(/\s+/g, '-');
-  const params = {
-    Bucket: R2_BUCKET,
-    Prefix: prefix
-  };
-  const res = await s3.listObjectsV2(params).promise();
-  // Filter only video files
-  return (res.Contents || []).filter(obj => obj.Key.endsWith('.mp4'));
-}
 
-// === Helper: Download File from R2 ===
-async function downloadFromR2(key, destPath) {
-  const params = { Bucket: R2_BUCKET, Key: key };
-  const res = await s3.getObject(params).promise();
-  fs.writeFileSync(destPath, res.Body);
-  log(`Downloaded R2 file ${key} → ${destPath}`);
-}
-
-// === Helper: Search Pexels Videos ===
-async function searchPexelsVideos(query) {
-  const apiKey = process.env.PEXELS_API_KEY;
-  if (!apiKey) throw new Error('PEXELS_API_KEY not set');
-  const res = await axios.get(
-    `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=10`,
-    { headers: { Authorization: apiKey } }
-  );
-  return res.data.videos || [];
-}
-
-// === Helper: Search Pixabay Videos ===
-async function searchPixabayVideos(query) {
-  const apiKey = process.env.PIXABAY_API_KEY;
-  if (!apiKey) throw new Error('PIXABAY_API_KEY not set');
-  const res = await axios.get(
-    `https://pixabay.com/api/videos/?key=${apiKey}&q=${encodeURIComponent(query)}&per_page=10`
-  );
-  return res.data.hits || [];
-}
-
-// === Helper: Download Video URL ===
-async function downloadVideoUrl(url, destPath) {
-  const res = await axios.get(url, { responseType: 'stream' });
-  const writer = fs.createWriteStream(destPath);
-  await new Promise((resolve, reject) => {
-    res.data.pipe(writer);
-    let error = null;
-    writer.on('error', err => {
-      error = err;
-      writer.close();
-      reject(err);
-    });
-    writer.on('close', () => {
-      if (!error) resolve();
-    });
-  });
-  log(`Downloaded video: ${url} → ${destPath}`);
-}
-
-// === EXPORTS ===
+/* ===========================================================
+   SECTION 9: EXPORTS
+   =========================================================== */
 module.exports = {
   splitScriptToScenes,
+  getVisualSubject,
+  searchR2LibraryForClip,
+  searchPexelsForClip,
+  searchPixabayForClip,
+  findBestClip,
   generateSceneAudio,
-  findMatchingClip,
-  combineAudioAndClip,
-  assembleFinalVideo,
-  cleanupJob
 };
-
 
 
 

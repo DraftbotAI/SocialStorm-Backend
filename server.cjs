@@ -27,11 +27,18 @@ const { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } = r
 const AWS = require('aws-sdk');
 
 // === OPENAI CLIENT SETUP ===
-const OpenAI = require('openai');
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-console.log('[INFO] OpenAI client initialized.');
+let openai;
+try {
+  const OpenAI = require('openai');
+  if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+  });
+  console.log('[INFO] OpenAI client initialized.');
+} catch (err) {
+  console.error('[FATAL] OpenAI client setup failed:', err);
+  process.exit(1);
+}
 
 // === R2 / S3 BUCKETS & CLIENT SETUP ===
 // Loads both library (clips) and output (videos) buckets
@@ -489,8 +496,8 @@ Description: Uncover the wildest secret spaces hidden inside the world’s most 
 Tags: secrets landmarks travel viral history
     `.trim();
 
-    // === GPT-3.5 fallback-compatible
-    const completion = await openai.createChatCompletion({
+    // === OpenAI v4+ call ===
+    const completion = await openai.chat.completions.create({
       model: "gpt-4-1106-preview",
       temperature: 0.84,
       max_tokens: 900,
@@ -499,7 +506,7 @@ Tags: secrets landmarks travel viral history
       ]
     });
 
-    const raw = completion?.data?.choices?.[0]?.message?.content?.trim() || '';
+    const raw = completion?.choices?.[0]?.message?.content?.trim() || '';
     console.log('[GPT] Raw output:\n' + raw);
 
     // === Parse Output ===
@@ -549,6 +556,7 @@ Tags: secrets landmarks travel viral history
     res.status(500).json({ success: false, error: "Script generation failed" });
   }
 });
+
 
 
 

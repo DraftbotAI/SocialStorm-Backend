@@ -3,7 +3,7 @@
    -----------------------------------------------------------
    - Splits scripts into scenes
    - Finds matching clips (R2, Pexels, Pixabay), NO DUPES
-   - Generates scene audio (stub, adapt as needed)
+   - Generates scene audio (copies sample mp3)
    - Combines audio & video
    - Assembles final video
    - Cleans up temp files
@@ -53,19 +53,16 @@ function splitScriptToScenes(script) {
   }));
 }
 
-// === 2. Generate Scene Audio ===
-// (This is a stub, adapt to your TTS/generation logic)
+// === 2. Generate Scene Audio (copy sample mp3) ===
 async function generateSceneAudio(scene, voice, workDir, idx) {
-  try {
-    // Simulate generating audio (replace with real TTS)
-    const outPath = path.join(workDir, `scene${idx + 1}-audio.mp3`);
-    fs.writeFileSync(outPath, Buffer.from([0x00, 0x00])); // placeholder
-    log(`Audio generated for scene ${idx + 1}: ${outPath}`);
-    return outPath;
-  } catch (err) {
-    log(`ERROR generating audio for scene ${idx + 1}: ${err.message}`);
-    throw err;
+  const outPath = path.join(workDir, `scene${idx + 1}-audio.mp3`);
+  const sampleAudioPath = path.join(__dirname, 'sample-audio.mp3');
+  if (!fs.existsSync(sampleAudioPath)) {
+    throw new Error(`Missing sample-audio.mp3 in backend folder!`);
   }
+  fs.copyFileSync(sampleAudioPath, outPath);
+  log(`Audio copied for scene ${idx + 1}: ${outPath}`);
+  return outPath;
 }
 
 // === 3. Find Matching Clip (R2, then Pexels, then Pixabay), No Dupes ===
@@ -278,6 +275,8 @@ module.exports = {
   assembleFinalVideo,
   cleanupJob
 };
+
+
 
 
 console.log('\n===========[ PEXELS HELPER LOADED | GOD TIER LOGGING READY ]============');

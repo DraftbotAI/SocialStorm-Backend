@@ -522,6 +522,8 @@ console.log('[INIT] Video generation endpoint initialized');
 // Assume voices[] and POLLY_VOICE_IDS are declared above in Section 3
 // Uses splitScriptToScenes and findClipForScene from pexels-helper.cjs
 
+const OUTPUT_BUCKET = 'socialstorm-videos'; // <-- output destination for finished videos
+
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -689,8 +691,26 @@ app.post('/api/generate-video', (req, res) => {
         return;
       }
 
-      // === Job done ===
-      progress[jobId] = { percent: 100, status: 'Done', key: path.relative(path.join(__dirname, 'renders'), finalOutputPath) };
+      // === Upload final video to R2/S3 output bucket ===
+      try {
+        const s3Key = `${jobId}/final.mp4`;
+        const fileData = fs.readFileSync(finalOutputPath);
+        await s3Client.send(new PutObjectCommand({
+          Bucket: OUTPUT_BUCKET,
+          Key: s3Key,
+          Body: fileData,
+          ContentType: 'video/mp4',
+        }));
+        console.log(`[UPLOAD] Uploaded final video to ${OUTPUT_BUCKET}: ${s3Key}`);
+        progress[jobId] = { percent: 100, status: 'Done', key: s3Key };
+      } catch (err) {
+        console.error(`[UPLOAD ERROR] Failed to upload to R2:`, err);
+        progress[jobId] = { percent: 100, status: 'Failed: Upload error' };
+        cleanupJob(jobId);
+        clearTimeout(watchdog);
+        return;
+      }
+
       finished = true;
       clearTimeout(watchdog);
       cleanupJob(jobId);
@@ -707,10 +727,6 @@ app.post('/api/generate-video', (req, res) => {
 
 
 
-
-
-
-
 /* ===========================================================
    SECTION 6: THUMBNAIL GENERATION ENDPOINT
    -----------------------------------------------------------
@@ -722,7 +738,6 @@ app.post('/api/generate-video', (req, res) => {
 
 const { createCanvas, loadImage, registerFont } = require('canvas');
 
-// Optionally register extra fonts for viral style
 const fontPath = path.join(__dirname, 'frontend', 'assets', 'fonts', 'LuckiestGuy-Regular.ttf');
 if (fs.existsSync(fontPath)) {
   registerFont(fontPath, { family: 'LuckiestGuy' });
@@ -839,32 +854,24 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 });
 
 
+
+/* ===========================================================
+   SECTION 7: VIDEO STREAM ENDPOINT
+   -----------------------------------------------------------
+   - Serve videos directly from socialstorm-videos bucket (cloud-only)
+   - Bulletproof path checking, no local fallback (production-optimized)
+   =========================================================== */
+
+const VIDEO_BUCKET = 'socialstorm-videos';
+
 app.get('/video/:key(*)', async (req, res) => {
   const key = req.params.key;
-  const localPath = path.join(__dirname, 'renders', key);
-
-  // 1. Try serving from local disk first
-  if (fs.existsSync(localPath) && fs.statSync(localPath).isFile()) {
-    console.log('[VIDEO SERVE] Found local file:', localPath);
-    res.setHeader('Content-Type', 'video/mp4');
-    return fs.createReadStream(localPath)
-      .on('open', () => {
-        console.log('[VIDEO SERVE] Streaming local video:', localPath);
-      })
-      .on('error', err => {
-        console.error('[VIDEO SERVE] Local stream error:', err);
-        res.status(500).send('Error streaming video');
-      })
-      .pipe(res);
-  }
-
-  // 2. If not local, try from S3/R2 (Railway/Production)
   try {
     const command = new GetObjectCommand({
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: VIDEO_BUCKET,
       Key: key,
     });
-    console.log('[S3] Fetching video from bucket:', process.env.AWS_BUCKET_NAME, 'Key:', key);
+    console.log('[S3] Fetching video from bucket:', VIDEO_BUCKET, 'Key:', key);
     const response = await s3Client.send(command);
 
     res.setHeader('Content-Type', 'video/mp4');
@@ -878,7 +885,7 @@ app.get('/video/:key(*)', async (req, res) => {
       res.status(500).send('Error streaming video');
     });
   } catch (err) {
-    console.error('[ERROR] /video/:key not found anywhere:', key, err);
+    console.error('[ERROR] /video/:key not found:', key, err);
     res.status(404).send('Video not found');
   }
 });

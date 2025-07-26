@@ -15,7 +15,7 @@ const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
-const fsExtra = require('fs-extra'); // <-- Added for recursive folder cleanup
+const fsExtra = require('fs-extra');
 const util = require('util');
 const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
@@ -28,12 +28,12 @@ const AWS = require('aws-sdk');
 const { OpenAI } = require('openai');
 
 // === R2 / S3 BUCKETS & CLIENT SETUP ===
-// Load both library (clips) and output (videos) buckets
+// Loads both library (clips) and output (videos) buckets
 const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || 'socialstorm-library';
 const R2_VIDEOS_BUCKET = process.env.R2_VIDEOS_BUCKET || 'socialstorm-videos';
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY;
 
 // ---- S3Client for Cloudflare R2 ----
 const s3Client = new S3Client({
@@ -60,7 +60,10 @@ const requiredEnvVars = [
   'AWS_SECRET_ACCESS_KEY',
   'AWS_REGION',
   'R2_LIBRARY_BUCKET',
+  'R2_VIDEOS_BUCKET',
   'R2_ENDPOINT',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
   'OPENAI_API_KEY'
 ];
 const missingEnv = requiredEnvVars.filter(key => !process.env[key]);
@@ -71,13 +74,13 @@ if (missingEnv.length > 0) {
 console.log('[INFO] All required environment variables are present.');
 
 // ==== AWS CONFIG ====
-// (Still needed for Polly TTS)
+// (Still needed for Polly TTS, must explicitly use 'us-east-1')
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION
+  region: process.env.AWS_REGION || 'us-east-1'
 });
-console.log('[INFO] AWS SDK configured.');
+console.log('[INFO] AWS SDK configured for Polly, region:', process.env.AWS_REGION);
 
 // ==== EXPRESS INIT ====
 const app = express();

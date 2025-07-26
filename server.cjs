@@ -25,7 +25,13 @@ console.log('[INFO] FFmpeg path set to:', ffmpegPath);
 
 const { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } = require("@aws-sdk/client-s3");
 const AWS = require('aws-sdk');
-const { OpenAI } = require('openai');
+
+// === OPENAI CLIENT SETUP ===
+const OpenAI = require('openai');
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+console.log('[INFO] OpenAI client initialized.');
 
 // === R2 / S3 BUCKETS & CLIENT SETUP ===
 // Loads both library (clips) and output (videos) buckets
@@ -131,8 +137,10 @@ module.exports = {
   JOBS_DIR,
   splitScriptToScenes,
   findClipForScene,
-  cleanupJob
+  cleanupJob,
+  openai
 };
+
 
 
 

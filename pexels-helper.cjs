@@ -63,8 +63,8 @@ function splitScriptToScenes(script) {
 async function extractMainSubject(line, videoTopic = '') {
   if (!OPENAI_API_KEY) return null;
   try {
-    // Extremely focused visual subject prompt, NO metaphors
-    const system = `You extract the REAL, VISUAL SUBJECT of a short scene line for a YouTube Short. Only return the best visual subject (landmark, object, place, person, etc). NO metaphors or quotes. If more than one thing, pick the most famous or most related to topic: "${videoTopic}". One short answer, no extra words.`;
+    // Focused prompt: ONLY return the real, visual subject. No metaphors, no extra words.
+    const system = `You extract the REAL, VISUAL SUBJECT of a short scene line for a YouTube Short. Only return the best visual subject (landmark, object, place, person, etc). NO metaphors, no quotes, no preamble, no description. If more than one thing, pick the most famous or most related to topic: "${videoTopic}". Return just the subject.`;
     const completion = await openai.chat.completions.create({
       model: "gpt-4-1106-preview",
       temperature: 0,
@@ -86,7 +86,7 @@ async function extractMainSubject(line, videoTopic = '') {
 // === Main scene matching function ===
 // Usage: await findClipForScene(sceneText, sceneNum, scriptLines, videoTopic)
 async function findClipForScene(sceneText, sceneNum = 1, scriptLines = [], videoTopic = '') {
-  // Use scene 2's main subject for both 1 & 2
+  // Use scene 2's main subject for both 1 & 2 (always anchor visually)
   let visualSubject;
   if (sceneNum === 1 && scriptLines && scriptLines.length > 1) {
     visualSubject = await extractMainSubject(scriptLines[1], videoTopic);
@@ -107,7 +107,7 @@ async function findClipForScene(sceneText, sceneNum = 1, scriptLines = [], video
     fetchFromPixabay(visualSubject)
   ]);
 
-  // Score results (prefer R2, then Pexels, then Pixabay, but if none contain the *exact* keyword fallback to first found)
+  // Score results (prefer R2, then Pexels, then Pixabay, but if any contain subject keyword, prefer that)
   const candidates = [
     { source: 'R2', url: r2Url },
     { source: 'Pexels', url: pexelsUrl },
@@ -119,7 +119,7 @@ async function findClipForScene(sceneText, sceneNum = 1, scriptLines = [], video
     return null;
   }
 
-  // Simple scoring: prefer match with subject/keyword in filename/url, prefer R2, then Pexels, then Pixabay
+  // Prefer candidate whose URL or key contains the subject (case-insensitive)
   const subjectLc = visualSubject.toLowerCase();
   let best = candidates[0];
   for (const c of candidates) {
@@ -143,6 +143,7 @@ async function searchR2Library(keyword) {
       console.warn('[R2] No files found in library bucket.');
       return null;
     }
+    // Match any key containing the keyword
     const matches = data.Contents
       .map(obj => obj.Key)
       .filter(key => key && key.toLowerCase().includes(keyword.toLowerCase()))
@@ -217,7 +218,7 @@ async function fetchFromPixabay(query) {
 module.exports = {
   splitScriptToScenes,
   findClipForScene,
-  extractMainSubject, // in case you want to use it elsewhere
+  extractMainSubject,
 };
 
 console.log('\n===========[ PEXELS HELPER LOADED | GPT SUBJECT + BEST MATCH | GOD TIER LOGGING READY ]============');

@@ -468,35 +468,33 @@ app.post('/api/generate-script', async (req, res) => {
   }
 
   try {
+    // Prompt for truly viral, well-structured output!
+    const gptPrompt = `
+You're a viral short-form script writer for YouTube Shorts and TikTok.
+- Start with a punchy, funny or dramatic HOOK (scene 1)—must grab attention.
+- Each following line is a scene (one per line, 6-10 total). No dialogue, no repeated info.
+- Every line must be clever, dramatic, or surprising, but also factual. Make it fun and memorable!
+- Absolutely NEVER use animal metaphors, emojis, hashtags, or the words "hook", "scene", "Title:", "Description:", or "Tags:" inside the script lines.
+- Never use quotes around anything.
+- No intros/outros. No summaries.
+- At the end, ALWAYS output three lines with the metadata fields in this exact format (no quotes):
+Title: [A viral, funny, dramatic YouTube short title]
+Description: [Short, SEO-friendly, what the video is about, no hashtags]
+Tags: [max 5, separated by spaces, no commas, no hashtags symbol]
+`.trim();
+
     console.log('[GPT] Calling OpenAI for viral script...');
     const completion = await openai.chat.completions.create({
       model: "gpt-4-1106-preview",
-      temperature: 0.84,
-      max_tokens: 800,
+      temperature: 0.86,
+      max_tokens: 900,
       messages: [
-        {
-          role: "system",
-          content: `
-You're a viral short-form script writer for YouTube Shorts and TikToks.
-Start with a strong, funny or dramatic HOOK (scene 1), always punchy.
-Each following line is a new scene—one sentence per scene, no dialogue.
-No animal metaphors, no emojis, no hashtags, no quotes, no intro/outro lines.
-Make every line factually interesting, clever, and have a sense of humor or drama.
-NEVER include "Title:", "Description:" or "Tags:" in the script lines.
-Do NOT repeat lines. No summary. 6-10 lines max.
-At the end, provide exactly:
-Title: [Viral title, dramatic/funny, no quotes]
-Description: [SEO, friendly, what the short is about, no hashtags]
-Tags: [list, max 5, separated by spaces, no commas]
-            `.trim()
-        },
+        { role: "system", content: gptPrompt },
         {
           role: "user",
           content: `Write a viral short-form script about: ${idea}
 Format:
-[SCENE 1: HOOK]
-[SCENE 2: ...]
-[...]
+[Each scene as one punchy sentence, no scene numbers]
 Title: ...
 Description: ...
 Tags: ...`
@@ -508,45 +506,42 @@ Tags: ...`
     console.log('[GPT] Response received. Raw length:', raw.length);
     console.log('[RAW OUTPUT START]\n' + raw + '\n[RAW OUTPUT END]');
 
-    // Parse the script and metadata
-    let scriptLines = [];
+    // 1. Split by line, find where metadata starts
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+    let metaIdx = lines.findIndex(l => /^title\s*:/i.test(l));
+    if (metaIdx === -1) metaIdx = lines.length - 3; // Fallback if GPT gets weird
+
+    // 2. Clean scene lines (before metadata)
+    let scriptLines = lines.slice(0, metaIdx)
+      .filter(l => !!l && !/^title\s*:/i.test(l) && !/^description\s*:/i.test(l) && !/^tags?\s*:/i.test(l))
+      .map(l => l.replace(/^\[?scene\s*\d+[:\]\-]*\s*/i, '')) // Remove [Scene X:] prefixes, if any
+      .map(l => l.replace(/^[-–•]+/, '').trim()) // Remove bullets or dashes
+      .filter(l => !!l && l.length > 0);
+
+    // 3. Extract metadata
     let title = '';
     let description = '';
     let tags = '';
-
-    // 1. Extract lines before Title/Description/Tags
-    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
-    let metaIndex = lines.findIndex(l => /^title\s*[:\-]/i.test(l));
-    if (metaIndex === -1) metaIndex = lines.findIndex(l => /^description\s*[:\-]/i.test(l));
-    if (metaIndex === -1) metaIndex = lines.findIndex(l => /^tags?\s*[:\-]/i.test(l));
-    if (metaIndex === -1) metaIndex = lines.length; // fallback
-
-    scriptLines = lines.slice(0, metaIndex)
-      .map(l => l.replace(/^\[?scene\s*\d+\:?\]?\s*/i, '')) // Remove [Scene N:] prefixes if present
-      .map(l => l.replace(/^[-\s]+/, ''))                  // Remove leading dashes or spaces
-      .filter(l => l.length > 0 && !/^title\s*[:\-]/i.test(l) && !/^description\s*[:\-]/i.test(l) && !/^tags?\s*[:\-]/i.test(l));
-
-    // 2. Extract metadata fields
-    for (const line of lines.slice(metaIndex)) {
-      if (/^title\s*[:\-]/i.test(line))       title = line.split(/[:\-]/)[1]?.trim() || '';
-      else if (/^description\s*[:\-]/i.test(line)) description = line.split(/[:\-]/)[1]?.trim() || '';
-      else if (/^(tags?|hashtags?)\s*[:\-]/i.test(line)) tags = line.split(/[:\-]/)[1]?.trim() || '';
+    for (let i = metaIdx; i < lines.length; i++) {
+      if (/^title\s*:/i.test(lines[i])) title = lines[i].split(/:/)[1]?.trim() || '';
+      if (/^description\s*:/i.test(lines[i])) description = lines[i].split(/:/)[1]?.trim() || '';
+      if (/^tags?\s*:/i.test(lines[i])) tags = lines[i].split(/:/)[1]?.trim() || '';
     }
 
-    // 3. Fallbacks if needed
+    // Fallbacks
+    if (!scriptLines.length) scriptLines = ['Oops, script could not be generated. Try again.'];
     if (!title) title = idea.length < 60 ? idea : idea.slice(0, 57) + "...";
     if (!description) description = `Here's a quick look at "${idea}" – stay tuned.`;
-    if (!tags) tags = "#shorts #viral";
-    if (!scriptLines.length) scriptLines = ['Something went wrong generating the script.'];
+    if (!tags) tags = "shorts viral";
 
-    // Log final results
-    console.log('[PARSED] script lines:', scriptLines.length);
-    scriptLines.forEach((l, idx) => console.log(`[SCENE ${idx + 1}] ${l}`));
+    // Log results
+    console.log('[PARSED] Script lines:', scriptLines.length);
+    scriptLines.forEach((l, i) => console.log(`[SCENE ${i + 1}] ${l}`));
     console.log('[PARSED] title:', title);
     console.log('[PARSED] description:', description);
     console.log('[PARSED] tags:', tags);
 
-    // Return
+    // Return as expected
     res.json({
       success: true,
       script: scriptLines,

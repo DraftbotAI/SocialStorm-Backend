@@ -454,7 +454,7 @@ module.exports = {
 
 console.log('[INFO] Registering /api/generate-script endpoint...');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = require('openai'); // Or import { OpenAI } if you use ES modules
 
 app.post('/api/generate-script', async (req, res) => {
   const idea = req.body.idea?.trim();
@@ -468,80 +468,76 @@ app.post('/api/generate-script', async (req, res) => {
   }
 
   try {
-    // Prompt for truly viral, well-structured output!
-    const gptPrompt = `
-You're a viral short-form script writer for YouTube Shorts and TikTok.
-- Start with a punchy, funny or dramatic HOOK (scene 1)—must grab attention.
-- Each following line is a scene (one per line, 6-10 total). No dialogue, no repeated info.
-- Every line must be clever, dramatic, or surprising, but also factual. Make it fun and memorable!
-- Absolutely NEVER use animal metaphors, emojis, hashtags, or the words "hook", "scene", "Title:", "Description:", or "Tags:" inside the script lines.
-- Never use quotes around anything.
-- No intros/outros. No summaries.
-- At the end, ALWAYS output three lines with the metadata fields in this exact format (no quotes):
-Title: [A viral, funny, dramatic YouTube short title]
-Description: [Short, SEO-friendly, what the video is about, no hashtags]
-Tags: [max 5, separated by spaces, no commas, no hashtags symbol]
-`.trim();
+    const prompt = `
+You are a viral YouTube Shorts scriptwriter.
+Write a viral script about: ${idea}
+Rules:
+- Line 1 must be a dramatic or funny HOOK (attention-grabber about the *theme*).
+- Each line = one scene, short and punchy, no dialogue, no numbers, no tags.
+- 6-10 lines total, each line is a separate scene.
+- No quotes, emojis, hashtags, or scene numbers.
+- After script lines, output:
+Title: [viral title, no quotes]
+Description: [short SEO description, no hashtags]
+Tags: [max 5, space-separated, no hashtags or commas]
+Example:
+Did you know famous landmarks hide wild secrets?
+...
+Title: The Wildest Secret Rooms Inside Landmarks
+Description: Uncover the wildest secret spaces hidden inside the world’s most famous landmarks.
+Tags: secrets landmarks travel viral history
+    `.trim();
 
-    console.log('[GPT] Calling OpenAI for viral script...');
     const completion = await openai.chat.completions.create({
       model: "gpt-4-1106-preview",
-      temperature: 0.86,
+      temperature: 0.84,
       max_tokens: 900,
       messages: [
-        { role: "system", content: gptPrompt },
-        {
-          role: "user",
-          content: `Write a viral short-form script about: ${idea}
-Format:
-[Each scene as one punchy sentence, no scene numbers]
-Title: ...
-Description: ...
-Tags: ...`
-        }
+        { role: "system", content: prompt }
       ]
     });
 
     const raw = completion.choices?.[0]?.message?.content?.trim() || '';
-    console.log('[GPT] Response received. Raw length:', raw.length);
-    console.log('[RAW OUTPUT START]\n' + raw + '\n[RAW OUTPUT END]');
+    console.log('[GPT] Raw output:\n' + raw);
 
-    // 1. Split by line, find where metadata starts
-    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
-    let metaIdx = lines.findIndex(l => /^title\s*:/i.test(l));
-    if (metaIdx === -1) metaIdx = lines.length - 3; // Fallback if GPT gets weird
-
-    // 2. Clean scene lines (before metadata)
-    let scriptLines = lines.slice(0, metaIdx)
-      .filter(l => !!l && !/^title\s*:/i.test(l) && !/^description\s*:/i.test(l) && !/^tags?\s*:/i.test(l))
-      .map(l => l.replace(/^\[?scene\s*\d+[:\]\-]*\s*/i, '')) // Remove [Scene X:] prefixes, if any
-      .map(l => l.replace(/^[-–•]+/, '').trim()) // Remove bullets or dashes
-      .filter(l => !!l && l.length > 0);
-
-    // 3. Extract metadata
+    // Parse
+    let scriptLines = [];
     let title = '';
     let description = '';
     let tags = '';
-    for (let i = metaIdx; i < lines.length; i++) {
-      if (/^title\s*:/i.test(lines[i])) title = lines[i].split(/:/)[1]?.trim() || '';
-      if (/^description\s*:/i.test(lines[i])) description = lines[i].split(/:/)[1]?.trim() || '';
-      if (/^tags?\s*:/i.test(lines[i])) tags = lines[i].split(/:/)[1]?.trim() || '';
+
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+
+    // Extract meta fields
+    let titleIdx = lines.findIndex(l => /^title\s*:/i.test(l));
+    let descIdx = lines.findIndex(l => /^description\s*:/i.test(l));
+    let tagsIdx = lines.findIndex(l => /^tags?\s*:/i.test(l));
+
+    // Script is before first meta field
+    const metaStart = [titleIdx, descIdx, tagsIdx].filter(x => x > -1).sort((a,b)=>a-b)[0] || lines.length;
+    scriptLines = lines.slice(0, metaStart).filter(l =>
+      !/^title\s*:/i.test(l) && !/^description\s*:/i.test(l) && !/^tags?\s*:/i.test(l)
+    );
+    if (scriptLines.length > 10) scriptLines = scriptLines.slice(0, 10);
+
+    // Meta fields
+    for (const l of lines.slice(metaStart)) {
+      if (/^title\s*:/i.test(l)) title = l.replace(/^title\s*:/i, '').trim();
+      else if (/^description\s*:/i.test(l)) description = l.replace(/^description\s*:/i, '').trim();
+      else if (/^tags?\s*:/i.test(l)) tags = l.replace(/^tags?\s*:/i, '').trim();
     }
 
-    // Fallbacks
-    if (!scriptLines.length) scriptLines = ['Oops, script could not be generated. Try again.'];
     if (!title) title = idea.length < 60 ? idea : idea.slice(0, 57) + "...";
     if (!description) description = `Here's a quick look at "${idea}" – stay tuned.`;
     if (!tags) tags = "shorts viral";
 
-    // Log results
-    console.log('[PARSED] Script lines:', scriptLines.length);
-    scriptLines.forEach((l, i) => console.log(`[SCENE ${i + 1}] ${l}`));
+    if (!scriptLines.length) scriptLines = ['Something went wrong generating the script.'];
+
+    console.log('[PARSED] script lines:', scriptLines.length, scriptLines);
     console.log('[PARSED] title:', title);
     console.log('[PARSED] description:', description);
     console.log('[PARSED] tags:', tags);
 
-    // Return as expected
     res.json({
       success: true,
       script: scriptLines,
@@ -551,7 +547,6 @@ Tags: ...`
         hashtags: tags
       }
     });
-
   } catch (err) {
     console.error('[FATAL] Script generation failed:', err);
     res.status(500).json({ success: false, error: "Script generation failed" });
@@ -593,200 +588,165 @@ app.post('/api/generate-video', (req, res) => {
     }, 12 * 60 * 1000); // 12 minutes
 
     try {
-      // Parse inputs
       const {
         script = '',
         voice = '',
         paidUser = false,
         removeWatermark = false,
-        title = '' // If you capture the main topic/title from /generate-script, pass it here
+        title = ''
       } = req.body || {};
-      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Watermark removed: ${removeWatermark}`);
+      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark}`);
+      console.log(`[DEBUG] Raw script:\n${script}`);
 
-      // Validate
+      // === Validation ===
       if (!script || !voice) {
         progress[jobId] = { percent: 100, status: 'Failed: Missing script or voice.' };
-        cleanupJob(jobId);
-        clearTimeout(watchdog);
+        cleanupJob(jobId); clearTimeout(watchdog);
         return;
       }
 
-      // === DETERMINE VOICE PROVIDER ===
       const selectedVoice = voices.find(v => v.id === voice);
-      let ttsProvider = selectedVoice ? selectedVoice.provider : null;
+      const ttsProvider = selectedVoice ? selectedVoice.provider : null;
 
       if (!ttsProvider) {
-        progress[jobId] = { percent: 100, status: `Failed: Unknown voice selected (${voice}).` };
-        cleanupJob(jobId);
-        clearTimeout(watchdog);
+        progress[jobId] = { percent: 100, status: `Failed: Unknown voice (${voice})` };
+        cleanupJob(jobId); clearTimeout(watchdog);
         return;
       }
 
-      // === PROVIDER-SPECIFIC VALIDATION ===
-      if (ttsProvider.toLowerCase() === 'polly') {
-        if (!POLLY_VOICE_IDS.includes(voice)) {
-          progress[jobId] = { percent: 100, status: `Failed: Invalid AWS Polly voice selected (${voice}).` };
-          cleanupJob(jobId);
-          clearTimeout(watchdog);
-          return;
-        }
+      if (ttsProvider.toLowerCase() === 'polly' && !POLLY_VOICE_IDS.includes(voice)) {
+        progress[jobId] = { percent: 100, status: `Failed: Invalid Polly voice (${voice})` };
+        cleanupJob(jobId); clearTimeout(watchdog);
+        return;
       }
 
-      // Prepare work dir
       const workDir = path.join(__dirname, 'renders', jobId);
       if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
       console.log(`[STEP] Work dir created: ${workDir}`);
 
-      // Split script to scenes (returns array of { id, text })
       const scenes = splitScriptToScenes(script);
       if (!scenes.length) {
-        progress[jobId] = { percent: 100, status: 'Failed: Script split error.' };
-        cleanupJob(jobId);
-        clearTimeout(watchdog);
+        progress[jobId] = { percent: 100, status: 'Failed: No scenes from script' };
+        cleanupJob(jobId); clearTimeout(watchdog);
         return;
       }
-      console.log(`[STEP] Script split to ${scenes.length} scenes.`);
+      console.log(`[STEP] Script split to ${scenes.length} scenes`);
 
-      // Main scene processing loop
       let scenePaths = [];
-      let firstClipUrl = null; // For hook/topic continuity
+      let firstClipUrl = null;
 
       for (let i = 0; i < scenes.length; i++) {
         const { id: sceneId, text: sceneText } = scenes[i];
-        const sceneBase = sceneId;
-        const audioPath = path.join(workDir, `${sceneBase}-audio.mp3`);
-        const videoPath = path.join(workDir, `${sceneBase}-video.mp4`);
-        const outputScenePath = path.join(workDir, `${sceneBase}-final.mp4`);
+        const base = sceneId;
+        const audioPath = path.join(workDir, `${base}-audio.mp3`);
+        const videoPath = path.join(workDir, `${base}-video.mp4`);
+        const finalPath = path.join(workDir, `${base}-final.mp4`);
 
-        progress[jobId] = { percent: Math.round((i / scenes.length) * 70), status: `Processing scene ${i + 1}...` };
-        console.log(`[SCENE] Processing scene ${i + 1}/${scenes.length}: "${sceneText}"`);
+        progress[jobId] = {
+          percent: Math.floor((i / scenes.length) * 70),
+          status: `Processing scene ${i + 1}/${scenes.length}`
+        };
+        console.log(`[SCENE ${i + 1}] Text: "${sceneText}"`);
 
-        // === Generate audio for scene ===
         try {
           await generateSceneAudio(sceneText, voice, audioPath, ttsProvider);
-          console.log(`[AUDIO] Audio generated at: ${audioPath}`);
+          console.log(`[AUDIO] Scene ${i + 1} audio created → ${audioPath}`);
         } catch (err) {
-          console.error(`[ERR] Audio generation failed for scene ${i + 1}:`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Audio generation error for scene ${i + 1}` };
-          cleanupJob(jobId);
-          clearTimeout(watchdog);
-          return;
+          console.error(`[ERR] Audio gen failed for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Audio gen error (scene ${i + 1})` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Find video clip for scene ===
         let clipUrl = null;
         try {
-          // Special rule: scene 0 (hook) and scene 1 (main subject) should use the same main subject clip for visual continuity
           if (i === 1 && firstClipUrl) {
             clipUrl = firstClipUrl;
-            console.log(`[VIDEO] Using first scene's clip again for scene 2 for topic continuity: ${clipUrl}`);
+            console.log(`[VIDEO] Using first scene clip for continuity → ${clipUrl}`);
           } else {
-            // Pass all context for best GPT-powered matching
-            clipUrl = await findClipForScene(
-              sceneText,
-              i,
-              scenes.map(s => s.text),
-              title || ''
-            );
-            if (i === 0) firstClipUrl = clipUrl; // Save for scene 2
+            clipUrl = await findClipForScene(sceneText, i, scenes.map(s => s.text), title || '');
+            if (i === 0) firstClipUrl = clipUrl;
           }
         } catch (err) {
-          console.error(`[ERR] Video clip match failed for scene ${i + 1}:`, err);
+          console.error(`[ERR] Clip match failed scene ${i + 1}`, err);
         }
-        if (!clipUrl) {
-          progress[jobId] = { percent: 100, status: `Failed: No video found for scene ${i + 1}` };
-          cleanupJob(jobId);
-          clearTimeout(watchdog);
-          return;
-        }
-        console.log(`[VIDEO] Clip for scene ${i + 1}: ${clipUrl}`);
 
-        // === Download video to local ===
+        if (!clipUrl) {
+          progress[jobId] = { percent: 100, status: `Failed: No clip for scene ${i + 1}` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
+        }
+
         try {
           await downloadRemoteFileToLocal(clipUrl, videoPath);
-          console.log(`[VIDEO] Downloaded: ${videoPath}`);
+          console.log(`[VIDEO] Downloaded → ${videoPath}`);
         } catch (err) {
-          console.error(`[ERR] Video download failed for scene ${i + 1}:`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Download error for scene ${i + 1}` };
-          cleanupJob(jobId);
-          clearTimeout(watchdog);
-          return;
+          console.error(`[ERR] Clip download failed (scene ${i + 1})`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Clip download error (scene ${i + 1})` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Combine audio & video for scene ===
         try {
-          await combineAudioAndVideo(audioPath, videoPath, outputScenePath);
-          scenePaths.push(outputScenePath);
-          console.log(`[STEP] Scene ${i + 1} combined: ${outputScenePath}`);
+          await combineAudioAndVideo(audioPath, videoPath, finalPath);
+          scenePaths.push(finalPath);
+          console.log(`[SCENE] Final scene ${i + 1} ready → ${finalPath}`);
         } catch (err) {
-          console.error(`[ERR] Combine audio/video failed for scene ${i + 1}:`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Scene combine error for scene ${i + 1}` };
-          cleanupJob(jobId);
-          clearTimeout(watchdog);
-          return;
+          console.error(`[ERR] Scene combine failed (scene ${i + 1})`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Scene combine error (scene ${i + 1})` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
         }
       }
 
-      // === Stitch all scenes together ===
-      progress[jobId] = { percent: 80, status: 'Stitching all scenes...' };
       const stitchedPath = path.join(workDir, `stitched.mp4`);
+      progress[jobId] = { percent: 80, status: 'Stitching scenes...' };
+
       try {
         await stitchScenes(scenePaths, stitchedPath);
-        console.log(`[STEP] Scenes stitched to: ${stitchedPath}`);
+        console.log(`[STITCH] All scenes stitched → ${stitchedPath}`);
       } catch (err) {
-        console.error(`[ERR] Stitched scenes failed:`, err);
-        progress[jobId] = { percent: 100, status: 'Failed: Scene stitching error' };
-        cleanupJob(jobId);
-        clearTimeout(watchdog);
-        return;
+        console.error(`[ERR] Stitching scenes failed`, err);
+        progress[jobId] = { percent: 100, status: 'Failed: Stitching scenes' };
+        cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // === Add watermark/outro/background music as needed ===
-      let finalOutputPath = path.join(workDir, `final.mp4`);
+      const finalPath = path.join(workDir, `final.mp4`);
       try {
-        await addFinalTouches(
-          stitchedPath,
-          finalOutputPath,
-          { watermark: !removeWatermark, outro: !removeWatermark, backgroundMusic: true }
-        );
-        console.log(`[STEP] Final touches applied: ${finalOutputPath}`);
+        await addFinalTouches(stitchedPath, finalPath, {
+          watermark: !removeWatermark,
+          outro: !removeWatermark,
+          backgroundMusic: true
+        });
+        console.log(`[FINAL] Final touches complete → ${finalPath}`);
       } catch (err) {
-        console.error(`[ERR] Final touches failed:`, err);
-        progress[jobId] = { percent: 100, status: 'Failed: Final touches error' };
-        cleanupJob(jobId);
-        clearTimeout(watchdog);
-        return;
+        console.error(`[ERR] Final touchup failed`, err);
+        progress[jobId] = { percent: 100, status: 'Failed: Final touchup' };
+        cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // === Upload final video to R2 output bucket ===
       try {
         const s3Key = `${jobId}.mp4`;
-        const fileData = fs.readFileSync(finalOutputPath);
+        const fileData = fs.readFileSync(finalPath);
         await s3Client.send(new PutObjectCommand({
-          Bucket: process.env.R2_VIDEOS_BUCKET, // --- ENSURE this is set and correct
+          Bucket: process.env.R2_VIDEOS_BUCKET,
           Key: s3Key,
           Body: fileData,
-          ContentType: 'video/mp4',
+          ContentType: 'video/mp4'
         }));
-        console.log(`[UPLOAD] Uploaded final video to ${process.env.R2_VIDEOS_BUCKET}: ${s3Key}`);
+        console.log(`[UPLOAD] Uploaded → R2:${s3Key}`);
         progress[jobId] = { percent: 100, status: 'Done', key: s3Key };
       } catch (err) {
-        console.error(`[UPLOAD ERROR] Failed to upload to R2:`, err);
-        progress[jobId] = { percent: 100, status: 'Failed: Upload error' };
-        cleanupJob(jobId);
-        clearTimeout(watchdog);
-        return;
+        console.error(`[ERR] R2 upload failed`, err);
+        progress[jobId] = { percent: 100, status: 'Failed: Upload to R2' };
+        cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
       finished = true;
       clearTimeout(watchdog);
       cleanupJob(jobId);
-      console.log(`[DONE] Video generation complete for job ${jobId}`);
+      console.log(`[DONE] Job ${jobId} complete ✅`);
+
     } catch (err) {
-      console.error(`[ERR] Video generation flow crashed:`, err);
-      progress[jobId] = { percent: 100, status: 'Failed: Server error' };
-      cleanupJob(jobId);
-      clearTimeout(watchdog);
+      console.error(`[CRASH] Fatal video gen error`, err);
+      progress[jobId] = { percent: 100, status: 'Failed: Crash' };
+      cleanupJob(jobId); clearTimeout(watchdog);
     }
   })();
 });
@@ -931,38 +891,43 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 app.get('/video/:key(*)', async (req, res) => {
   const key = req.params.key;
 
-  // Sanity check for empty key, directory traversal, etc.
-  if (!key || key.includes('..') || key.trim() === '') {
+  // === Sanity check for bad keys ===
+  if (!key || typeof key !== 'string' || key.includes('..') || key.trim() === '') {
     console.warn('[VIDEO SERVE] Invalid or missing key:', key);
     return res.status(400).send('Invalid video key');
   }
 
   try {
+    console.log(`[VIDEO] Request to stream key: ${key}`);
+
     const command = new GetObjectCommand({
       Bucket: process.env.R2_VIDEOS_BUCKET,
       Key: key,
     });
-    console.log('[S3] Fetching video from bucket:', process.env.R2_VIDEOS_BUCKET, 'Key:', key);
+
+    console.log(`[S3] Fetching from bucket: ${process.env.R2_VIDEOS_BUCKET} → ${key}`);
     const response = await s3Client.send(command);
 
-    // Set appropriate headers
+    // === Set headers ===
     res.setHeader('Content-Type', 'video/mp4');
     if (response.ContentLength)
       res.setHeader('Content-Length', response.ContentLength);
 
-    // Pipe video to client
-    console.log('[S3] Streaming video to client:', key);
+    // === Stream video ===
+    console.log(`[STREAM] Streaming to client: ${key}`);
     response.Body.pipe(res);
 
     response.Body.on('error', err => {
-      console.error('[S3] Streaming error:', err);
+      console.error(`[STREAM ERROR] Failed to stream ${key}:`, err);
       if (!res.headersSent) res.status(500).send('Error streaming video');
     });
+
   } catch (err) {
-    console.error('[ERROR] /video/:key not found:', key, err);
+    console.error(`[ERROR] Failed to retrieve video key ${key}:`, err);
     res.status(404).send('Video not found');
   }
 });
+
 
 
 

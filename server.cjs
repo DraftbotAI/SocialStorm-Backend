@@ -281,6 +281,60 @@ async function stitchScenes(scenePaths, outputPath) {
   });
 }
 
+// =====================================================
+// FINAL TOUCHES: WATERMARK / OUTRO / MUSIC (HELPER)
+// =====================================================
+
+/**
+ * Applies watermark, outro, and/or background music to final stitched video.
+ * - watermark: boolean, overlay logo at bottom-right
+ * - outro: boolean, placeholder (no-op for now)
+ * - backgroundMusic: boolean, placeholder (no-op for now)
+ *
+ * @param {string} inputPath - Path to stitched video.
+ * @param {string} outputPath - Where to save final output.
+ * @param {Object} opts - Options { watermark, outro, backgroundMusic }
+ */
+async function addFinalTouches(inputPath, outputPath, opts = {}) {
+  console.log(`[STEP] Adding final touches: watermark=${!!opts.watermark}, outro=${!!opts.outro}, bgm=${!!opts.backgroundMusic}`);
+  let cmd = ffmpeg().input(inputPath);
+
+  // === Watermark ===
+  if (opts.watermark) {
+    const watermarkPath = path.join(__dirname, 'public', 'logo.png');
+    if (!fs.existsSync(watermarkPath)) {
+      console.warn('[WATERMARK] Logo not found:', watermarkPath);
+      // fallback: just copy
+      fs.copyFileSync(inputPath, outputPath);
+      return outputPath;
+    }
+    cmd = cmd.input(watermarkPath)
+      .complexFilter([
+        '[0:v][1:v]overlay=W-w-40:H-h-40' // logo bottom right, adjust offset as needed
+      ]);
+  }
+
+  // === Outro ===
+  // Placeholder: no-op for now (can append in future version)
+
+  // === Background Music ===
+  // Placeholder: no-op for now (can add bg music layer here)
+
+  return new Promise((resolve, reject) => {
+    cmd
+      .outputOptions(['-c:v libx264', '-c:a aac', '-pix_fmt yuv420p', '-movflags +faststart'])
+      .save(outputPath)
+      .on('end', () => {
+        console.log(`[FINAL] Final video with touches saved: ${outputPath}`);
+        resolve(outputPath);
+      })
+      .on('error', (err) => {
+        console.error(`[FINAL] Final touches error:`, err);
+        reject(err);
+      });
+  });
+}
+
 
 
 

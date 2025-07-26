@@ -2,7 +2,7 @@
    SECTION 1: SETUP & DEPENDENCIES
    -----------------------------------------------------------
    - Load env, modules, API keys, paths
-   - Configure AWS + OpenAI + FFmpeg
+   - Configure AWS + Cloudflare R2 + OpenAI + FFmpeg
    =========================================================== */
 
 console.log('\n========== [BOOTING SERVER] ==========');
@@ -27,6 +27,28 @@ const { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } = r
 const AWS = require('aws-sdk');
 const { OpenAI } = require('openai');
 
+// === R2 / S3 BUCKETS & CLIENT SETUP ===
+// Load both library (clips) and output (videos) buckets
+const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || 'socialstorm-library';
+const R2_VIDEOS_BUCKET = process.env.R2_VIDEOS_BUCKET || 'socialstorm-videos';
+const R2_ENDPOINT = process.env.R2_ENDPOINT;
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+
+// ---- S3Client for Cloudflare R2 ----
+const s3Client = new S3Client({
+  region: 'auto',
+  endpoint: R2_ENDPOINT,
+  credentials: {
+    accessKeyId: R2_ACCESS_KEY_ID,
+    secretAccessKey: R2_SECRET_ACCESS_KEY,
+  },
+});
+console.log('[INFO] Cloudflare R2 S3Client initialized.');
+console.log('[INFO] R2_LIBRARY_BUCKET:', R2_LIBRARY_BUCKET);
+console.log('[INFO] R2_VIDEOS_BUCKET:', R2_VIDEOS_BUCKET);
+console.log('[INFO] R2_ENDPOINT:', R2_ENDPOINT);
+
 // === JOBS DIR DEFINITION (for temp/progress management) ===
 const JOBS_DIR = path.join(__dirname, 'jobs');
 
@@ -49,6 +71,7 @@ if (missingEnv.length > 0) {
 console.log('[INFO] All required environment variables are present.');
 
 // ==== AWS CONFIG ====
+// (Still needed for Polly TTS)
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -93,6 +116,20 @@ function cleanupJob(jobId) {
     console.warn(`[WARN] Cleanup failed for job ${jobId}:`, err);
   }
 }
+
+// ---- EXPORT any needed shared objects for later sections ----
+module.exports = {
+  app,
+  progress,
+  s3Client,
+  R2_LIBRARY_BUCKET,
+  R2_VIDEOS_BUCKET,
+  R2_ENDPOINT,
+  JOBS_DIR,
+  splitScriptToScenes,
+  findClipForScene,
+  cleanupJob
+};
 
 
 
@@ -522,8 +559,6 @@ console.log('[INIT] Video generation endpoint initialized');
 // Assume voices[] and POLLY_VOICE_IDS are declared above in Section 3
 // Uses splitScriptToScenes and findClipForScene from pexels-helper.cjs
 
-const OUTPUT_BUCKET = 'socialstorm-videos'; // <-- output destination for finished videos
-
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -691,17 +726,17 @@ app.post('/api/generate-video', (req, res) => {
         return;
       }
 
-      // === Upload final video to R2/S3 output bucket ===
+      // === Upload final video to R2 output bucket ===
       try {
-        const s3Key = `${jobId}/final.mp4`;
+        const s3Key = `${jobId}.mp4`;
         const fileData = fs.readFileSync(finalOutputPath);
         await s3Client.send(new PutObjectCommand({
-          Bucket: OUTPUT_BUCKET,
+          Bucket: process.env.R2_VIDEOS_BUCKET,
           Key: s3Key,
           Body: fileData,
           ContentType: 'video/mp4',
         }));
-        console.log(`[UPLOAD] Uploaded final video to ${OUTPUT_BUCKET}: ${s3Key}`);
+        console.log(`[UPLOAD] Uploaded final video to ${process.env.R2_VIDEOS_BUCKET}: ${s3Key}`);
         progress[jobId] = { percent: 100, status: 'Done', key: s3Key };
       } catch (err) {
         console.error(`[UPLOAD ERROR] Failed to upload to R2:`, err);
@@ -723,7 +758,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
 
 
 
@@ -858,20 +892,18 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 /* ===========================================================
    SECTION 7: VIDEO STREAM ENDPOINT
    -----------------------------------------------------------
-   - Serve videos directly from socialstorm-videos bucket (cloud-only)
+   - Serve videos directly from R2_VIDEOS_BUCKET (cloud-only)
    - Bulletproof path checking, no local fallback (production-optimized)
    =========================================================== */
-
-const VIDEO_BUCKET = 'socialstorm-videos';
 
 app.get('/video/:key(*)', async (req, res) => {
   const key = req.params.key;
   try {
     const command = new GetObjectCommand({
-      Bucket: VIDEO_BUCKET,
+      Bucket: process.env.R2_VIDEOS_BUCKET,
       Key: key,
     });
-    console.log('[S3] Fetching video from bucket:', VIDEO_BUCKET, 'Key:', key);
+    console.log('[S3] Fetching video from bucket:', process.env.R2_VIDEOS_BUCKET, 'Key:', key);
     const response = await s3Client.send(command);
 
     res.setHeader('Content-Type', 'video/mp4');

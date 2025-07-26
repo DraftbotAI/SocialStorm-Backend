@@ -246,6 +246,41 @@ async function combineAudioAndVideo(audioPath, videoPath, outputPath) {
   });
 }
 
+// =====================================================
+// CONCATENATE ALL SCENE VIDEOS INTO FINAL VIDEO (HELPER)
+// =====================================================
+
+/**
+ * Concatenates multiple scene videos into one using ffmpeg concat demuxer.
+ * @param {string[]} scenePaths - Array of full paths to scene videos (in order).
+ * @param {string} outputPath - Where to save the stitched video.
+ */
+async function stitchScenes(scenePaths, outputPath) {
+  console.log(`[FFMPEG] Stitching scenes: ${scenePaths.length} → ${outputPath}`);
+  const tempListFile = outputPath + '.txt';
+  fs.writeFileSync(
+    tempListFile,
+    scenePaths.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+  );
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(tempListFile)
+      .inputOptions(['-f concat', '-safe 0'])
+      .outputOptions(['-c:v copy', '-c:a aac', '-movflags +faststart'])
+      .save(outputPath)
+      .on('end', () => {
+        fs.unlinkSync(tempListFile);
+        console.log(`[FFMPEG] Scenes stitched to: ${outputPath}`);
+        resolve(outputPath);
+      })
+      .on('error', (err) => {
+        console.error(`[FFMPEG] Stitch error:`, err);
+        if (fs.existsSync(tempListFile)) fs.unlinkSync(tempListFile);
+        reject(err);
+      });
+  });
+}
+
 
 
 

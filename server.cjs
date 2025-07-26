@@ -569,7 +569,7 @@ app.post('/api/generate-video', (req, res) => {
       }
 
       // === PROVIDER-SPECIFIC VALIDATION ===
-      if (ttsProvider === 'polly') {
+      if (ttsProvider.toLowerCase() === 'polly') {
         if (!POLLY_VOICE_IDS.includes(voice)) {
           progress[jobId] = { percent: 100, status: `Failed: Invalid AWS Polly voice selected (${voice}).` };
           cleanupJob(jobId);
@@ -703,6 +703,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

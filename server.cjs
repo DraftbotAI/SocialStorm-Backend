@@ -15,6 +15,7 @@ const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
+const fsExtra = require('fs-extra'); // <-- Added for recursive folder cleanup
 const util = require('util');
 const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
@@ -38,7 +39,6 @@ const requiredEnvVars = [
   'AWS_REGION',
   'R2_LIBRARY_BUCKET',
   'R2_ENDPOINT',
-
   'OPENAI_API_KEY'
 ];
 const missingEnv = requiredEnvVars.filter(key => !process.env[key]);
@@ -69,16 +69,34 @@ console.log('[INFO] Progress tracker initialized.');
 
 // ==== LOAD HELPERS ====
 // FIXED: Corrected to use pexels-helper.cjs, not helpers.cjs!
+// NOTE: cleanupJob is now defined below, not imported!
 const {
   splitScriptToScenes,
   generateSceneAudio,
   findMatchingClip,
   combineAudioAndClip,
-  assembleFinalVideo,
-  cleanupJob
+  assembleFinalVideo
 } = require('./pexels-helper.cjs');
 
 console.log('[INFO] Helper functions loaded.');
+
+// ==== SAFE CLEANUP FUNCTION ====
+// Now deletes temp job folder in /renders after each job.
+function cleanupJob(jobId) {
+  try {
+    if (progress[jobId]) {
+      delete progress[jobId];
+    }
+    // Clean up job temp folder in /renders
+    const jobDir = path.join(__dirname, 'renders', jobId);
+    if (fs.existsSync(jobDir)) {
+      fsExtra.removeSync(jobDir); // Recursively deletes all files/folders for this job
+      console.log(`[CLEANUP] Removed temp folder: ${jobDir}`);
+    }
+  } catch (err) {
+    console.warn(`[WARN] Cleanup failed for job ${jobId}:`, err);
+  }
+}
 
 
 
@@ -163,6 +181,9 @@ const voices = [
   { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false }
 ];
 
+// ==== Polly Voice List for Validation ====
+const POLLY_VOICE_IDS = voices.filter(v => v.provider === "polly").map(v => v.id);
+
 app.get('/api/voices', (req, res) => {
   const now = new Date().toISOString();
   console.log(`[REQ] GET /api/voices @ ${now}`);
@@ -175,6 +196,12 @@ app.get('/api/voices', (req, res) => {
   console.log(`[INFO] Returning ${count} voices → Free: ${byTier.Free}, Pro: ${byTier.Pro}, ASMR: ${byTier.ASMR}`);
   res.json({ success: true, voices });
 });
+
+// ==== EXPORT POLLY VOICE IDS FOR VALIDATION ELSEWHERE ====
+module.exports = {
+  voices,
+  POLLY_VOICE_IDS
+};
 
 
 
@@ -294,6 +321,9 @@ Then add metadata: viral title, SEO description, and hashtags.`
 
 console.log('[INIT] Video generation endpoint initialized');
 
+// === Import Polly voices list and all voices for provider branching ===
+const { POLLY_VOICE_IDS, voices } = require('./server'); // Adjust path if needed
+
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -329,6 +359,31 @@ app.post('/api/generate-video', (req, res) => {
         return;
       }
 
+      // === DETERMINE VOICE PROVIDER ===
+      const selectedVoice = voices.find(v => v.id === voice);
+      let ttsProvider = selectedVoice ? selectedVoice.provider : null;
+
+      if (!ttsProvider) {
+        progress[jobId] = { percent: 100, status: `Failed: Unknown voice selected (${voice}).` };
+        cleanupJob(jobId);
+        clearTimeout(watchdog);
+        return;
+      }
+
+      // === PROVIDER-SPECIFIC VALIDATION ===
+      if (ttsProvider === 'polly') {
+        if (!POLLY_VOICE_IDS.includes(voice)) {
+          progress[jobId] = { percent: 100, status: `Failed: Invalid AWS Polly voice selected (${voice}).` };
+          cleanupJob(jobId);
+          clearTimeout(watchdog);
+          return;
+        }
+      }
+      if (ttsProvider === 'elevenlabs') {
+        // No ID validation needed here (IDs are unique per account/project).
+        // If you later want to restrict to enabled voices, do it here.
+      }
+
       // Prepare work dir
       const workDir = path.join(__dirname, 'renders', jobId);
       if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
@@ -358,15 +413,21 @@ app.post('/api/generate-video', (req, res) => {
 
         // === Generate audio for scene ===
         try {
-          // Only generate audio with actual TTS provider (Polly, ElevenLabs)
-          let ttsProvider = 'polly';
-          let ttsConfig = {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-            region: process.env.AWS_REGION
-          };
+          let ttsConfig;
+          if (ttsProvider === 'polly') {
+            ttsConfig = {
+              accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+              secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+              region: process.env.AWS_REGION
+            };
+          } else if (ttsProvider === 'elevenlabs') {
+            ttsConfig = {
+              apiKey: process.env.ELEVENLABS_API_KEY // Make sure this is in your .env!
+            };
+          } else {
+            throw new Error(`Unknown TTS provider: ${ttsProvider}`);
+          }
 
-          // You can expand here for other TTS providers (ElevenLabs, etc.)
           await generateSceneAudio(sceneText, voice, audioPath, ttsProvider, ttsConfig);
           console.log(`[AUDIO] Audio generated at: ${audioPath}`);
         } catch (err) {
@@ -484,6 +545,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

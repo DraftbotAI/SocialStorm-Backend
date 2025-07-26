@@ -134,222 +134,38 @@ app.get('/api/progress/:jobId', (req, res) => {
 console.log('[INFO] Registering /api/voices endpoint...');
 
 const voices = [
-  // ===== FREE (AWS POLLY) VOICES =====
-  {
-    id: "polly-matthew",
-    name: "Matthew",
-    description: "Warm, natural American male (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-matthew.mp3",
-    disabled: false
-  },
-  {
-    id: "polly-joanna",
-    name: "Joanna",
-    description: "Friendly, crisp American female (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-joanna.mp3",
-    disabled: false
-  },
-  {
-    id: "polly-joey",
-    name: "Joey",
-    description: "Conversational American male (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-joey.mp3",
-    disabled: false
-  },
-  {
-    id: "polly-kimberly",
-    name: "Kimberly",
-    description: "Young, relatable American female (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-kimberly.mp3",
-    disabled: false
-  },
-  {
-    id: "polly-amy",
-    name: "Amy",
-    description: "Clear and professional British female (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-amy.mp3",
-    disabled: false
-  },
-  {
-    id: "polly-brian",
-    name: "Brian",
-    description: "British male, upbeat and sharp (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-brian.mp3",
-    disabled: false
-  },
-  {
-    id: "polly-russell",
-    name: "Russell",
-    description: "Australian male, fun and clear (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-russell.mp3",
-    disabled: false
-  },
-  {
-    id: "polly-salli",
-    name: "Salli",
-    description: "Neutral, friendly American female (Free Tier)",
-    tier: "Free",
-    provider: "Amazon Polly",
-    preview: "/assets/voices/polly-salli.mp3",
-    disabled: false
-  },
+  // ===== ELEVENLABS PRO VOICES =====
+  { id: "ZthjuvLPty3kTMaNKVKb", name: "Mike (Pro)", description: "ElevenLabs, Deep US Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "6F5Zhi321D3Oq7v1oNT4", name: "Jackson (Pro)", description: "ElevenLabs, Movie Style Narration", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "p2ueywPKFXYa6hdYfSIJ", name: "Tyler (Pro)", description: "ElevenLabs, US Male Friendly", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Olivia (Pro)", description: "ElevenLabs, Warm US Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "FUfBrNit0NNZAwb58KWH", name: "Emily (Pro)", description: "ElevenLabs, Conversational US Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "xctasy8XvGp2cVO9HL9k", name: "Sophia (Pro Kid)", description: "ElevenLabs, US Female Young", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "goT3UYdM9bhm0n2lmKQx", name: "James (Pro UK)", description: "ElevenLabs, British Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "19STyYD15bswVz51nqLf", name: "Amelia (Pro UK)", description: "ElevenLabs, British Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "2h7ex7B1yGrkcLFI8zUO", name: "Pierre (Pro FR)", description: "ElevenLabs, French Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "xNtG3W2oqJs0cJZuTyBc", name: "Claire (Pro FR)", description: "ElevenLabs, French Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "IP2syKL31S2JthzSSfZH", name: "Diego (Pro ES)", description: "ElevenLabs, Spanish Accent Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
+  { id: "WLjZnm4PkNmYtNCyiCq8", name: "Lucia (Pro ES)", description: "ElevenLabs, Spanish Accent Female", provider: "elevenlabs", tier: "Pro", gender: "female", disabled: false },
+  { id: "zA6D7RyKdc2EClouEMkP", name: "Aimee (ASMR Pro)", description: "Female British Meditation ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false },
+  { id: "RCQHZdatZm4oG3N6Nwme", name: "Dr. Lovelace (ASMR Pro)", description: "Pro Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false },
+  { id: "RBknfnzK8KHNwv44gIrh", name: "James Whitmore (ASMR Pro)", description: "Gentle Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "male", disabled: false },
+  { id: "GL7nH05mDrxcH1JPJK5T", name: "Aimee (ASMR Gentle)", description: "ASMR Gentle Whisper", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false },
 
-  // ===== PRO (ELEVENLABS) VOICES =====
-  {
-    id: "11labs-mike",
-    name: "Mike",
-    description: "Polished, professional American male (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-mike.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-jackson",
-    name: "Jackson",
-    description: "Casual, confident American male (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-jackson.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-tyler",
-    name: "Tyler",
-    description: "Bold, high-energy male voice (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-tyler.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-olivia",
-    name: "Olivia",
-    description: "Casual, upbeat American female (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-olivia.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-emily",
-    name: "Emily",
-    description: "Warm, storytelling American female (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-emily.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-sophia",
-    name: "Sophia",
-    description: "Smooth, classy female voice (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-sophia.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-james",
-    name: "James",
-    description: "Deep, powerful male narrator (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-james.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-amelia",
-    name: "Amelia",
-    description: "Soft, comforting female tone (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-amelia.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-pierre",
-    name: "Pierre",
-    description: "French-accented male, smooth and formal (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-pierre.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-claire",
-    name: "Claire",
-    description: "French-accented female, elegant and soft (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-claire.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-diego",
-    name: "Diego",
-    description: "Spanish-accented male, dynamic and bold (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-diego.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-lucia",
-    name: "Lucia",
-    description: "Spanish-accented female, passionate and clear (Pro)",
-    tier: "Pro",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-lucia.mp3",
-    disabled: true
-  },
-
-  // ===== ASMR PRO (WHISPER-TIER) =====
-  {
-    id: "11labs-aimee-asmr",
-    name: "Aimee (ASMR Pro)",
-    description: "Whisper-soft ASMR female (Pro, ASMR)",
-    tier: "ASMR",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-aimee-asmr.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-james-whitmore",
-    name: "James Whitmore (ASMR Pro)",
-    description: "Soothing, wise storyteller male (Pro, ASMR)",
-    tier: "ASMR",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-james-whitmore.mp3",
-    disabled: true
-  },
-  {
-    id: "11labs-dr-lovelace",
-    name: "Dr. Lovelace (ASMR Pro)",
-    description: "Intimate, breathy female whisper (Pro, ASMR)",
-    tier: "ASMR",
-    provider: "ElevenLabs",
-    preview: "/assets/voices/11labs-dr-lovelace.mp3",
-    disabled: true
-  }
+  // ===== POLLY FREE TIER VOICES =====
+  { id: "Matthew", name: "Matthew (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Joey", name: "Joey (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Brian", name: "Brian (British Male)", description: "Amazon Polly, Male, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Russell", name: "Russell (Australian Male)", description: "Amazon Polly, Male, Australian English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Joanna", name: "Joanna (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Kimberly", name: "Kimberly (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Amy", name: "Amy (British Female)", description: "Amazon Polly, Female, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false }
 ];
 
 app.get('/api/voices', (req, res) => {
-  console.log(`[REQ] GET /api/voices @ ${new Date().toISOString()}`);
+  const now = new Date().toISOString();
+  console.log(`[REQ] GET /api/voices @ ${now}`);
   const count = voices.length;
   const byTier = {
     Free: voices.filter(v => v.tier === 'Free').length,

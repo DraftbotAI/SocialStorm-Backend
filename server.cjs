@@ -68,14 +68,10 @@ const progress = {};
 console.log('[INFO] Progress tracker initialized.');
 
 // ==== LOAD HELPERS ====
-// FIXED: Corrected to use pexels-helper.cjs, not helpers.cjs!
-// NOTE: cleanupJob is now defined below, not imported!
+// ✅ Uses pexels-helper.cjs with only the available functions
 const {
   splitScriptToScenes,
-  generateSceneAudio,
-  findMatchingClip,
-  combineAudioAndClip,
-  assembleFinalVideo
+  findClipForScene
 } = require('./pexels-helper.cjs');
 
 console.log('[INFO] Helper functions loaded.');
@@ -97,6 +93,7 @@ function cleanupJob(jobId) {
     console.warn(`[WARN] Cleanup failed for job ${jobId}:`, err);
   }
 }
+
 
 
 
@@ -321,8 +318,9 @@ Then add metadata: viral title, SEO description, and hashtags.`
 
 console.log('[INIT] Video generation endpoint initialized');
 
-// === Import Polly voices list and all voices for provider branching ===
-
+// === Import voices and helpers ===
+// Assume voices[] and POLLY_VOICE_IDS are declared above in Section 3
+// Uses splitScriptToScenes and findClipForScene from pexels-helper.cjs
 
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
@@ -379,17 +377,13 @@ app.post('/api/generate-video', (req, res) => {
           return;
         }
       }
-      if (ttsProvider === 'elevenlabs') {
-        // No ID validation needed here (IDs are unique per account/project).
-        // If you later want to restrict to enabled voices, do it here.
-      }
 
       // Prepare work dir
       const workDir = path.join(__dirname, 'renders', jobId);
       if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
       console.log(`[STEP] Work dir created: ${workDir}`);
 
-      // Split script to scenes
+      // Split script to scenes (returns array of { id, text })
       const scenes = splitScriptToScenes(script);
       if (!scenes.length) {
         progress[jobId] = { percent: 100, status: 'Failed: Script split error.' };
@@ -402,8 +396,8 @@ app.post('/api/generate-video', (req, res) => {
       // Main scene processing loop
       let scenePaths = [];
       for (let i = 0; i < scenes.length; i++) {
-        const sceneText = scenes[i];
-        const sceneBase = `scene${i + 1}`;
+        const { id: sceneId, text: sceneText } = scenes[i];
+        const sceneBase = sceneId;
         const audioPath = path.join(workDir, `${sceneBase}-audio.mp3`);
         const videoPath = path.join(workDir, `${sceneBase}-video.mp4`);
         const outputScenePath = path.join(workDir, `${sceneBase}-final.mp4`);
@@ -413,22 +407,7 @@ app.post('/api/generate-video', (req, res) => {
 
         // === Generate audio for scene ===
         try {
-          let ttsConfig;
-          if (ttsProvider === 'polly') {
-            ttsConfig = {
-              accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-              secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-              region: process.env.AWS_REGION
-            };
-          } else if (ttsProvider === 'elevenlabs') {
-            ttsConfig = {
-              apiKey: process.env.ELEVENLABS_API_KEY // Make sure this is in your .env!
-            };
-          } else {
-            throw new Error(`Unknown TTS provider: ${ttsProvider}`);
-          }
-
-          await generateSceneAudio(sceneText, voice, audioPath, ttsProvider, ttsConfig);
+          await generateSceneAudio(sceneText, voice, audioPath, ttsProvider);
           console.log(`[AUDIO] Audio generated at: ${audioPath}`);
         } catch (err) {
           console.error(`[ERR] Audio generation failed for scene ${i + 1}:`, err);
@@ -439,45 +418,24 @@ app.post('/api/generate-video', (req, res) => {
         }
 
         // === Find video clip for scene ===
-        let visualSubject = '';
+        let clipUrl = null;
         try {
-          visualSubject = await getVisualSubject(sceneText, process.env.OPENAI_API_KEY);
-          if (!visualSubject) visualSubject = sceneText;
-        } catch (err) {
-          visualSubject = sceneText;
-        }
-        let clipResult = null;
-        try {
-          clipResult = await findBestClip(
-            visualSubject,
-            process.env.OPENAI_API_KEY,
-            r2Client,
-            process.env.R2_LIBRARY_BUCKET,
-            process.env.PEXELS_API_KEY,
-            process.env.PIXABAY_API_KEY
-          );
+          clipUrl = await findClipForScene(sceneText);
         } catch (err) {
           console.error(`[ERR] Video clip match failed for scene ${i + 1}:`, err);
         }
-        if (!clipResult || !clipResult.url) {
+        if (!clipUrl) {
           progress[jobId] = { percent: 100, status: `Failed: No video found for scene ${i + 1}` };
           cleanupJob(jobId);
           clearTimeout(watchdog);
           return;
         }
-        console.log(`[VIDEO] Clip for scene ${i + 1}:`, clipResult);
+        console.log(`[VIDEO] Clip for scene ${i + 1}: ${clipUrl}`);
 
-        // === Download or copy video ===
+        // === Download video to local ===
         try {
-          if (clipResult.source === 'r2') {
-            // R2: Copy from R2 to local path
-            await downloadR2FileToLocal(r2Client, process.env.R2_LIBRARY_BUCKET, clipResult.url, videoPath);
-            console.log(`[VIDEO] Downloaded from R2: ${videoPath}`);
-          } else {
-            // Pexels/Pixabay: Download via HTTP
-            await downloadRemoteFileToLocal(clipResult.url, videoPath);
-            console.log(`[VIDEO] Downloaded from remote: ${videoPath}`);
-          }
+          await downloadRemoteFileToLocal(clipUrl, videoPath);
+          console.log(`[VIDEO] Downloaded: ${videoPath}`);
         } catch (err) {
           console.error(`[ERR] Video download failed for scene ${i + 1}:`, err);
           progress[jobId] = { percent: 100, status: `Failed: Download error for scene ${i + 1}` };

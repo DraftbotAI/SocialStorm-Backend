@@ -26,6 +26,9 @@ const { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } = r
 const AWS = require('aws-sdk');
 const { OpenAI } = require('openai');
 
+// === JOBS DIR DEFINITION (for temp/progress management) ===
+const JOBS_DIR = path.join(__dirname, 'jobs');
+
 console.log('[INFO] Dependencies loaded.');
 
 // === ENV CHECK ===

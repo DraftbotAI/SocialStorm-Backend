@@ -454,7 +454,8 @@ module.exports = {
 
 console.log('[INFO] Registering /api/generate-script endpoint...');
 
-const openai = require('openai'); // Or import { OpenAI } if you use ES modules
+const { OpenAI } = require('openai');
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); // ✅ REQUIRED
 
 app.post('/api/generate-script', async (req, res) => {
   const idea = req.body.idea?.trim();
@@ -474,7 +475,7 @@ Write a viral script about: ${idea}
 Rules:
 - Line 1 must be a dramatic or funny HOOK (attention-grabber about the *theme*).
 - Each line = one scene, short and punchy, no dialogue, no numbers, no tags.
-- 6-10 lines total, each line is a separate scene.
+- 6–10 lines total, each line is a separate scene.
 - No quotes, emojis, hashtags, or scene numbers.
 - After script lines, output:
 Title: [viral title, no quotes]
@@ -500,7 +501,7 @@ Tags: secrets landmarks travel viral history
     const raw = completion.choices?.[0]?.message?.content?.trim() || '';
     console.log('[GPT] Raw output:\n' + raw);
 
-    // Parse
+    // === Parse
     let scriptLines = [];
     let title = '';
     let description = '';
@@ -508,19 +509,18 @@ Tags: secrets landmarks travel viral history
 
     const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
 
-    // Extract meta fields
-    let titleIdx = lines.findIndex(l => /^title\s*:/i.test(l));
-    let descIdx = lines.findIndex(l => /^description\s*:/i.test(l));
-    let tagsIdx = lines.findIndex(l => /^tags?\s*:/i.test(l));
+    const titleIdx = lines.findIndex(l => /^title\s*:/i.test(l));
+    const descIdx = lines.findIndex(l => /^description\s*:/i.test(l));
+    const tagsIdx = lines.findIndex(l => /^tags?\s*:/i.test(l));
 
-    // Script is before first meta field
-    const metaStart = [titleIdx, descIdx, tagsIdx].filter(x => x > -1).sort((a,b)=>a-b)[0] || lines.length;
+    const metaStart = [titleIdx, descIdx, tagsIdx].filter(x => x > -1).sort((a,b) => a - b)[0] || lines.length;
+
     scriptLines = lines.slice(0, metaStart).filter(l =>
       !/^title\s*:/i.test(l) && !/^description\s*:/i.test(l) && !/^tags?\s*:/i.test(l)
     );
+
     if (scriptLines.length > 10) scriptLines = scriptLines.slice(0, 10);
 
-    // Meta fields
     for (const l of lines.slice(metaStart)) {
       if (/^title\s*:/i.test(l)) title = l.replace(/^title\s*:/i, '').trim();
       else if (/^description\s*:/i.test(l)) description = l.replace(/^description\s*:/i, '').trim();
@@ -531,7 +531,9 @@ Tags: secrets landmarks travel viral history
     if (!description) description = `Here's a quick look at "${idea}" – stay tuned.`;
     if (!tags) tags = "shorts viral";
 
-    if (!scriptLines.length) scriptLines = ['Something went wrong generating the script.'];
+    if (!scriptLines.length) {
+      scriptLines = ['Something went wrong generating the script.'];
+    }
 
     console.log('[PARSED] script lines:', scriptLines.length, scriptLines);
     console.log('[PARSED] title:', title);
@@ -540,13 +542,12 @@ Tags: secrets landmarks travel viral history
 
     res.json({
       success: true,
-      script: scriptLines,
-      metadata: {
-        title,
-        description,
-        hashtags: tags
-      }
+      script: scriptLines.join('\n'),
+      title,
+      description,
+      tags
     });
+
   } catch (err) {
     console.error('[FATAL] Script generation failed:', err);
     res.status(500).json({ success: false, error: "Script generation failed" });

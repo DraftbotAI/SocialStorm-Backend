@@ -179,6 +179,38 @@ async function generateSceneAudio(text, voiceId, outputPath, ttsProvider) {
   throw new Error(`Unknown TTS provider: ${ttsProvider}`);
 }
 
+// =====================================================
+// REMOTE VIDEO FILE DOWNLOADER (HELPER)
+// =====================================================
+
+/**
+ * Downloads a remote file (video) to a local path.
+ * @param {string} url - The URL to download.
+ * @param {string} dest - Local path to save to.
+ * @returns {Promise<string>} - Resolves to dest if successful.
+ */
+async function downloadRemoteFileToLocal(url, dest) {
+  console.log(`[DL] Downloading remote file: ${url} → ${dest}`);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const writer = fs.createWriteStream(dest);
+  const response = await axios.get(url, { responseType: 'stream' });
+
+  return new Promise((resolve, reject) => {
+    response.data.pipe(writer);
+    let finished = false;
+    writer.on('finish', () => {
+      finished = true;
+      console.log(`[DL] Download complete: ${dest}`);
+      resolve(dest);
+    });
+    writer.on('error', err => {
+      if (!finished) {
+        console.error(`[DL] Download error:`, err);
+        reject(err);
+      }
+    });
+  });
+}
 
 
 

@@ -842,7 +842,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 /* ===========================================================
    SECTION 7: DOWNLOAD & VIDEO SERVE ENDPOINTS
    -----------------------------------------------------------
-   - Download ZIPs, serve videos directly from S3/R2 or temp
+   - Download ZIPs, serve videos directly from local disk or S3/R2
    - Bulletproof path checking, never serves a directory
    - GOD-TIER LOGGING: logs all requests, file operations, S3 keys, and errors
    =========================================================== */
@@ -876,10 +876,27 @@ app.get('/download/thumbs/:zipName', (req, res) => {
   }
 });
 
-// ---- Serve generated video from S3/R2 ----
-app.get('/video/:key', async (req, res) => {
+// ---- Serve generated video: local disk first, then S3/R2 ----
+app.get('/video/:key(*)', async (req, res) => {
   const key = req.params.key;
-  console.log('[REQ] GET /video/' + key);
+  const localPath = path.join(__dirname, 'renders', key);
+
+  // 1. Try serving from local disk first
+  if (fs.existsSync(localPath) && fs.statSync(localPath).isFile()) {
+    console.log('[VIDEO SERVE] Found local file:', localPath);
+    res.setHeader('Content-Type', 'video/mp4');
+    return fs.createReadStream(localPath)
+      .on('open', () => {
+        console.log('[VIDEO SERVE] Streaming local video:', localPath);
+      })
+      .on('error', err => {
+        console.error('[VIDEO SERVE] Local stream error:', err);
+        res.status(500).send('Error streaming video');
+      })
+      .pipe(res);
+  }
+
+  // 2. If not local, try from S3/R2 (PROD mode)
   try {
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
@@ -894,11 +911,16 @@ app.get('/video/:key', async (req, res) => {
 
     console.log('[S3] Streaming video to client:', key);
     response.Body.pipe(res);
+    response.Body.on('error', err => {
+      console.error('[S3] Streaming error:', err);
+      res.status(500).send('Error streaming video');
+    });
   } catch (err) {
-    console.error('[ERROR] /video/:key', key, err);
+    console.error('[ERROR] /video/:key not found anywhere:', key, err);
     res.status(404).send('Video not found');
   }
 });
+
 
 
 /* ===========================================================

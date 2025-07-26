@@ -839,44 +839,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 });
 
 
-/* ===========================================================
-   SECTION 7: DOWNLOAD & VIDEO SERVE ENDPOINTS
-   -----------------------------------------------------------
-   - Download ZIPs, serve videos directly from local disk or S3/R2
-   - Bulletproof path checking, never serves a directory
-   - GOD-TIER LOGGING: logs all requests, file operations, S3 keys, and errors
-   =========================================================== */
-
-// ---- Download ZIP for thumbnails ----
-app.get('/download/thumbs/:zipName', (req, res) => {
-  const file = path.join(JOBS_DIR, req.params.zipName);
-  console.log('[REQ] GET /download/thumbs/' + req.params.zipName);
-  console.log('[FILE] Attempting download:', file);
-
-  if (fs.existsSync(file) && fs.statSync(file).isFile()) {
-    console.log('[FILE] ZIP exists, serving download...');
-    res.download(file, err => {
-      if (!err) {
-        console.log('[FILE] Downloaded successfully, will delete in 2.5s:', file);
-        setTimeout(() => {
-          try {
-            fs.unlinkSync(file);
-            console.log('[FILE] Deleted ZIP after download:', file);
-          } catch (e) {
-            console.error('[FILE] Failed to delete ZIP after download:', file, e);
-          }
-        }, 2500);
-      } else {
-        console.error('[FILE] Error sending download:', file, err);
-      }
-    });
-  } else {
-    console.warn('[WARN] ZIP file not found or not a file:', file);
-    res.status(404).send('File not found');
-  }
-});
-
-// ---- Serve generated video: local disk first, then S3/R2 ----
 app.get('/video/:key(*)', async (req, res) => {
   const key = req.params.key;
   const localPath = path.join(__dirname, 'renders', key);
@@ -896,7 +858,7 @@ app.get('/video/:key(*)', async (req, res) => {
       .pipe(res);
   }
 
-  // 2. If not local, try from S3/R2 (PROD mode)
+  // 2. If not local, try from S3/R2 (Railway/Production)
   try {
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,

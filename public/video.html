@@ -488,7 +488,10 @@
       progressBar.textContent = '0%';
       progressStatus.textContent = 'Starting…';
       player.style.display = 'none';
+      player.src = ''; // Clear video src
       downloadBtn.style.display = 'none';
+
+      let videoKey = null;
 
       try {
         const payload = { script, voice };
@@ -506,7 +509,7 @@
         if (!data.jobId) throw new Error('Failed to start video generation.');
 
         let finished = false;
-        let videoKey = null;
+        let errored = false;
 
         pollingInterval = setInterval(async () => {
           try {
@@ -519,30 +522,48 @@
               clearInterval(pollingInterval);
               pollingInterval = null;
               finished = true;
-              if (p.key) {
-                player.src = `/video/${p.key}`;
-                player.style.display = 'block';
+              videoKey = p.key;
+              if (videoKey) {
+                // Try to load the video
+                player.src = `/video/${videoKey}`;
                 player.load();
-                player.muted  = false;
-                player.volume = 1.0;
-                progressStatus.textContent = 'Click ▶︎ to play your video.';
-                downloadBtn.style.display = 'inline-block';
-                progressBar.style.width = '100%';
-                progressBar.textContent = '100%';
-                setTimeout(() => { progressBarWrap.style.display = 'none'; }, 2000);
+                player.onloadeddata = () => {
+                  player.style.display = 'block';
+                  player.muted  = false;
+                  player.volume = 1.0;
+                  progressStatus.textContent = 'Click ▶︎ to play your video.';
+                  downloadBtn.style.display = 'inline-block';
+                  progressBar.style.width = '100%';
+                  progressBar.textContent = '100%';
+                  setTimeout(() => { progressBarWrap.style.display = 'none'; }, 2000);
+                };
+                player.onerror = () => {
+                  out.textContent = 'Done, but the video file could not be found. Try again, or check your backend storage/cleanup.';
+                  player.style.display = 'none';
+                  downloadBtn.style.display = 'none';
+                  progressBarWrap.style.display = 'none';
+                  progressStatus.textContent = '';
+                };
               } else {
                 out.textContent = p.status || 'Generation failed.';
                 progressBarWrap.style.display = 'none';
+                player.style.display = 'none';
+                downloadBtn.style.display = 'none';
               }
             }
           } catch(e) {
+            errored = true;
             progressStatus.textContent = 'Lost connection...';
+            progressBarWrap.style.display = 'none';
           }
         }, 1200);
 
       } catch (err) {
         progressStatus.textContent = 'Error generating video.';
         progressBarWrap.style.display = 'none';
+        player.style.display = 'none';
+        downloadBtn.style.display = 'none';
+        out.textContent = 'Video generation failed.';
         console.error(err);
       }
     };
@@ -557,6 +578,7 @@
       const out    = document.getElementById('output');
       const downloadBtn = document.getElementById('downloadBtn');
       try {
+        if (!player.src) throw new Error("No video to download.");
         downloadBtn.disabled = true;
         downloadBtn.textContent = "Preparing…";
         const videoUrl = player.src;

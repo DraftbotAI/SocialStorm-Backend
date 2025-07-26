@@ -212,6 +212,41 @@ async function downloadRemoteFileToLocal(url, dest) {
   });
 }
 
+// =====================================================
+// COMBINE AUDIO + VIDEO INTO ONE SCENE (HELPER)
+// =====================================================
+
+/**
+ * Combines audio and video into a single output video using ffmpeg.
+ * @param {string} audioPath - Path to the .mp3 audio file.
+ * @param {string} videoPath - Path to the downloaded video file.
+ * @param {string} outputPath - Where to save the combined scene video.
+ */
+async function combineAudioAndVideo(audioPath, videoPath, outputPath) {
+  console.log(`[FFMPEG] Combining audio (${audioPath}) + video (${videoPath}) → ${outputPath}`);
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(videoPath)
+      .input(audioPath)
+      .outputOptions([
+        '-c:v copy',
+        '-c:a aac',
+        '-shortest',
+        '-y'
+      ])
+      .save(outputPath)
+      .on('end', () => {
+        console.log(`[FFMPEG] Scene combined: ${outputPath}`);
+        resolve(outputPath);
+      })
+      .on('error', (err) => {
+        console.error(`[FFMPEG] Combine error:`, err);
+        reject(err);
+      });
+  });
+}
+
+
 
 
 /* ===========================================================

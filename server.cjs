@@ -734,7 +734,7 @@ app.post('/api/generate-video', (req, res) => {
         const s3Key = `${jobId}.mp4`;
         const fileData = fs.readFileSync(finalOutputPath);
         await s3Client.send(new PutObjectCommand({
-          Bucket: process.env.R2_VIDEOS_BUCKET,
+          Bucket: process.env.R2_VIDEOS_BUCKET, // --- ENSURE this is set and correct
           Key: s3Key,
           Body: fileData,
           ContentType: 'video/mp4',
@@ -901,6 +901,13 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 app.get('/video/:key(*)', async (req, res) => {
   const key = req.params.key;
+
+  // Sanity check for empty key, directory traversal, etc.
+  if (!key || key.includes('..') || key.trim() === '') {
+    console.warn('[VIDEO SERVE] Invalid or missing key:', key);
+    return res.status(400).send('Invalid video key');
+  }
+
   try {
     const command = new GetObjectCommand({
       Bucket: process.env.R2_VIDEOS_BUCKET,
@@ -909,21 +916,25 @@ app.get('/video/:key(*)', async (req, res) => {
     console.log('[S3] Fetching video from bucket:', process.env.R2_VIDEOS_BUCKET, 'Key:', key);
     const response = await s3Client.send(command);
 
+    // Set appropriate headers
     res.setHeader('Content-Type', 'video/mp4');
     if (response.ContentLength)
       res.setHeader('Content-Length', response.ContentLength);
 
+    // Pipe video to client
     console.log('[S3] Streaming video to client:', key);
     response.Body.pipe(res);
+
     response.Body.on('error', err => {
       console.error('[S3] Streaming error:', err);
-      res.status(500).send('Error streaming video');
+      if (!res.headersSent) res.status(500).send('Error streaming video');
     });
   } catch (err) {
     console.error('[ERROR] /video/:key not found:', key, err);
     res.status(404).send('Video not found');
   }
 });
+
 
 
 

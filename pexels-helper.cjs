@@ -12,28 +12,32 @@ const path = require('path');
 const axios = require('axios');
 const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 
-// === ENV CHECK ===
+// === ENV & BUCKET SETUP ===
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
-const R2_BUCKET = process.env.R2_BUCKET;
-const R2_REGION = process.env.R2_REGION;
-const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY_ID;
-const R2_SECRET_KEY = process.env.R2_SECRET_ACCESS_KEY;
 
+// Prefer explicit library bucket/env, fallback if missing
+const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || process.env.R2_BUCKET || 'socialstorm-library';
+const R2_REGION = 'auto'; // For Cloudflare R2 always 'auto'
+const R2_ENDPOINT = process.env.R2_ENDPOINT || '';
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+
+// Env sanity warnings
 if (!PEXELS_API_KEY) console.warn('[PEXELS HELPER] WARNING: No PEXELS_API_KEY set!');
 if (!PIXABAY_API_KEY) console.warn('[PEXELS HELPER] WARNING: No PIXABAY_API_KEY set!');
-if (!R2_BUCKET || !R2_REGION || !R2_ACCESS_KEY || !R2_SECRET_KEY) {
-  console.warn('[PEXELS HELPER] WARNING: Missing Cloudflare R2 credentials!');
+if (!R2_LIBRARY_BUCKET || !R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
+  console.warn('[PEXELS HELPER] WARNING: Missing Cloudflare R2 credentials or endpoint!');
 }
 
+// ---- S3Client for R2 library ----
 const s3 = new S3Client({
   region: R2_REGION,
+  endpoint: R2_ENDPOINT,
   credentials: {
-    accessKeyId: R2_ACCESS_KEY,
-    secretAccessKey: R2_SECRET_KEY,
+    accessKeyId: R2_ACCESS_KEY_ID,
+    secretAccessKey: R2_SECRET_ACCESS_KEY,
   },
-  endpoint: `https://${R2_BUCKET}.${R2_REGION}.r2.cloudflarestorage.com`,
-  forcePathStyle: false,
 });
 
 // === Split script into scene objects ===
@@ -43,7 +47,6 @@ function splitScriptToScenes(script) {
     console.error(`[SCENE SPLIT] Invalid script input.`);
     return [];
   }
-
   // Split on period, but keep lines tight (handles edge cases)
   const lines = script
     .split(/\.\s+|\.$/g)
@@ -70,7 +73,7 @@ async function findClipForScene(sceneText) {
   }
   console.log(`[MATCH] Extracted keyword: "${query}"`);
 
-  // 1. R2
+  // 1. R2 Library (main source)
   try {
     const r2 = await searchR2Library(query);
     if (r2) {
@@ -81,7 +84,7 @@ async function findClipForScene(sceneText) {
     console.error(`[R2 ERROR] Exception: ${err.message}`);
   }
 
-  // 2. Pexels
+  // 2. Pexels fallback
   try {
     const pexels = await fetchFromPexels(query);
     if (pexels) {
@@ -92,7 +95,7 @@ async function findClipForScene(sceneText) {
     console.error(`[PEXELS ERROR] Exception: ${err.message}`);
   }
 
-  // 3. Pixabay
+  // 3. Pixabay fallback
   try {
     const pixabay = await fetchFromPixabay(query);
     if (pixabay) {
@@ -130,12 +133,11 @@ function extractVisualKeyword(text) {
 async function searchR2Library(keyword) {
   console.log(`[R2] Searching R2 for: "${keyword}"`);
   try {
-    const command = new ListObjectsV2Command({ Bucket: R2_BUCKET });
+    const command = new ListObjectsV2Command({ Bucket: R2_LIBRARY_BUCKET });
     const data = await s3.send(command);
 
-    // Defensive: check for contents
     if (!data.Contents || !Array.isArray(data.Contents)) {
-      console.warn('[R2] No files found in bucket.');
+      console.warn('[R2] No files found in library bucket.');
       return null;
     }
 
@@ -147,8 +149,9 @@ async function searchR2Library(keyword) {
 
     if (matches.length > 0) {
       const key = matches[0];
-      console.log(`[R2] ✅ Found match: ${key}`);
-      return `https://${R2_BUCKET}.${R2_REGION}.r2.cloudflarestorage.com/${key}`;
+      const r2Url = `${R2_ENDPOINT.replace(/\/$/, '')}/${R2_LIBRARY_BUCKET}/${key}`;
+      console.log(`[R2] ✅ Found match: ${key} | Full URL: ${r2Url}`);
+      return r2Url;
     } else {
       console.warn(`[R2] ❌ No match found for: "${keyword}"`);
     }
@@ -218,7 +221,7 @@ async function fetchFromPixabay(query) {
   return null;
 }
 
-// Export at the very end for Node compatibility
+// Export for server
 module.exports = {
   splitScriptToScenes,
   findClipForScene,

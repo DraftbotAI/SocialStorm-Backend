@@ -322,7 +322,7 @@ Then add metadata: viral title, SEO description, and hashtags.`
 console.log('[INIT] Video generation endpoint initialized');
 
 // === Import Polly voices list and all voices for provider branching ===
-const { POLLY_VOICE_IDS, voices } = require('./server'); // Adjust path if needed
+
 
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');

@@ -654,15 +654,18 @@ app.post('/api/generate-video', (req, res) => {
         };
         console.log(`[SCENE ${i + 1}] Text: "${sceneText}"`);
 
+        // === Generate audio ===
         try {
           await generateSceneAudio(sceneText, voice, audioPath, ttsProvider);
           console.log(`[AUDIO] Scene ${i + 1} audio created → ${audioPath}`);
+          console.log('[CHECK] Audio file exists:', fs.existsSync(audioPath), audioPath);
         } catch (err) {
           console.error(`[ERR] Audio gen failed for scene ${i + 1}`, err);
           progress[jobId] = { percent: 100, status: `Failed: Audio gen error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
+        // === Find matching video ===
         let clipUrl = null;
         try {
           if (i === 1 && firstClipUrl) {
@@ -681,19 +684,23 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
+        // === Download video ===
         try {
           await downloadRemoteFileToLocal(clipUrl, videoPath);
           console.log(`[VIDEO] Downloaded → ${videoPath}`);
+          console.log('[CHECK] Video file exists:', fs.existsSync(videoPath), videoPath);
         } catch (err) {
           console.error(`[ERR] Clip download failed (scene ${i + 1})`, err);
           progress[jobId] = { percent: 100, status: `Failed: Clip download error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
+        // === Combine audio and video ===
         try {
           await combineAudioAndVideo(audioPath, videoPath, finalPath);
           scenePaths.push(finalPath);
           console.log(`[SCENE] Final scene ${i + 1} ready → ${finalPath}`);
+          console.log('[CHECK] Final combined file exists:', fs.existsSync(finalPath), finalPath);
         } catch (err) {
           console.error(`[ERR] Scene combine failed (scene ${i + 1})`, err);
           progress[jobId] = { percent: 100, status: `Failed: Scene combine error (scene ${i + 1})` };
@@ -701,18 +708,21 @@ app.post('/api/generate-video', (req, res) => {
         }
       }
 
+      // === Stitch all scenes together ===
       const stitchedPath = path.join(workDir, `stitched.mp4`);
       progress[jobId] = { percent: 80, status: 'Stitching scenes...' };
 
       try {
         await stitchScenes(scenePaths, stitchedPath);
         console.log(`[STITCH] All scenes stitched → ${stitchedPath}`);
+        console.log('[CHECK] Stitched file exists:', fs.existsSync(stitchedPath), stitchedPath);
       } catch (err) {
         console.error(`[ERR] Stitching scenes failed`, err);
         progress[jobId] = { percent: 100, status: 'Failed: Stitching scenes' };
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
+      // === Final touches: watermark, outro, background music ===
       const finalPath = path.join(workDir, `final.mp4`);
       try {
         await addFinalTouches(stitchedPath, finalPath, {
@@ -721,12 +731,14 @@ app.post('/api/generate-video', (req, res) => {
           backgroundMusic: true
         });
         console.log(`[FINAL] Final touches complete → ${finalPath}`);
+        console.log('[CHECK] Final video file exists:', fs.existsSync(finalPath), finalPath);
       } catch (err) {
         console.error(`[ERR] Final touchup failed`, err);
         progress[jobId] = { percent: 100, status: 'Failed: Final touchup' };
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
+      // === Upload to R2 ===
       try {
         const s3Key = `${jobId}.mp4`;
         const fileData = fs.readFileSync(finalPath);

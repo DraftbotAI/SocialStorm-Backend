@@ -287,243 +287,150 @@ Then add metadata: viral title, SEO description, and hashtags.`
 /* ===========================================================
    SECTION 5: VIDEO GENERATION ENDPOINT
    -----------------------------------------------------------
-   - POST /api/generate-video
-   - Handles script, voice, branding, watermark, outro, background music
-   - Bulletproof file/dir safety; logs every step
+   POST /api/generate-video
+   Full video generation flow with voice, branding,
+   watermark, outro, background music, progress tracking
    =========================================================== */
 
 console.log('[INIT] Video generation endpoint initialized');
 
-// --- Import findBestClip helper at the top of your file ---
-const { findBestClip } = require('./pexels-helper.cjs');
-
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
+
   const jobId = uuidv4();
   progress[jobId] = { percent: 0, status: 'starting' };
   console.log(`[INFO] New job started: ${jobId}`);
+
   res.json({ jobId });
 
   (async () => {
     let finished = false;
     const watchdog = setTimeout(() => {
       if (!finished && progress[jobId]) {
-        progress[jobId] = { percent: 100, status: "Failed: Timed out." };
+        progress[jobId] = { percent: 100, status: 'Failed: Timed out.' };
         cleanupJob(jobId);
-        console.warn(`[WATCHDOG] Job ${jobId} timed out and cleaned up.`);
+        console.warn(`[WATCHDOG] Job ${jobId} timed out and was cleaned up`);
       }
-    }, 12 * 60 * 1000); // 12 min max
+    }, 10 * 60 * 1000); // 10 minutes timeout
 
+    // Working directory for this job
     let workDir = null;
-    let sceneFiles = [];
-    let totalSteps = 0;
-    let currentStep = 0;
-    let paidUser = false;
-    let removeWatermark = false;
-    let selectedVoice = "polly-matthew";
-    let script = '';
-
     try {
-      // --- Validate and extract payload ---
-      console.log('[INPUT] Payload:', req.body);
-      script = req.body.script || '';
-      selectedVoice = req.body.voice || 'polly-matthew';
-      paidUser = !!req.body.paidUser;
-      removeWatermark = !!req.body.removeWatermark;
+      const {
+        script,
+        voice,
+        paidUser = false,
+        removeWatermark = false,
+        addBackgroundMusic = true
+      } = req.body;
 
-      if (!script || typeof script !== "string" || script.length < 10) {
-        console.warn('[WARN] Invalid or empty script');
-        progress[jobId] = { percent: 100, status: "Failed: No script." };
-        return cleanupJob(jobId);
-      }
-      if (!selectedVoice || typeof selectedVoice !== "string") {
-        console.warn('[WARN] Invalid or missing voice');
-        progress[jobId] = { percent: 100, status: "Failed: No voice." };
-        return cleanupJob(jobId);
+      if (!script || !voice) {
+        throw new Error('Missing required parameters: script and voice');
       }
 
-      // --- Working directory for this job ---
+      // Step 1: Create temp working directory
       workDir = path.join(JOBS_DIR, jobId);
       if (!fs.existsSync(workDir)) {
         fs.mkdirSync(workDir, { recursive: true });
-        console.log('[FS] Created working dir:', workDir);
+      }
+      console.log(`[${jobId}] Working directory created: ${workDir}`);
+
+      progress[jobId] = { percent: 5, status: 'Parsing script into scenes...' };
+
+      // Step 2: Split script into scenes
+      const scenes = splitScriptToScenes(script);
+      console.log(`[${jobId}] Script split into ${scenes.length} scenes`);
+
+      progress[jobId] = { percent: 10, status: 'Generating audio for scenes...' };
+
+      // Step 3: Generate audio for each scene
+      for (let i = 0; i < scenes.length; i++) {
+        progress[jobId] = {
+          percent: 10 + Math.floor((i / scenes.length) * 30),
+          status: `Generating audio for scene ${i + 1} / ${scenes.length}`
+        };
+        console.log(`[${jobId}] Generating audio for scene ${i + 1}`);
+
+        const audioPath = await generateSceneAudio(scenes[i], voice, workDir, i);
+        scenes[i].audioPath = audioPath;
       }
 
-      // --- Step 1: Split script into scenes ---
-      console.log('[INFO] Splitting script into lines...');
-      const lines = script.split('\n').map(line => line.trim()).filter(Boolean);
-      console.log('[INFO] Scene count:', lines.length);
-      totalSteps = lines.length * 2 + 6; // audio + video + extra steps
+      progress[jobId] = { percent: 45, status: 'Finding matching clips for scenes...' };
 
-      // --- Step 2: Generate scene audio (Polly for now, future: ElevenLabs) ---
-      let audioFiles = [];
-      let sceneIdx = 1;
-      for (const line of lines) {
-        currentStep++;
-        progress[jobId] = { percent: Math.round(100 * currentStep / totalSteps), status: `Generating audio for scene ${sceneIdx}` };
-        let voiceId = "Matthew";
-        if (selectedVoice.startsWith("polly-")) voiceId = selectedVoice.replace("polly-", "");
-        console.log(`[TTS] Synthesizing scene ${sceneIdx} with Polly voice: ${voiceId}`);
-        const polly = new AWS.Polly();
-        const audioRes = await polly.synthesizeSpeech({
-          OutputFormat: 'mp3',
-          Text: line,
-          VoiceId: voiceId,
-          Engine: "neural"
-        }).promise();
-        const audioPath = path.join(workDir, `scene${sceneIdx}.mp3`);
-        fs.writeFileSync(audioPath, audioRes.AudioStream);
-        console.log(`[TTS] Saved audio to ${audioPath}`);
-        audioFiles.push(audioPath);
-        sceneIdx++;
+      // Step 4: Find matching video clip for each scene
+      for (let i = 0; i < scenes.length; i++) {
+        progress[jobId] = {
+          percent: 45 + Math.floor((i / scenes.length) * 20),
+          status: `Finding clip for scene ${i + 1} / ${scenes.length}`
+        };
+        console.log(`[${jobId}] Finding clip for scene ${i + 1}`);
+
+        const clipPath = await findMatchingClip(scenes[i].text, workDir, i);
+        scenes[i].clipPath = clipPath;
       }
 
-      // --- Step 3: Select video clips for each scene (R2 > Pexels > Pixabay) ---
-      let videoFiles = [];
-      sceneIdx = 1;
-      for (const line of lines) {
-        currentStep++;
-        progress[jobId] = { percent: Math.round(100 * currentStep / totalSteps), status: `Selecting video for scene ${sceneIdx}` };
-        console.log(`[CLIP] Selecting clip for scene ${sceneIdx}: "${line}"`);
-        // --- NEW: Use findBestClip from helper with god tier logging ---
-        const match = await findBestClip(line);
-        if (match && match.url) {
-          const ext = path.extname(match.url).split('?')[0] || '.mp4';
-          const videoPath = path.join(workDir, `scene${sceneIdx}${ext}`);
-          try {
-            // Download the video clip to the working dir
-            console.log(`[CLIP] Downloading: ${match.url}`);
-            const vidRes = await axios.get(match.url, { responseType: 'arraybuffer' });
-            fs.writeFileSync(videoPath, vidRes.data);
-            console.log(`[CLIP] Saved to ${videoPath} (${vidRes.data.length} bytes)`);
-            videoFiles.push(videoPath);
-          } catch (e) {
-            console.error(`[CLIP-ERROR] Failed to download: ${match.url}`, e);
-          }
-        } else {
-          console.error(`[CLIP-FAIL] No video found for scene ${sceneIdx}: "${line}"`);
-        }
-        sceneIdx++;
+      progress[jobId] = { percent: 65, status: 'Combining audio and video clips...' };
+
+      // Step 5: Combine audio and clip for each scene
+      for (let i = 0; i < scenes.length; i++) {
+        progress[jobId] = {
+          percent: 65 + Math.floor((i / scenes.length) * 20),
+          status: `Combining audio and clip for scene ${i + 1} / ${scenes.length}`
+        };
+        console.log(`[${jobId}] Combining audio and clip for scene ${i + 1}`);
+
+        const combinedPath = await combineAudioAndClip(scenes[i].audioPath, scenes[i].clipPath, workDir, i);
+        scenes[i].combinedPath = combinedPath;
       }
 
-      // --- Step 4: Merge audio & video for each scene ---
-      sceneFiles = [];
-      for (let i = 0; i < lines.length; i++) {
-        currentStep++;
-        progress[jobId] = { percent: Math.round(100 * currentStep / totalSteps), status: `Merging scene ${i+1}` };
-        const vPath = videoFiles[i];
-        const aPath = audioFiles[i];
-        const outPath = path.join(workDir, `scene${i+1}_out.mp4`);
-        if (
-          vPath && fs.existsSync(vPath) && fs.statSync(vPath).isFile() &&
-          aPath && fs.existsSync(aPath) && fs.statSync(aPath).isFile()
-        ) {
-          await new Promise((resolve, reject) => {
-            ffmpeg()
-              .input(vPath)
-              .input(aPath)
-              .outputOptions([
-                '-c:v', 'libx264',
-                '-c:a', 'aac',
-                '-shortest',
-                '-preset', 'veryfast',
-                '-movflags', '+faststart'
-              ])
-              .save(outPath)
-              .on('end', resolve)
-              .on('error', reject);
-          });
-          console.log(`[MERGE] Scene ${i+1} complete.`);
-          sceneFiles.push(outPath);
-        } else {
-          console.error('[EISDIR FAILSAFE] Skipped merge: file missing or is directory.', vPath, aPath);
-        }
+      progress[jobId] = { percent: 85, status: 'Assembling final video...' };
+
+      // Step 6: Assemble final video from scenes
+      const concatPath = await assembleFinalVideo(scenes, workDir);
+
+      let finalPath = concatPath;
+
+      // Step 7: Apply outro and watermark if needed
+      if (paidUser && !removeWatermark) {
+        progress[jobId] = { percent: 90, status: 'Appending outro and watermark...' };
+        console.log(`[${jobId}] Adding outro and watermark`);
+
+        finalPath = await applyOutroAndWatermark(concatPath, workDir, jobId);
       }
 
-      // --- Step 5: Concat all scenes ---
-      currentStep++;
-      progress[jobId] = { percent: Math.round(100 * currentStep / totalSteps), status: "Concatenating scenes" };
-      const fileListPath = path.join(workDir, 'filelist.txt');
-      const concatList = sceneFiles
-        .filter(p => fs.existsSync(p) && fs.statSync(p).isFile())
-        .map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n');
-      console.log('[CONCAT] Writing filelist.txt with', sceneFiles.length, 'scenes');
-      fs.writeFileSync(fileListPath, concatList);
+      // Step 8: Add background music if requested
+      if (addBackgroundMusic) {
+        progress[jobId] = { percent: 95, status: 'Adding background music...' };
+        console.log(`[${jobId}] Adding background music`);
 
-      const concatOut = path.join(workDir, 'concat.mp4');
-      console.log('[CONCAT] Running ffmpeg concat...');
-      await new Promise((resolve, reject) => {
-        ffmpeg()
-          .input(fileListPath)
-          .inputOptions(['-f', 'concat', '-safe', '0'])
-          .outputOptions(['-c', 'copy'])
-          .save(concatOut)
-          .on('end', resolve)
-          .on('error', reject);
-      });
-
-      // --- Step 6: Append outro (always) ---
-      const outro = path.join(__dirname, 'frontend', 'assets', 'outro.mp4');
-      let finalOut = concatOut;
-      if (fs.existsSync(outro) && fs.statSync(outro).isFile()) {
-        const outroConcatList = path.join(workDir, 'outrolist.txt');
-        fs.writeFileSync(outroConcatList,
-          `file '${concatOut.replace(/\\/g, '/')}'\nfile '${outro.replace(/\\/g, '/')}'\n`);
-        const outroOut = path.join(workDir, 'final_with_outro.mp4');
-        await new Promise((resolve, reject) => {
-          ffmpeg()
-            .input(outroConcatList)
-            .inputOptions(['-f', 'concat', '-safe', '0'])
-            .outputOptions(['-c', 'copy'])
-            .save(outroOut)
-            .on('end', resolve)
-            .on('error', reject);
-        });
-        finalOut = outroOut;
-        console.log('[FINAL] Outro appended.');
+        finalPath = await addBackgroundMusicToVideo(finalPath, workDir);
       }
 
-      // --- Step 7: Upload to S3/R2, set up public URL ---
-      const videoKey = `${jobId}.mp4`;
-      const videoData = fs.readFileSync(finalOut);
-      console.log(`[UPLOAD] Uploading final video to bucket as ${videoKey}`);
-      await s3Client.send(new PutObjectCommand({
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: videoKey,
-        Body: videoData,
-        ACL: 'public-read',
-        ContentType: 'video/mp4'
-      }));
+      // Step 9: Upload final video to storage (e.g., Cloudflare R2 or AWS S3)
+      progress[jobId] = { percent: 98, status: 'Uploading final video...' };
+      console.log(`[${jobId}] Uploading final video`);
 
-      // --- Step 8: Cleanup local files ---
-      setTimeout(() => {
-        try {
-          console.log('[CLEANUP] Removing temp job folder:', workDir);
-          fs.rmSync(workDir, { recursive: true, force: true });
-        } catch (e) { console.error('[CLEANUP ERROR]', e); }
-      }, 60000); // wait 1 min
+      const uploadKey = `${jobId}.mp4`;
+      await uploadFileToStorage(finalPath, uploadKey);
 
-      console.log('[DONE] Video processing complete:', videoKey);
-      progress[jobId] = { percent: 100, status: "Done! Click play.", key: videoKey };
+      progress[jobId] = { percent: 100, status: 'Done', key: uploadKey };
       finished = true;
+
+      // Cleanup temp files
+      cleanupJob(jobId);
       clearTimeout(watchdog);
-    } catch (err) {
-      console.error('[FAIL] Job failed:', err);
-      progress[jobId] = { percent: 100, status: "Failed: " + (err.message || err), error: err.message || err };
+
+      console.log(`[${jobId}] Job completed successfully`);
+
+    } catch (error) {
+      console.error(`[${jobId}] Video generation failed:`, error);
+      progress[jobId] = { percent: 100, status: `Failed: ${error.message}` };
       cleanupJob(jobId);
       finished = true;
       clearTimeout(watchdog);
     }
   })();
 });
-
-// ---- Progress polling ----
-app.get('/api/progress/:jobId', (req, res) => {
-  const jobId = req.params.jobId;
-  res.json(progress[jobId] || { percent: 100, status: "Expired." });
-});
-
-
 
 
 

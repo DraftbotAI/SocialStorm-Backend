@@ -645,30 +645,22 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
   });
 };
 
-// Helper: Ensure video has an audio stream, add silent track if not
-const ensureVideoHasAudio = (inPath, outPath) => {
+// Helper: Always replace audio with silent track (remux, even if source has "audio")
+const forceSilentAudioTrack = (inPath, outPath) => {
   return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(inPath, (err, info) => {
-      if (err) return reject(err);
-      const hasAudio = info.streams.some(s => s.codec_type === 'audio');
-      if (hasAudio) {
-        resolve(inPath); // Already has audio, nothing to do
-      } else {
-        ffmpeg()
-          .input(inPath)
-          .input('anullsrc=channel_layout=stereo:sample_rate=44100')
-          .inputOptions(['-f lavfi'])
-          .outputOptions([
-            '-c:v copy',
-            '-c:a aac',
-            '-shortest',
-            '-y'
-          ])
-          .save(outPath)
-          .on('end', () => resolve(outPath))
-          .on('error', reject);
-      }
-    });
+    ffmpeg()
+      .input(inPath)
+      .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+      .inputOptions(['-f lavfi'])
+      .outputOptions([
+        '-c:v copy',
+        '-c:a aac',
+        '-shortest',
+        '-y'
+      ])
+      .save(outPath)
+      .on('end', () => resolve(outPath))
+      .on('error', reject);
   });
 };
 
@@ -873,19 +865,17 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // ---- NEW: ENSURE TRIMMED VIDEO HAS AUDIO ----
-        let videoForCombine = trimmedVideoPath;
+        // ---- NEW: FORCE AUDIO PATCH EVERY TIME, NO CHECK ----
+        let videoForCombine = trimmedAudioFixedPath;
         try {
-          await ensureVideoHasAudio(trimmedVideoPath, trimmedAudioFixedPath);
-          if (fs.existsSync(trimmedAudioFixedPath) && fs.statSync(trimmedAudioFixedPath).size > 10240) {
-            videoForCombine = trimmedAudioFixedPath;
-            console.log(`[AUDIOFIX] Silent audio added to video for scene ${i + 1}: ${trimmedAudioFixedPath}`);
-          } else {
-            console.log(`[AUDIOFIX] Video for scene ${i + 1} already had audio`);
+          await forceSilentAudioTrack(trimmedVideoPath, trimmedAudioFixedPath);
+          if (!fs.existsSync(trimmedAudioFixedPath) || fs.statSync(trimmedAudioFixedPath).size < 10240) {
+            throw new Error(`Audio-patched video missing or too small: ${trimmedAudioFixedPath}`);
           }
+          console.log(`[AUDIOFIX] Forced silent audio added for scene ${i + 1}: ${trimmedAudioFixedPath}`);
         } catch (err) {
-          console.error(`[ERR] Could not ensure audio for scene ${i + 1}`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Ensure audio error (scene ${i + 1})` };
+          console.error(`[ERR] Could not force audio for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Force audio error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 

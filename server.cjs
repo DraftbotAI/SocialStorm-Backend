@@ -761,6 +761,7 @@ app.post('/api/generate-video', (req, res) => {
         console.error(`[ERR] Could not select shared video clip for scenes 1 & 2`, err);
       }
 
+      // === OLD-SCHOOL RELIABLE LOOP, NO ASYNC FOREACH ===
       for (let i = 0; i < scenes.length; i++) {
         const { id: sceneId, text: sceneText } = scenes[i];
         const base = sceneId;
@@ -861,6 +862,7 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[SCENE] Finished processing scene ${i + 1}/${scenes.length}.`);
       }
 
+      // === CONCATENATE SCENES ===
       const listFile = path.resolve(workDir, 'list.txt');
       fs.writeFileSync(
         listFile,
@@ -989,6 +991,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

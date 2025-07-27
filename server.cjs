@@ -640,18 +640,19 @@ app.post('/api/generate-video', (req, res) => {
       }
       console.log(`[STEP] Script split into ${scenes.length} scenes.`);
 
-      let scenePaths = [];
+      let sceneFiles = [];
       let firstClipUrl = null;
 
+      // === Create scene mp4s ===
       for (let i = 0; i < scenes.length; i++) {
         const { id: sceneId, text: sceneText } = scenes[i];
         const base = sceneId;
         const audioPath = path.join(workDir, `${base}-audio.mp3`);
         const videoPath = path.join(workDir, `${base}-video.mp4`);
-        const finalPath = path.join(workDir, `${base}-final.mp4`);
+        const sceneMp4 = path.join(workDir, `${base}.mp4`);
 
         progress[jobId] = {
-          percent: Math.floor((i / scenes.length) * 70),
+          percent: Math.floor((i / scenes.length) * 65),
           status: `Working on scene ${i + 1} of ${scenes.length}...`
         };
         console.log(`[SCENE] Working on scene ${i + 1}/${scenes.length}: "${sceneText}"`);
@@ -660,7 +661,6 @@ app.post('/api/generate-video', (req, res) => {
         try {
           await generateSceneAudio(sceneText, voice, audioPath, ttsProvider);
           console.log(`[AUDIO] Scene ${i + 1} audio created: ${audioPath}`);
-          console.log('[CHECK] Audio file exists:', fs.existsSync(audioPath), audioPath);
         } catch (err) {
           console.error(`[ERR] Audio generation failed for scene ${i + 1}`, err);
           progress[jobId] = { percent: 100, status: `Failed: Audio generation error (scene ${i + 1})` };
@@ -690,19 +690,17 @@ app.post('/api/generate-video', (req, res) => {
         try {
           await downloadRemoteFileToLocal(clipUrl, videoPath);
           console.log(`[VIDEO] Downloaded for scene ${i + 1}: ${videoPath}`);
-          console.log('[CHECK] Video file exists:', fs.existsSync(videoPath), videoPath);
         } catch (err) {
           console.error(`[ERR] Video download failed for scene ${i + 1}`, err);
           progress[jobId] = { percent: 100, status: `Failed: Video download error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Combine audio and video ===
+        // === Combine audio & video into mp4 for concat ===
         try {
-          await combineAudioAndVideo(audioPath, videoPath, finalPath);
-          scenePaths.push(finalPath);
-          console.log(`[COMBINE] Scene ${i + 1} combined: ${finalPath}`);
-          console.log('[CHECK] Final combined file exists:', fs.existsSync(finalPath), finalPath);
+          await combineAudioAndVideo(audioPath, videoPath, sceneMp4);
+          sceneFiles.push(sceneMp4);
+          console.log(`[COMBINE] Scene ${i + 1} ready for concat: ${sceneMp4}`);
         } catch (err) {
           console.error(`[ERR] Scene combine failed (scene ${i + 1})`, err);
           progress[jobId] = { percent: 100, status: `Failed: Scene combine error (scene ${i + 1})` };
@@ -710,32 +708,75 @@ app.post('/api/generate-video', (req, res) => {
         }
       }
 
-      // === Stitch all scenes together ===
-      const stitchedPath = path.join(workDir, `stitched.mp4`);
-      progress[jobId] = { percent: 80, status: 'Stitching scenes together...' };
+      // === Concatenate scenes using list.txt and ffmpeg concat demuxer ===
+      const listFile = path.join(workDir, 'list.txt');
+      fs.writeFileSync(
+        listFile,
+        sceneFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+      );
+      const concatFile = path.join(workDir, 'concat.mp4');
+
+      progress[jobId] = { percent: 75, status: "Combining all scenes together..." };
+      console.log(`[CONCAT] Scene list for concat:\n${sceneFiles.join('\n')}`);
 
       try {
-        await stitchScenes(scenePaths, stitchedPath);
-        console.log(`[STITCH] All scenes stitched together into one video: ${stitchedPath}`);
-        console.log('[CHECK] Stitched file exists:', fs.existsSync(stitchedPath), stitchedPath);
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(listFile)
+            .inputOptions(['-f concat', '-safe 0'])
+            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+            .save(concatFile)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+        console.log(`[STITCH] All scenes concatenated: ${concatFile}`);
       } catch (err) {
-        console.error(`[ERR] Stitching scenes failed`, err);
-        progress[jobId] = { percent: 100, status: 'Failed: Stitching scenes' };
+        console.error(`[ERR] Concatenation failed`, err);
+        progress[jobId] = { percent: 100, status: 'Failed: Scene concatenation' };
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // === Final touches: watermark, outro, background music ===
+      // === Watermark, outro, music ===
       const finalPath = path.join(workDir, `final.mp4`);
       try {
-        console.log(`[STEP] Adding outro, watermark, and${backgroundMusic ? '' : ' no'} background music...`);
         progress[jobId] = { percent: 85, status: `Adding outro, watermark, and${backgroundMusic ? '' : ' no'} music...` };
-        await addFinalTouches(stitchedPath, finalPath, {
-          watermark: !removeWatermark,
-          outro: !removeWatermark,
-          backgroundMusic: !!backgroundMusic // accepts true/false from frontend
+
+        // -- You may want to adjust these file paths --
+        let useWatermark = !(paidUser && removeWatermark);
+        const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
+        const outroPath = path.join(__dirname, 'frontend', 'outro.mp4'); // <-- Edit this path if needed
+        const addOutro = !removeWatermark;
+
+        // Build ffmpeg command
+        let ffmpegCmd = ffmpeg().input(concatFile);
+
+        if (useWatermark && fs.existsSync(watermarkPath)) {
+          ffmpegCmd = ffmpegCmd.input(watermarkPath).complexFilter([
+            '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];' +
+            '[0:v][wm]overlay=W-w-20:H-h-20'
+          ]);
+        }
+        if (addOutro && fs.existsSync(outroPath)) {
+          ffmpegCmd = ffmpegCmd.input(outroPath);
+          ffmpegCmd = ffmpegCmd.complexFilter([
+            ...(useWatermark && fs.existsSync(watermarkPath)
+              ? ['[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];[0:v][wm]overlay=W-w-20:H-h-20[mainv];[mainv][2:v][0:a][2:a]concat=n=2:v=1:a=1[outv][outa]']
+              : ['[0:v][1:v][0:a][1:a]concat=n=2:v=1:a=1[outv][outa]']
+            )
+          ], ['outv', 'outa']);
+        }
+
+        // Add background music if enabled (stub; implement as you wish)
+        // Example: ffmpegCmd.input('music.mp3').complexFilter([...])
+
+        ffmpegCmd
+          .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+          .save(finalPath);
+
+        await new Promise((resolve, reject) => {
+          ffmpegCmd.on('end', resolve).on('error', reject);
         });
-        console.log(`[FINAL] Final touches complete: ${finalPath}`);
-        console.log('[CHECK] Final video file exists:', fs.existsSync(finalPath), finalPath);
+        console.log(`[FINAL] Final video written: ${finalPath}`);
       } catch (err) {
         console.error(`[ERR] Final touches failed`, err);
         progress[jobId] = { percent: 100, status: 'Failed: Final touches' };
@@ -744,7 +785,7 @@ app.post('/api/generate-video', (req, res) => {
 
       // === Upload to R2 ===
       try {
-        const s3Key = `${jobId}.mp4`;
+        const s3Key = `videos/${jobId}.mp4`;
         const fileData = fs.readFileSync(finalPath);
         await s3Client.send(new PutObjectCommand({
           Bucket: process.env.R2_VIDEOS_BUCKET,

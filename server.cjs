@@ -617,7 +617,7 @@ const getAudioDuration = (audioPath) => {
   });
 };
 
-// Helper: Trim video to [duration] seconds (always ensures a stereo audio stream)
+// Helper: Trim video to [duration] seconds (NO -af anullsrc, just trims and copies audio)
 const trimVideo = (inPath, outPath, duration, seek = 0) => {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -627,7 +627,6 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
       '-t', String(duration),
       '-c:v', 'libx264',
       '-c:a', 'aac',
-      '-af', 'anullsrc=r=44100:cl=stereo', // always add silent audio
       '-shortest',
       '-avoid_negative_ts', 'make_zero',
       '-y',
@@ -990,6 +989,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

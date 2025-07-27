@@ -617,7 +617,7 @@ const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadI
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const audioDuration = await getAudioDuration(audioPath);
   const totalDuration = leadIn + audioDuration + tail;
-  // Compose filter for offset and mix
+  // Strictly correct filter for all audio types (mono/stereo)
   const filter = [
     `[1:a]adelay=${Math.round(leadIn * 1000)}:all=1,apad,atrim=0:${totalDuration}[aud];`,
     `[0:a]apad,atrim=0:${totalDuration}[vad];`,
@@ -946,7 +946,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
 
 
 

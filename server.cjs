@@ -915,10 +915,17 @@ app.post('/api/generate-video', (req, res) => {
         progress[jobId] = { percent: 85, status: `Adding outro, watermark, and${backgroundMusic ? '' : ' no'} music...` };
 
         let useWatermark = !(paidUser && removeWatermark);
-        const watermarkPath = path.resolve(__dirname, 'frontend', 'logo.png');
-        const outroPath = path.resolve(__dirname, 'frontend', 'outro.mp4');
-        const musicPath = path.resolve(__dirname, 'frontend', 'music.mp3');
+
+        // UPDATED: All static paths now reference public/assets/
+        const watermarkPath = path.resolve(__dirname, 'public', 'assets', 'logo.png');
+        const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
+        const musicPath = path.resolve(__dirname, 'public', 'assets', 'thunder.mp3');
         const addOutro = !removeWatermark;
+
+        // === Logging: file existence check
+        console.log(`[ASSET CHECK] Watermark: ${watermarkPath} (${fs.existsSync(watermarkPath)})`);
+        console.log(`[ASSET CHECK] Outro: ${outroPath} (${fs.existsSync(outroPath)})`);
+        console.log(`[ASSET CHECK] Music: ${musicPath} (${fs.existsSync(musicPath)})`);
 
         const musicExists = backgroundMusic && fs.existsSync(musicPath);
 
@@ -927,6 +934,7 @@ app.post('/api/generate-video', (req, res) => {
         if (useWatermark && fs.existsSync(watermarkPath)) ffmpegArgs = ffmpegArgs.input(watermarkPath);
         if (addOutro && fs.existsSync(outroPath)) ffmpegArgs = ffmpegArgs.input(outroPath);
 
+        // === Compose filters based on what's present
         const filters = [];
         const outputs = ['outv', 'outa'];
 

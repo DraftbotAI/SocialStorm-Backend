@@ -728,6 +728,7 @@ app.post('/api/generate-video', (req, res) => {
       const finalPath = path.join(workDir, `final.mp4`);
       try {
         console.log(`[STEP] Adding outro, watermark, and${backgroundMusic ? '' : ' no'} background music...`);
+        progress[jobId] = { percent: 85, status: `Adding outro, watermark, and${backgroundMusic ? '' : ' no'} music...` };
         await addFinalTouches(stitchedPath, finalPath, {
           watermark: !removeWatermark,
           outro: !removeWatermark,

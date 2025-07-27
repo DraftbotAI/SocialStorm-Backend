@@ -664,7 +664,7 @@ const forceSilentAudioTrack = (inPath, outPath) => {
   });
 };
 
-// Helper: Overlay audio onto video, with audio delay (assumes video already has audio stream)
+// Helper: Overlay audio onto video, with audio delay (always expects input video already has a track)
 const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const audioDuration = await getAudioDuration(audioPath);
@@ -672,20 +672,20 @@ const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadI
 
   const delay = Math.round(leadIn * 1000);
   const filter = [
-    `[1:a]adelay=${delay}|${delay},apad,atrim=0:${totalDuration}[aud];`,
-    `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];`,
-    `[0:a]apad,atrim=0:${totalDuration}[vad];`,
+    `[1:a]adelay=${delay}|${delay},apad,atrim=0:${totalDuration}[aud]`,
+    `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vout]`,
+    `[0:a]apad,atrim=0:${totalDuration}[vad]`,
     `[vad][aud]amix=inputs=2[aout]`
-  ].join('');
-  console.log(`[FFMPEG][COMBINE] Mixing audio and video for scene.\n    Video: ${videoPath}\n    Audio: ${audioPath}\n    Out:   ${outPath}\n    Filter: ${filter}`);
+  ];
+  console.log(`[FFMPEG][COMBINE] Mixing audio and video for scene.\n    Video: ${videoPath}\n    Audio: ${audioPath}\n    Out:   ${outPath}\n    Filter: ${filter.join(';')}`);
 
   return new Promise((resolve, reject) => {
     ffmpeg()
       .input(path.resolve(videoPath))
       .input(path.resolve(audioPath))
-      .complexFilter([filter], ['vid', 'aout'])
+      .complexFilter(filter, ['vout', 'aout']) // <--- THE FIX: Use [vout] and [aout]
       .outputOptions([
-        '-map', '[vid]',
+        '-map', '[vout]',
         '-map', '[aout]',
         '-c:v', 'libx264',
         '-c:a', 'aac',
@@ -865,7 +865,7 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // ---- NEW: FORCE AUDIO PATCH EVERY TIME, NO CHECK ----
+        // ---- Always PATCH with silent audio for consistency
         let videoForCombine = trimmedAudioFixedPath;
         try {
           await forceSilentAudioTrack(trimmedVideoPath, trimmedAudioFixedPath);
@@ -1024,6 +1024,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

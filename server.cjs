@@ -644,16 +644,17 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
   });
 };
 
-// Helper: Overlay audio onto video, start audio at +0.5s
+// Helper: Overlay audio onto video, always provides a silent audio stream for video
 const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const audioDuration = await getAudioDuration(audioPath);
   const totalDuration = leadIn + audioDuration + tail;
 
+  // Always add a silent audio stream for the video so amix never fails
   const delay = Math.round(leadIn * 1000);
   const filter = [
     `[1:a]adelay=${delay}:all=1,apad,atrim=0:${totalDuration}[aud];`,
-    `[0:a]apad,atrim=0:${totalDuration}[vad];`,
+    `anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:${totalDuration}[vad];`,
     `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];`,
     `[vid][vad][aud]amix=inputs=2[aout]`
   ].join('');

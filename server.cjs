@@ -644,26 +644,60 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
   });
 };
 
-// Helper: Overlay audio onto video, always provides a silent audio stream for video
+// Helper: ALWAYS add silent stereo audio to video so FFmpeg combine never fails
+const createSilentAudioVideo = (videoIn, videoOut, duration) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(videoIn)
+      .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+      .inputOptions(['-t', String(duration)])
+      .complexFilter([
+        '[0:v]copy[v]',
+        '[1:a]atrim=0:' + duration + '[a]'
+      ])
+      .outputOptions([
+        '-map', '[v]',
+        '-map', '[a]',
+        '-c:v', 'libx264',
+        '-c:a', 'aac',
+        '-shortest',
+        '-movflags', '+faststart',
+        '-y'
+      ])
+      .save(videoOut)
+      .on('end', () => {
+        if (fs.existsSync(videoOut) && fs.statSync(videoOut).size > 0) {
+          resolve(videoOut);
+        } else {
+          reject(new Error(`Silent video output missing: ${videoOut}`));
+        }
+      })
+      .on('error', reject);
+  });
+};
+
+// Helper: Overlay audio onto video, always after patching silent audio
 const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const audioDuration = await getAudioDuration(audioPath);
   const totalDuration = leadIn + audioDuration + tail;
 
-  // Always add a silent audio stream for the video so amix never fails
+  // Always make a video with a silent audio track (if not already present)
+  const silentVideoPath = videoPath.replace(/\.mp4$/, '-silent.mp4');
+  await createSilentAudioVideo(videoPath, silentVideoPath, totalDuration);
+
   const delay = Math.round(leadIn * 1000);
   const filter = [
     `[1:a]adelay=${delay}:all=1,apad,atrim=0:${totalDuration}[aud];`,
-    `anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:${totalDuration}[vad];`,
-    `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];`,
-    `[vid][vad][aud]amix=inputs=2[aout]`
+    `[0:a][aud]amix=inputs=2[aout];`,
+    `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid]`
   ].join('');
-  console.log(`[FFMPEG][COMBINE] Mixing audio and video for scene.\n    Video: ${videoPath}\n    Audio: ${audioPath}\n    Out:   ${outPath}\n    Filter: ${filter}`);
+  console.log(`[FFMPEG][COMBINE] Mixing audio and video for scene.\n    Video: ${silentVideoPath}\n    Audio: ${audioPath}\n    Out:   ${outPath}\n    Filter: ${filter}`);
 
   return new Promise((resolve, reject) => {
     ffmpeg()
-      .input(path.resolve(videoPath))
-      .input(path.resolve(audioPath))
+      .input(silentVideoPath)
+      .input(audioPath)
       .complexFilter([filter], ['vid', 'aout'])
       .outputOptions([
         '-map', '[vid]',
@@ -675,7 +709,7 @@ const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadI
         '-y'
       ])
       .duration(totalDuration)
-      .save(path.resolve(outPath))
+      .save(outPath)
       .on('end', () => {
         if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
           resolve(outPath);
@@ -981,6 +1015,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

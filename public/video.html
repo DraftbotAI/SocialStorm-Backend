@@ -282,6 +282,14 @@
           <span class="slider"></span>
         </label>
       </div>
+      <!-- MUSIC TOGGLE (ALWAYS SHOWN) -->
+      <div class="branding-toggle-row" style="margin-bottom:10px;">
+        <label class="branding-label" for="musicSwitch">Include background music</label>
+        <label class="switch">
+          <input type="checkbox" id="musicSwitch" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
       <div style="display: flex; align-items: center; gap: 12px;">
         <select id="voiceSelect" style="flex:1;"></select>
         <button id="previewBtn" class="btn" type="button" style="white-space:nowrap;" disabled>Preview Voice</button>
@@ -499,6 +507,8 @@
           payload.paidUser = true;
           payload.removeWatermark = document.getElementById('removeBrandingSwitch').checked;
         }
+        // ==== MUSIC TOGGLE PAYLOAD ====
+        payload.backgroundMusic = document.getElementById('musicSwitch').checked;
 
         const res  = await fetch('/api/generate-video', {
           method: 'POST',

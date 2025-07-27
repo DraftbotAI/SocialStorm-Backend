@@ -572,10 +572,6 @@ Tags: secrets landmarks travel viral history
 
 console.log('[INIT] Video generation endpoint initialized');
 
-// === Import voices and helpers ===
-// Assume voices[] and POLLY_VOICE_IDS are declared above in Section 3
-// Uses splitScriptToScenes and findClipForScene from pexels-helper.cjs
-
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -744,16 +740,14 @@ app.post('/api/generate-video', (req, res) => {
         // -- You may want to adjust these file paths --
         let useWatermark = !(paidUser && removeWatermark);
         const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
-        const outroPath = path.join(__dirname, 'frontend', 'outro.mp4'); // <-- Edit this path if needed
+        const outroPath = path.join(__dirname, 'frontend', 'outro.mp4');
         const addOutro = !removeWatermark;
 
-        // Build ffmpeg command
         let ffmpegCmd = ffmpeg().input(concatFile);
 
         if (useWatermark && fs.existsSync(watermarkPath)) {
           ffmpegCmd = ffmpegCmd.input(watermarkPath).complexFilter([
-            '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];' +
-            '[0:v][wm]overlay=W-w-20:H-h-20'
+            '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];[0:v][wm]overlay=W-w-20:H-h-20'
           ]);
         }
         if (addOutro && fs.existsSync(outroPath)) {
@@ -765,9 +759,6 @@ app.post('/api/generate-video', (req, res) => {
             )
           ], ['outv', 'outa']);
         }
-
-        // Add background music if enabled (stub; implement as you wish)
-        // Example: ffmpegCmd.input('music.mp3').complexFilter([...])
 
         ffmpegCmd
           .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
@@ -783,7 +774,12 @@ app.post('/api/generate-video', (req, res) => {
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // === Upload to R2 ===
+      // === Save a copy for local serving ===
+      const serveCopyPath = path.join(__dirname, 'public', 'video', `${jobId}.mp4`);
+      fs.copyFileSync(finalPath, serveCopyPath);
+      console.log(`[LOCAL SERVE] Video copied to: ${serveCopyPath}`);
+
+      // === Upload to R2 (background, don't block serve) ===
       try {
         const s3Key = `videos/${jobId}.mp4`;
         const fileData = fs.readFileSync(finalPath);
@@ -794,17 +790,25 @@ app.post('/api/generate-video', (req, res) => {
           ContentType: 'video/mp4'
         }));
         console.log(`[UPLOAD] Uploaded final video to R2: ${s3Key}`);
-        progress[jobId] = { percent: 100, status: 'Done', key: s3Key };
       } catch (err) {
         console.error(`[ERR] R2 upload failed`, err);
-        progress[jobId] = { percent: 100, status: 'Failed: Upload to R2' };
-        cleanupJob(jobId); clearTimeout(watchdog); return;
+        // No need to fail the job if R2 upload fails
       }
+
+      // === Mark job done, point to local copy for instant playback ===
+      progress[jobId] = {
+        percent: 100,
+        status: 'Done',
+        key: `${jobId}.mp4` // always accessible locally
+      };
 
       finished = true;
       clearTimeout(watchdog);
-      cleanupJob(jobId);
-      console.log(`[DONE] Video job ${jobId} finished successfully ✅`);
+
+      // === Delayed cleanup ===
+      setTimeout(() => cleanupJob(jobId), 30 * 60 * 1000);
+
+      console.log(`[DONE] Video job ${jobId} finished and available at /video/${jobId}.mp4`);
 
     } catch (err) {
       console.error(`[CRASH] Fatal video generation error`, err);
@@ -813,6 +817,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 
@@ -948,48 +953,26 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 /* ===========================================================
    SECTION 7: VIDEO STREAM ENDPOINT
    -----------------------------------------------------------
-   - Serve videos directly from R2_VIDEOS_BUCKET (cloud-only)
-   - Bulletproof path checking, no local fallback (production-optimized)
+   - Serve videos directly from /public/video (local disk)
+   - Bulletproof path checking, logs every hit
    =========================================================== */
 
-app.get('/video/:key(*)', async (req, res) => {
+app.get('/video/:key', (req, res) => {
   const key = req.params.key;
-
-  // === Sanity check for bad keys ===
-  if (!key || typeof key !== 'string' || key.includes('..') || key.trim() === '') {
+  // Disallow path tricks
+  if (!key || typeof key !== 'string' || key.includes('..') || !key.endsWith('.mp4')) {
     console.warn('[VIDEO SERVE] Invalid or missing key:', key);
     return res.status(400).send('Invalid video key');
   }
-
-  try {
-    console.log(`[VIDEO] Request to stream key: ${key}`);
-
-    const command = new GetObjectCommand({
-      Bucket: process.env.R2_VIDEOS_BUCKET,
-      Key: key,
-    });
-
-    console.log(`[S3] Fetching from bucket: ${process.env.R2_VIDEOS_BUCKET} → ${key}`);
-    const response = await s3Client.send(command);
-
-    // === Set headers ===
-    res.setHeader('Content-Type', 'video/mp4');
-    if (response.ContentLength)
-      res.setHeader('Content-Length', response.ContentLength);
-
-    // === Stream video ===
-    console.log(`[STREAM] Streaming to client: ${key}`);
-    response.Body.pipe(res);
-
-    response.Body.on('error', err => {
-      console.error(`[STREAM ERROR] Failed to stream ${key}:`, err);
-      if (!res.headersSent) res.status(500).send('Error streaming video');
-    });
-
-  } catch (err) {
-    console.error(`[ERROR] Failed to retrieve video key ${key}:`, err);
-    res.status(404).send('Video not found');
-  }
+  const videoPath = path.join(__dirname, 'public', 'video', key);
+  fs.stat(videoPath, (err, stats) => {
+    if (err || !stats.isFile()) {
+      console.warn(`[404] Video not found on disk: ${videoPath}`);
+      return res.status(404).send("Video not found");
+    }
+    console.log(`[SERVE] Sending video: ${videoPath}`);
+    res.sendFile(videoPath);
+  });
 });
 
 

@@ -774,7 +774,8 @@ app.post('/api/generate-video', (req, res) => {
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // === Save a copy for local serving ===
+      // === Save a copy for local serving (ENSURE DIR EXISTS) ===
+      fs.mkdirSync(path.join(__dirname, 'public', 'video'), { recursive: true });
       const serveCopyPath = path.join(__dirname, 'public', 'video', `${jobId}.mp4`);
       fs.copyFileSync(finalPath, serveCopyPath);
       console.log(`[LOCAL SERVE] Video copied to: ${serveCopyPath}`);
@@ -817,6 +818,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

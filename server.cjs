@@ -1139,19 +1139,53 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
 app.get('/video/:key', (req, res) => {
   const key = req.params.key;
-  // Disallow path tricks
+
+  // Block path traversal and require .mp4 extension
   if (!key || typeof key !== 'string' || key.includes('..') || !key.endsWith('.mp4')) {
     console.warn('[VIDEO SERVE] Invalid or missing key:', key);
     return res.status(400).send('Invalid video key');
   }
+
   const videoPath = path.join(__dirname, 'public', 'video', key);
+
   fs.stat(videoPath, (err, stats) => {
     if (err || !stats.isFile()) {
       console.warn(`[404] Video not found on disk: ${videoPath}`);
       return res.status(404).send("Video not found");
     }
+
     console.log(`[SERVE] Sending video: ${videoPath}`);
-    res.sendFile(videoPath);
+
+    // Set headers for browser download and caching
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `inline; filename="${key}"`);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable'); // 7 days
+
+    // Stream the video with support for partial content (seek/skip)
+    const range = req.headers.range;
+    if (range) {
+      const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(startStr, 10);
+      const end = endStr ? parseInt(endStr, 10) : stats.size - 1;
+      if (isNaN(start) || isNaN(end) || start > end) {
+        return res.status(416).send('Requested range not satisfiable');
+      }
+      const chunkSize = (end - start) + 1;
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${stats.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': 'video/mp4'
+      });
+      fs.createReadStream(videoPath, { start, end }).pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': stats.size,
+        'Content-Type': 'video/mp4'
+      });
+      fs.createReadStream(videoPath).pipe(res);
+    }
   });
 });
 

@@ -604,7 +604,6 @@ const combineAudioVideoWithOffsets = (videoPath, audioPath, outPath, leadIn = 0.
     ffmpeg()
       .input(videoPath)
       .input(audioPath)
-      // Delay audio by 0.5s (500ms = 500|0|0)
       .complexFilter([
         `[1:a]adelay=${Math.round(leadIn * 1000)}|${Math.round(leadIn * 1000)},apad,atrim=0:${totalDuration}[aud];` +
         `[0:a]apad,atrim=0:${totalDuration}[vad];` +

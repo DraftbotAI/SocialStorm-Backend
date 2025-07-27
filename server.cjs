@@ -572,6 +572,61 @@ Tags: secrets landmarks travel viral history
 
 console.log('[INIT] Video generation endpoint initialized');
 
+// Helper to get audio duration in seconds using ffprobe
+const getAudioDuration = (audioPath) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(audioPath, (err, metadata) => {
+      if (err) return reject(err);
+      resolve(metadata.format.duration);
+    });
+  });
+};
+
+// Helper to trim video to [duration] seconds (with optional offset)
+const trimVideo = (inPath, outPath, duration, seek = 0) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inPath)
+      .setStartTime(seek)
+      .setDuration(duration)
+      .outputOptions(['-c:v copy', '-c:a copy', '-avoid_negative_ts', 'make_zero', '-y'])
+      .save(outPath)
+      .on('end', () => resolve(outPath))
+      .on('error', reject);
+  });
+};
+
+// Helper to overlay audio onto video, starting audio at +0.5s
+const combineAudioVideoWithOffsets = (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
+  return new Promise(async (resolve, reject) => {
+    const audioDuration = await getAudioDuration(audioPath);
+    const totalDuration = leadIn + audioDuration + tail;
+
+    ffmpeg()
+      .input(videoPath)
+      .input(audioPath)
+      // Delay audio by 0.5s (500ms = 500|0|0)
+      .complexFilter([
+        `[1:a]adelay=${Math.round(leadIn * 1000)}|${Math.round(leadIn * 1000)},apad,atrim=0:${totalDuration}[aud];` +
+        `[0:a]apad,atrim=0:${totalDuration}[vad];` +
+        `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];` +
+        `[vid][vad][aud]amix=inputs=2:duration=first[aout]`
+      ], ['vid', 'aout'])
+      .outputOptions([
+        '-map', '[vid]',
+        '-map', '[aout]',
+        '-c:v', 'libx264',
+        '-c:a', 'aac',
+        '-shortest',
+        '-movflags', '+faststart',
+        '-y'
+      ])
+      .duration(totalDuration)
+      .save(outPath)
+      .on('end', () => resolve(outPath))
+      .on('error', reject);
+  });
+};
+
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -596,7 +651,7 @@ app.post('/api/generate-video', (req, res) => {
         paidUser = false,
         removeWatermark = false,
         title = '',
-        backgroundMusic = true // <-- music toggle support from frontend
+        backgroundMusic = true
       } = req.body || {};
 
       console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark} | Music: ${backgroundMusic}`);
@@ -637,14 +692,23 @@ app.post('/api/generate-video', (req, res) => {
       console.log(`[STEP] Script split into ${scenes.length} scenes.`);
 
       let sceneFiles = [];
-      let firstClipUrl = null;
+      let line2Subject = scenes[1]?.text || '';
+      let sharedClipUrl = null;
 
-      // === Create scene mp4s ===
+      // === Pre-pick video for scene 1 & 2 using line 2's subject ===
+      try {
+        sharedClipUrl = await findClipForScene(line2Subject, 1, scenes.map(s => s.text), title || '');
+        console.log(`[SCENE 1&2] Selected shared clip for hook/scene2: ${sharedClipUrl}`);
+      } catch (err) {
+        console.error(`[ERR] Could not select shared video clip for scenes 1 & 2`, err);
+      }
+
       for (let i = 0; i < scenes.length; i++) {
         const { id: sceneId, text: sceneText } = scenes[i];
         const base = sceneId;
         const audioPath = path.join(workDir, `${base}-audio.mp3`);
-        const videoPath = path.join(workDir, `${base}-video.mp4`);
+        const rawVideoPath = path.join(workDir, `${base}-rawvideo.mp4`);
+        const trimmedVideoPath = path.join(workDir, `${base}-trimmed.mp4`);
         const sceneMp4 = path.join(workDir, `${base}.mp4`);
 
         progress[jobId] = {
@@ -663,18 +727,16 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Find matching video ===
+        // === Pick correct video ===
         let clipUrl = null;
-        try {
-          if (i === 1 && firstClipUrl) {
-            clipUrl = firstClipUrl;
-            console.log(`[VIDEO] Using first scene's clip again for continuity: ${clipUrl}`);
-          } else {
+        if (i === 0 || i === 1) {
+          clipUrl = sharedClipUrl;
+        } else {
+          try {
             clipUrl = await findClipForScene(sceneText, i, scenes.map(s => s.text), title || '');
-            if (i === 0) firstClipUrl = clipUrl;
+          } catch (err) {
+            console.error(`[ERR] Clip matching failed for scene ${i + 1}`, err);
           }
-        } catch (err) {
-          console.error(`[ERR] Clip matching failed for scene ${i + 1}`, err);
         }
 
         if (!clipUrl) {
@@ -684,17 +746,38 @@ app.post('/api/generate-video', (req, res) => {
 
         // === Download video ===
         try {
-          await downloadRemoteFileToLocal(clipUrl, videoPath);
-          console.log(`[VIDEO] Downloaded for scene ${i + 1}: ${videoPath}`);
+          await downloadRemoteFileToLocal(clipUrl, rawVideoPath);
+          console.log(`[VIDEO] Downloaded for scene ${i + 1}: ${rawVideoPath}`);
         } catch (err) {
           console.error(`[ERR] Video download failed for scene ${i + 1}`, err);
           progress[jobId] = { percent: 100, status: `Failed: Video download error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Combine audio & video into mp4 for concat ===
+        // === Trim video to match: 0.5s + [audio duration] + 1s ===
+        let audioDuration;
         try {
-          await combineAudioAndVideo(audioPath, videoPath, sceneMp4);
+          audioDuration = await getAudioDuration(audioPath);
+        } catch (err) {
+          console.error(`[ERR] Could not get audio duration for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Audio duration error (scene ${i + 1})` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
+        }
+        const leadIn = 0.5, tail = 1.0;
+        const sceneDuration = leadIn + audioDuration + tail;
+
+        try {
+          await trimVideo(rawVideoPath, trimmedVideoPath, sceneDuration, 0);
+          console.log(`[TRIM] Video trimmed for scene ${i + 1}: ${trimmedVideoPath} (${sceneDuration}s)`);
+        } catch (err) {
+          console.error(`[ERR] Trimming video failed for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Video trim error (scene ${i + 1})` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
+        }
+
+        // === Overlay audio onto video at 0.5s ===
+        try {
+          await combineAudioVideoWithOffsets(trimmedVideoPath, audioPath, sceneMp4, leadIn, tail);
           sceneFiles.push(sceneMp4);
           console.log(`[COMBINE] Scene ${i + 1} ready for concat: ${sceneMp4}`);
         } catch (err) {

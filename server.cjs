@@ -478,22 +478,40 @@ app.post('/api/generate-script', async (req, res) => {
   try {
     const prompt = `
 You are a viral YouTube Shorts scriptwriter.
-Write a viral script about: ${idea}
-Rules:
-- Line 1 must be a dramatic or funny HOOK (attention-grabber about the *theme*).
-- Each line = one scene, short and punchy, no dialogue, no numbers, no tags.
-- 6–10 lines total, each line is a separate scene.
-- No quotes, emojis, hashtags, or scene numbers.
-- After script lines, output:
-Title: [viral title, no quotes]
-Description: [short SEO description, no hashtags]
-Tags: [max 5, space-separated, no hashtags or commas]
-Example:
-Did you know famous landmarks hide wild secrets?
-...
-Title: The Wildest Secret Rooms Inside Landmarks
-Description: Uncover the wildest secret spaces hidden inside the world’s most famous landmarks.
-Tags: secrets landmarks travel viral history
+
+Your job is to write an engaging, narratable script on the topic: "${idea}"
+
+== RULES ==
+- Line 1 must be a HOOK — surprising, dramatic, or funny — that makes the viewer stay.
+- Each line = one spoken scene (short, punchy, narratable).
+- Make each fact feel like a secret or hidden story.
+- DO NOT use camera directions (e.g., "Cut to", "Zoom in", "POV", "Flash").
+- DO NOT use hashtags, emojis, or quote marks.
+- Aim for 6 to 10 lines total. Narration-style only.
+
+== STYLE ==
+- Use vivid, conversational tone.
+- Add a twist or deeper explanation when possible.
+- Be clever or funny when appropriate.
+- End with a satisfying or mysterious final line.
+
+== METADATA ==
+At the end, return:
+Title: [a viral, clickable title — no quotes]
+Description: [1–2 sentence summary of what the video reveals]
+Tags: [Max 5 words, space-separated. No hashtags or commas.]
+
+== EXAMPLE SCRIPT ==
+They say history is written by the winners. But what did they hide?
+There's a chamber behind Lincoln’s head at Mount Rushmore — planned for documents, never finished.
+The Eiffel Tower hides a tiny private apartment — built by Gustave Eiffel for special guests only.
+The Great Wall of China has underground tunnels — built to sneak troops and supplies past enemies.
+Lady Liberty’s torch? Sealed off since 1916 after a German attack during WWI.
+One paw of the Sphinx may hide a sealed room — sensors detect a cavity, but Egypt won’t open it.
+Whispers say the Taj Mahal has secret floors — built for symmetry, now sealed tight.
+Title: Hidden Secrets They Don’t Teach in School
+Description: Real hidden rooms and strange facts about the world’s most famous landmarks.
+Tags: secrets landmarks mystery history viral
     `.trim();
 
     // === OpenAI v4+ call ===
@@ -521,9 +539,20 @@ Tags: secrets landmarks travel viral history
     const tagsIdx  = lines.findIndex(l => /^tags?\s*:/i.test(l));
 
     const metaStart = [titleIdx, descIdx, tagsIdx].filter(x => x > -1).sort((a,b) => a - b)[0] || lines.length;
+
     scriptLines = lines.slice(0, metaStart).filter(l =>
-      !/^title\s*:/i.test(l) && !/^description\s*:/i.test(l) && !/^tags?\s*:/i.test(l)
+      !/^title\s*:/i.test(l) &&
+      !/^description\s*:/i.test(l) &&
+      !/^tags?\s*:/i.test(l)
     );
+
+    // Strip out lines that are clearly not meant to be narrated
+    const cameraWords = ['cut to', 'zoom', 'pan', 'transition', 'fade', 'camera', 'pov', 'flash'];
+    scriptLines = scriptLines.filter(line => {
+      const lc = line.toLowerCase();
+      return !cameraWords.some(word => lc.startsWith(word) || lc.includes(`: ${word}`));
+    });
+
     if (scriptLines.length > 10) scriptLines = scriptLines.slice(0, 10);
 
     for (const l of lines.slice(metaStart)) {
@@ -532,9 +561,15 @@ Tags: secrets landmarks travel viral history
       else if (/^tags?\s*:/i.test(l)) tags = l.replace(/^tags?\s*:/i, '').trim();
     }
 
+    // === Metadata Fallbacks ===
     if (!title) title = idea.length < 60 ? idea : idea.slice(0, 57) + "...";
-    if (!description) description = `Here's a quick look at "${idea}" – stay tuned.`;
-    if (!tags) tags = "shorts viral";
+    if (!description) description = `This video explores: ${idea}`;
+    if (!tags) tags = idea
+      .toLowerCase()
+      .split(/\W+/)
+      .filter(w => w.length > 2)
+      .slice(0, 5)
+      .join(' ');
 
     if (!scriptLines.length) scriptLines = ['Something went wrong generating the script.'];
 
@@ -556,6 +591,7 @@ Tags: secrets landmarks travel viral history
     res.status(500).json({ success: false, error: "Script generation failed" });
   }
 });
+
 
 
 

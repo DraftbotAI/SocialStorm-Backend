@@ -599,9 +599,11 @@ app.post('/api/generate-video', (req, res) => {
         voice = '',
         paidUser = false,
         removeWatermark = false,
-        title = ''
+        title = '',
+        backgroundMusic = true // <-- music toggle support from frontend
       } = req.body || {};
-      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark}`);
+
+      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark} | Music: ${backgroundMusic}`);
       console.log(`[DEBUG] Raw script:\n${script}`);
 
       // === Validation ===
@@ -636,7 +638,7 @@ app.post('/api/generate-video', (req, res) => {
         cleanupJob(jobId); clearTimeout(watchdog);
         return;
       }
-      console.log(`[STEP] Script split to ${scenes.length} scenes`);
+      console.log(`[STEP] Script split into ${scenes.length} scenes.`);
 
       let scenePaths = [];
       let firstClipUrl = null;
@@ -650,18 +652,18 @@ app.post('/api/generate-video', (req, res) => {
 
         progress[jobId] = {
           percent: Math.floor((i / scenes.length) * 70),
-          status: `Processing scene ${i + 1}/${scenes.length}`
+          status: `Working on scene ${i + 1} of ${scenes.length}...`
         };
-        console.log(`[SCENE ${i + 1}] Text: "${sceneText}"`);
+        console.log(`[SCENE] Working on scene ${i + 1}/${scenes.length}: "${sceneText}"`);
 
         // === Generate audio ===
         try {
           await generateSceneAudio(sceneText, voice, audioPath, ttsProvider);
-          console.log(`[AUDIO] Scene ${i + 1} audio created → ${audioPath}`);
+          console.log(`[AUDIO] Scene ${i + 1} audio created: ${audioPath}`);
           console.log('[CHECK] Audio file exists:', fs.existsSync(audioPath), audioPath);
         } catch (err) {
-          console.error(`[ERR] Audio gen failed for scene ${i + 1}`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Audio gen error (scene ${i + 1})` };
+          console.error(`[ERR] Audio generation failed for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Audio generation error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
@@ -670,28 +672,28 @@ app.post('/api/generate-video', (req, res) => {
         try {
           if (i === 1 && firstClipUrl) {
             clipUrl = firstClipUrl;
-            console.log(`[VIDEO] Using first scene clip for continuity → ${clipUrl}`);
+            console.log(`[VIDEO] Using first scene's clip again for continuity: ${clipUrl}`);
           } else {
             clipUrl = await findClipForScene(sceneText, i, scenes.map(s => s.text), title || '');
             if (i === 0) firstClipUrl = clipUrl;
           }
         } catch (err) {
-          console.error(`[ERR] Clip match failed scene ${i + 1}`, err);
+          console.error(`[ERR] Clip matching failed for scene ${i + 1}`, err);
         }
 
         if (!clipUrl) {
-          progress[jobId] = { percent: 100, status: `Failed: No clip for scene ${i + 1}` };
+          progress[jobId] = { percent: 100, status: `Failed: No video found for scene ${i + 1}` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
         // === Download video ===
         try {
           await downloadRemoteFileToLocal(clipUrl, videoPath);
-          console.log(`[VIDEO] Downloaded → ${videoPath}`);
+          console.log(`[VIDEO] Downloaded for scene ${i + 1}: ${videoPath}`);
           console.log('[CHECK] Video file exists:', fs.existsSync(videoPath), videoPath);
         } catch (err) {
-          console.error(`[ERR] Clip download failed (scene ${i + 1})`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Clip download error (scene ${i + 1})` };
+          console.error(`[ERR] Video download failed for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Video download error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
@@ -699,7 +701,7 @@ app.post('/api/generate-video', (req, res) => {
         try {
           await combineAudioAndVideo(audioPath, videoPath, finalPath);
           scenePaths.push(finalPath);
-          console.log(`[SCENE] Final scene ${i + 1} ready → ${finalPath}`);
+          console.log(`[COMBINE] Scene ${i + 1} combined: ${finalPath}`);
           console.log('[CHECK] Final combined file exists:', fs.existsSync(finalPath), finalPath);
         } catch (err) {
           console.error(`[ERR] Scene combine failed (scene ${i + 1})`, err);
@@ -710,11 +712,11 @@ app.post('/api/generate-video', (req, res) => {
 
       // === Stitch all scenes together ===
       const stitchedPath = path.join(workDir, `stitched.mp4`);
-      progress[jobId] = { percent: 80, status: 'Stitching scenes...' };
+      progress[jobId] = { percent: 80, status: 'Stitching scenes together...' };
 
       try {
         await stitchScenes(scenePaths, stitchedPath);
-        console.log(`[STITCH] All scenes stitched → ${stitchedPath}`);
+        console.log(`[STITCH] All scenes stitched together into one video: ${stitchedPath}`);
         console.log('[CHECK] Stitched file exists:', fs.existsSync(stitchedPath), stitchedPath);
       } catch (err) {
         console.error(`[ERR] Stitching scenes failed`, err);
@@ -725,16 +727,17 @@ app.post('/api/generate-video', (req, res) => {
       // === Final touches: watermark, outro, background music ===
       const finalPath = path.join(workDir, `final.mp4`);
       try {
+        console.log(`[STEP] Adding outro, watermark, and${backgroundMusic ? '' : ' no'} background music...`);
         await addFinalTouches(stitchedPath, finalPath, {
           watermark: !removeWatermark,
           outro: !removeWatermark,
-          backgroundMusic: true
+          backgroundMusic: !!backgroundMusic // accepts true/false from frontend
         });
-        console.log(`[FINAL] Final touches complete → ${finalPath}`);
+        console.log(`[FINAL] Final touches complete: ${finalPath}`);
         console.log('[CHECK] Final video file exists:', fs.existsSync(finalPath), finalPath);
       } catch (err) {
-        console.error(`[ERR] Final touchup failed`, err);
-        progress[jobId] = { percent: 100, status: 'Failed: Final touchup' };
+        console.error(`[ERR] Final touches failed`, err);
+        progress[jobId] = { percent: 100, status: 'Failed: Final touches' };
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
@@ -748,7 +751,7 @@ app.post('/api/generate-video', (req, res) => {
           Body: fileData,
           ContentType: 'video/mp4'
         }));
-        console.log(`[UPLOAD] Uploaded → R2:${s3Key}`);
+        console.log(`[UPLOAD] Uploaded final video to R2: ${s3Key}`);
         progress[jobId] = { percent: 100, status: 'Done', key: s3Key };
       } catch (err) {
         console.error(`[ERR] R2 upload failed`, err);
@@ -759,15 +762,16 @@ app.post('/api/generate-video', (req, res) => {
       finished = true;
       clearTimeout(watchdog);
       cleanupJob(jobId);
-      console.log(`[DONE] Job ${jobId} complete ✅`);
+      console.log(`[DONE] Video job ${jobId} finished successfully ✅`);
 
     } catch (err) {
-      console.error(`[CRASH] Fatal video gen error`, err);
+      console.error(`[CRASH] Fatal video generation error`, err);
       progress[jobId] = { percent: 100, status: 'Failed: Crash' };
       cleanupJob(jobId); clearTimeout(watchdog);
     }
   })();
 });
+
 
 
 

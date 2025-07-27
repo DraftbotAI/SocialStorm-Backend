@@ -18,15 +18,62 @@ const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || 'socialstorm-library'
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
 
-// Import OpenAI client from main server context (if needed)
-// const { openai } = require('./server'); // If you need to call GPT here
-
 // --- Util: Normalize subject and filenames for matching ---
 function normalize(str) {
   return String(str)
     .toLowerCase()
     .replace(/[\s_\-]+/g, '') // Remove spaces/underscores/dashes for fuzzy matching
     .replace(/[^a-z0-9]/g, ''); // Strip non-alphanum
+}
+
+// --- Subject extractor: pulls out visual main subject (not actions/details) ---
+function extractMainSubject(line, title = '') {
+  // If the script line contains the video "title" as a substring, use the title as anchor
+  // Otherwise, use a set of rules: look for landmark/object, drop verbs/adjectives
+  // If you want GPT-powered subject extraction, you can plug it in here
+  const knownLandmarks = [
+    "statue of liberty",
+    "mount rushmore",
+    "eiffel tower",
+    "leaning tower of pisa",
+    "taj mahal",
+    "london bridge",
+    "great wall of china",
+    "cinderella castle",
+    "thames",
+    "lincoln's head",
+    "torch",
+    "bunker",
+    "suite"
+  ];
+  const l = line.toLowerCase();
+  let subject = '';
+
+  // If a known landmark/object appears, use that as subject
+  for (const landmark of knownLandmarks) {
+    if (l.includes(landmark)) {
+      subject = landmark;
+      break;
+    }
+  }
+  // If nothing matched, and the title exists in the line, anchor on that
+  if (!subject && title && l.includes(title.toLowerCase())) {
+    subject = title;
+  }
+  // Fallback: take first 3 words that are not "maintenance", "hidden", etc.
+  if (!subject) {
+    subject = line
+      .replace(/[^a-z0-9\s]/gi, '')
+      .split(' ')
+      .filter(w => w && !['the', 'of', 'and', 'a', 'an', 'for', 'in', 'on', 'at', 'with', 'maintenance', 'hidden', 'secrets', 'suite', 'chamber'].includes(w.toLowerCase()))
+      .slice(0, 3)
+      .join(' ');
+  }
+  subject = subject.trim();
+  if (!subject) subject = line;
+  // Log for debug:
+  console.log(`[SUBJECT] Extracted main subject: "${subject}" from line: "${line}"`);
+  return subject;
 }
 
 // --- R2 CLIP MATCHING ---
@@ -46,8 +93,10 @@ async function findClipInR2(subject, s3Client) {
       const normFile = normalize(file);
       if (normFile.includes(normQuery)) {
         console.log(`[R2] Found match: ${file}`);
-        // Presume direct S3 URL: you may need to construct a presigned URL or use your gateway
-        return `https://${process.env.R2_ENDPOINT.replace('https://', '')}/${R2_LIBRARY_BUCKET}/${file}`;
+        // Build the public URL (assuming gateway or direct access)
+        let endpoint = process.env.R2_ENDPOINT || '';
+        if (endpoint.endsWith('/')) endpoint = endpoint.slice(0, -1);
+        return `https://${endpoint.replace('https://', '')}/${R2_LIBRARY_BUCKET}/${file}`;
       }
     }
     console.log('[R2] No match found for:', subject);
@@ -110,24 +159,34 @@ async function findClipInPixabay(subject) {
 
 // --- MAIN MATCHER: R2 → PEXELS → PIXABAY ---
 async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client) {
-  // Extract true visual subject if using GPT-powered subject matcher.
-  const subject = sceneText; // Replace with GPT logic if you wish
+  // Use main subject extractor to get best visual anchor
+  const subject = extractMainSubject(sceneText, title);
   console.log(`[MATCH] Scene ${idx + 1} subject: "${subject}"`);
 
   // 1. Try R2 first
   if (s3Client) {
     const r2Url = await findClipInR2(subject, s3Client);
-    if (r2Url) return r2Url;
+    if (r2Url) {
+      console.log(`[MATCH] Using R2 video for: "${subject}"`);
+      return r2Url;
+    }
   }
 
   // 2. Try Pexels
   const pexelsUrl = await findClipInPexels(subject);
-  if (pexelsUrl) return pexelsUrl;
+  if (pexelsUrl) {
+    console.log(`[MATCH] Using Pexels video for: "${subject}"`);
+    return pexelsUrl;
+  }
 
   // 3. Try Pixabay
   const pixabayUrl = await findClipInPixabay(subject);
-  if (pixabayUrl) return pixabayUrl;
+  if (pixabayUrl) {
+    console.log(`[MATCH] Using Pixabay video for: "${subject}"`);
+    return pixabayUrl;
+  }
 
+  console.log(`[MATCH] No video found for subject: "${subject}"`);
   return null;
 }
 

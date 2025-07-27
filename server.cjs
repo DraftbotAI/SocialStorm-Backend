@@ -572,7 +572,7 @@ Tags: secrets landmarks travel viral history
 
 console.log('[INIT] Video generation endpoint initialized');
 
-// Helper to get audio duration in seconds using ffprobe
+// Helper: Get audio duration in seconds using ffprobe
 const getAudioDuration = (audioPath) => {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(audioPath, (err, metadata) => {
@@ -582,34 +582,56 @@ const getAudioDuration = (audioPath) => {
   });
 };
 
-// Helper to trim video to [duration] seconds (with optional offset)
+// Helper: Trim video to [duration] seconds (with optional offset)
 const trimVideo = (inPath, outPath, duration, seek = 0) => {
   return new Promise((resolve, reject) => {
-    ffmpeg(inPath)
-      .setStartTime(seek)
-      .setDuration(duration)
-      .outputOptions(['-c:v copy', '-c:a copy', '-avoid_negative_ts', 'make_zero', '-y'])
-      .save(outPath)
-      .on('end', () => resolve(outPath))
-      .on('error', reject);
+    // Ensure output dir exists
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    // Build the correct FFmpeg command: use -ss before -i for fast seek, encode for accurate trim
+    const ffmpegArgs = [
+      '-ss', String(seek),
+      '-i', path.resolve(inPath),
+      '-t', String(duration),
+      '-c:v', 'libx264',
+      '-c:a', 'aac',
+      '-avoid_negative_ts', 'make_zero',
+      '-y',
+      path.resolve(outPath)
+    ];
+    console.log(`[FFMPEG][TRIM] ffmpeg ${ffmpegArgs.join(' ')}`);
+    const ff = require('child_process').spawn('ffmpeg', ffmpegArgs);
+
+    ff.stderr.on('data', d => process.stderr.write(d));
+    ff.on('exit', (code) => {
+      if (code === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+        resolve(outPath);
+      } else {
+        reject(new Error(`FFmpeg trim failed, exit code ${code}`));
+      }
+    });
   });
 };
 
-// Helper to overlay audio onto video, starting audio at +0.5s
-const combineAudioVideoWithOffsets = (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
-  return new Promise(async (resolve, reject) => {
-    const audioDuration = await getAudioDuration(audioPath);
-    const totalDuration = leadIn + audioDuration + tail;
+// Helper: Overlay audio onto video, start audio at +0.5s
+const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
+  // Ensure output dir exists
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  const audioDuration = await getAudioDuration(audioPath);
+  const totalDuration = leadIn + audioDuration + tail;
+  // Compose filter for offset and mix
+  const filter = [
+    `[1:a]adelay=${Math.round(leadIn * 1000)}|${Math.round(leadIn * 1000)},apad,atrim=0:${totalDuration}[aud];`,
+    `[0:a]apad,atrim=0:${totalDuration}[vad];`,
+    `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];`,
+    `[vid][vad][aud]amix=inputs=2:duration=first[aout]`
+  ].join('');
+  console.log(`[FFMPEG][COMBINE] Mixing audio and video for scene.\n    Video: ${videoPath}\n    Audio: ${audioPath}\n    Out:   ${outPath}\n    Filter: ${filter}`);
 
+  return new Promise((resolve, reject) => {
     ffmpeg()
-      .input(videoPath)
-      .input(audioPath)
-      .complexFilter([
-        `[1:a]adelay=${Math.round(leadIn * 1000)}|${Math.round(leadIn * 1000)},apad,atrim=0:${totalDuration}[aud];` +
-        `[0:a]apad,atrim=0:${totalDuration}[vad];` +
-        `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];` +
-        `[vid][vad][aud]amix=inputs=2:duration=first[aout]`
-      ], ['vid', 'aout'])
+      .input(path.resolve(videoPath))
+      .input(path.resolve(audioPath))
+      .complexFilter([filter], ['vid', 'aout'])
       .outputOptions([
         '-map', '[vid]',
         '-map', '[aout]',
@@ -620,8 +642,14 @@ const combineAudioVideoWithOffsets = (videoPath, audioPath, outPath, leadIn = 0.
         '-y'
       ])
       .duration(totalDuration)
-      .save(outPath)
-      .on('end', () => resolve(outPath))
+      .save(path.resolve(outPath))
+      .on('end', () => {
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+          resolve(outPath);
+        } else {
+          reject(new Error(`FFmpeg combine produced no output`));
+        }
+      })
       .on('error', reject);
   });
 };
@@ -678,8 +706,8 @@ app.post('/api/generate-video', (req, res) => {
         return;
       }
 
-      const workDir = path.join(__dirname, 'renders', jobId);
-      if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
+      const workDir = path.resolve(__dirname, 'renders', jobId);
+      fs.mkdirSync(workDir, { recursive: true });
       console.log(`[STEP] Work dir created: ${workDir}`);
 
       const scenes = splitScriptToScenes(script);
@@ -705,10 +733,10 @@ app.post('/api/generate-video', (req, res) => {
       for (let i = 0; i < scenes.length; i++) {
         const { id: sceneId, text: sceneText } = scenes[i];
         const base = sceneId;
-        const audioPath = path.join(workDir, `${base}-audio.mp3`);
-        const rawVideoPath = path.join(workDir, `${base}-rawvideo.mp4`);
-        const trimmedVideoPath = path.join(workDir, `${base}-trimmed.mp4`);
-        const sceneMp4 = path.join(workDir, `${base}.mp4`);
+        const audioPath = path.resolve(workDir, `${base}-audio.mp3`);
+        const rawVideoPath = path.resolve(workDir, `${base}-rawvideo.mp4`);
+        const trimmedVideoPath = path.resolve(workDir, `${base}-trimmed.mp4`);
+        const sceneMp4 = path.resolve(workDir, `${base}.mp4`);
 
         progress[jobId] = {
           percent: Math.floor((i / scenes.length) * 65),
@@ -719,6 +747,9 @@ app.post('/api/generate-video', (req, res) => {
         // === Generate audio ===
         try {
           await generateSceneAudio(sceneText, voice, audioPath, ttsProvider);
+          if (!fs.existsSync(audioPath) || fs.statSync(audioPath).size < 1024) {
+            throw new Error(`Audio output missing or too small: ${audioPath}`);
+          }
           console.log(`[AUDIO] Scene ${i + 1} audio created: ${audioPath}`);
         } catch (err) {
           console.error(`[ERR] Audio generation failed for scene ${i + 1}`, err);
@@ -746,6 +777,9 @@ app.post('/api/generate-video', (req, res) => {
         // === Download video ===
         try {
           await downloadRemoteFileToLocal(clipUrl, rawVideoPath);
+          if (!fs.existsSync(rawVideoPath) || fs.statSync(rawVideoPath).size < 10240) {
+            throw new Error(`Video output missing or too small: ${rawVideoPath}`);
+          }
           console.log(`[VIDEO] Downloaded for scene ${i + 1}: ${rawVideoPath}`);
         } catch (err) {
           console.error(`[ERR] Video download failed for scene ${i + 1}`, err);
@@ -757,6 +791,7 @@ app.post('/api/generate-video', (req, res) => {
         let audioDuration;
         try {
           audioDuration = await getAudioDuration(audioPath);
+          if (!audioDuration || audioDuration < 0.2) throw new Error("Audio duration zero or invalid.");
         } catch (err) {
           console.error(`[ERR] Could not get audio duration for scene ${i + 1}`, err);
           progress[jobId] = { percent: 100, status: `Failed: Audio duration error (scene ${i + 1})` };
@@ -767,6 +802,9 @@ app.post('/api/generate-video', (req, res) => {
 
         try {
           await trimVideo(rawVideoPath, trimmedVideoPath, sceneDuration, 0);
+          if (!fs.existsSync(trimmedVideoPath) || fs.statSync(trimmedVideoPath).size < 10240) {
+            throw new Error(`Trimmed video missing or too small: ${trimmedVideoPath}`);
+          }
           console.log(`[TRIM] Video trimmed for scene ${i + 1}: ${trimmedVideoPath} (${sceneDuration}s)`);
         } catch (err) {
           console.error(`[ERR] Trimming video failed for scene ${i + 1}`, err);
@@ -777,6 +815,9 @@ app.post('/api/generate-video', (req, res) => {
         // === Overlay audio onto video at 0.5s ===
         try {
           await combineAudioVideoWithOffsets(trimmedVideoPath, audioPath, sceneMp4, leadIn, tail);
+          if (!fs.existsSync(sceneMp4) || fs.statSync(sceneMp4).size < 10240) {
+            throw new Error(`Combined scene output missing or too small: ${sceneMp4}`);
+          }
           sceneFiles.push(sceneMp4);
           console.log(`[COMBINE] Scene ${i + 1} ready for concat: ${sceneMp4}`);
         } catch (err) {
@@ -787,12 +828,12 @@ app.post('/api/generate-video', (req, res) => {
       }
 
       // === Concatenate scenes using list.txt and ffmpeg concat demuxer ===
-      const listFile = path.join(workDir, 'list.txt');
+      const listFile = path.resolve(workDir, 'list.txt');
       fs.writeFileSync(
         listFile,
         sceneFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
       );
-      const concatFile = path.join(workDir, 'concat.mp4');
+      const concatFile = path.resolve(workDir, 'concat.mp4');
 
       progress[jobId] = { percent: 75, status: "Combining all scenes together..." };
       console.log(`[CONCAT] Scene list for concat:\n${sceneFiles.join('\n')}`);
@@ -807,6 +848,9 @@ app.post('/api/generate-video', (req, res) => {
             .on('end', resolve)
             .on('error', reject);
         });
+        if (!fs.existsSync(concatFile) || fs.statSync(concatFile).size < 10240) {
+          throw new Error(`Concatenated file missing or too small: ${concatFile}`);
+        }
         console.log(`[STITCH] All scenes concatenated: ${concatFile}`);
       } catch (err) {
         console.error(`[ERR] Concatenation failed`, err);
@@ -815,14 +859,14 @@ app.post('/api/generate-video', (req, res) => {
       }
 
       // === Watermark, outro, music ===
-      const finalPath = path.join(workDir, `final.mp4`);
+      const finalPath = path.resolve(workDir, `final.mp4`);
       try {
         progress[jobId] = { percent: 85, status: `Adding outro, watermark, and${backgroundMusic ? '' : ' no'} music...` };
 
         // -- You may want to adjust these file paths --
         let useWatermark = !(paidUser && removeWatermark);
-        const watermarkPath = path.join(__dirname, 'frontend', 'logo.png');
-        const outroPath = path.join(__dirname, 'frontend', 'outro.mp4');
+        const watermarkPath = path.resolve(__dirname, 'frontend', 'logo.png');
+        const outroPath = path.resolve(__dirname, 'frontend', 'outro.mp4');
         const addOutro = !removeWatermark;
 
         let ffmpegCmd = ffmpeg().input(concatFile);
@@ -849,6 +893,9 @@ app.post('/api/generate-video', (req, res) => {
         await new Promise((resolve, reject) => {
           ffmpegCmd.on('end', resolve).on('error', reject);
         });
+        if (!fs.existsSync(finalPath) || fs.statSync(finalPath).size < 10240) {
+          throw new Error(`Final output missing or too small: ${finalPath}`);
+        }
         console.log(`[FINAL] Final video written: ${finalPath}`);
       } catch (err) {
         console.error(`[ERR] Final touches failed`, err);
@@ -857,8 +904,8 @@ app.post('/api/generate-video', (req, res) => {
       }
 
       // === Save a copy for local serving (ENSURE DIR EXISTS) ===
-      fs.mkdirSync(path.join(__dirname, 'public', 'video'), { recursive: true });
-      const serveCopyPath = path.join(__dirname, 'public', 'video', `${jobId}.mp4`);
+      fs.mkdirSync(path.resolve(__dirname, 'public', 'video'), { recursive: true });
+      const serveCopyPath = path.resolve(__dirname, 'public', 'video', `${jobId}.mp4`);
       fs.copyFileSync(finalPath, serveCopyPath);
       console.log(`[LOCAL SERVE] Video copied to: ${serveCopyPath}`);
 
@@ -900,6 +947,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

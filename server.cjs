@@ -614,7 +614,6 @@ const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadI
   const audioDuration = await getAudioDuration(audioPath);
   const totalDuration = leadIn + audioDuration + tail;
 
-  // Correct filter: Always use :all=1 for adelay so it works for mono or stereo
   const delay = Math.round(leadIn * 1000);
   const filter = [
     `[1:a]adelay=${delay}:all=1,apad,atrim=0:${totalDuration}[aud];`,
@@ -666,7 +665,7 @@ app.post('/api/generate-video', (req, res) => {
         cleanupJob(jobId);
         console.warn(`[WATCHDOG] Job ${jobId} timed out and was cleaned up`);
       }
-    }, 12 * 60 * 1000); // 12 minutes
+    }, 12 * 60 * 1000);
 
     try {
       const {
@@ -681,7 +680,6 @@ app.post('/api/generate-video', (req, res) => {
       console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark} | Music: ${backgroundMusic}`);
       console.log(`[DEBUG] Raw script:\n${script}`);
 
-      // === Validation ===
       if (!script || !voice) {
         progress[jobId] = { percent: 100, status: 'Failed: Missing script or voice.' };
         cleanupJob(jobId); clearTimeout(watchdog);
@@ -719,7 +717,6 @@ app.post('/api/generate-video', (req, res) => {
       let line2Subject = scenes[1]?.text || '';
       let sharedClipUrl = null;
 
-      // === Pre-pick video for scene 1 & 2 using line 2's subject ===
       try {
         sharedClipUrl = await findClipForScene(line2Subject, 1, scenes.map(s => s.text), title || '');
         console.log(`[SCENE 1&2] Selected shared clip for hook/scene2: ${sharedClipUrl}`);
@@ -741,7 +738,6 @@ app.post('/api/generate-video', (req, res) => {
         };
         console.log(`[SCENE] Working on scene ${i + 1}/${scenes.length}: "${sceneText}"`);
 
-        // === Generate audio ===
         try {
           await generateSceneAudio(sceneText, voice, audioPath, ttsProvider);
           if (!fs.existsSync(audioPath) || fs.statSync(audioPath).size < 1024) {
@@ -754,7 +750,6 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Pick correct video ===
         let clipUrl = null;
         if (i === 0 || i === 1) {
           clipUrl = sharedClipUrl;
@@ -771,7 +766,6 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Download video ===
         try {
           await downloadRemoteFileToLocal(clipUrl, rawVideoPath);
           if (!fs.existsSync(rawVideoPath) || fs.statSync(rawVideoPath).size < 10240) {
@@ -784,7 +778,6 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Trim video to match: 0.5s + [audio duration] + 1s ===
         let audioDuration;
         try {
           audioDuration = await getAudioDuration(audioPath);
@@ -809,7 +802,6 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // === Overlay audio onto video at 0.5s ===
         try {
           await combineAudioVideoWithOffsets(trimmedVideoPath, audioPath, sceneMp4, leadIn, tail);
           if (!fs.existsSync(sceneMp4) || fs.statSync(sceneMp4).size < 10240) {
@@ -824,7 +816,6 @@ app.post('/api/generate-video', (req, res) => {
         }
       }
 
-      // === Concatenate scenes using list.txt and ffmpeg concat demuxer ===
       const listFile = path.resolve(workDir, 'list.txt');
       fs.writeFileSync(
         listFile,
@@ -863,32 +854,50 @@ app.post('/api/generate-video', (req, res) => {
         let useWatermark = !(paidUser && removeWatermark);
         const watermarkPath = path.resolve(__dirname, 'frontend', 'logo.png');
         const outroPath = path.resolve(__dirname, 'frontend', 'outro.mp4');
+        const musicPath = path.resolve(__dirname, 'frontend', 'music.mp3');
         const addOutro = !removeWatermark;
 
-        let ffmpegCmd = ffmpeg().input(concatFile);
+        const musicExists = backgroundMusic && fs.existsSync(musicPath);
+
+        let ffmpegArgs = ffmpeg().input(concatFile);
+        if (musicExists) ffmpegArgs = ffmpegArgs.input(musicPath);
+        if (useWatermark && fs.existsSync(watermarkPath)) ffmpegArgs = ffmpegArgs.input(watermarkPath);
+        if (addOutro && fs.existsSync(outroPath)) ffmpegArgs = ffmpegArgs.input(outroPath);
+
+        const filters = [];
+        const outputs = ['outv', 'outa'];
 
         if (useWatermark && fs.existsSync(watermarkPath)) {
-          ffmpegCmd = ffmpegCmd.input(watermarkPath).complexFilter([
-            '[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];[0:v][wm]overlay=W-w-20:H-h-20'
-          ]);
-        }
-        if (addOutro && fs.existsSync(outroPath)) {
-          ffmpegCmd = ffmpegCmd.input(outroPath);
-          ffmpegCmd = ffmpegCmd.complexFilter([
-            ...(useWatermark && fs.existsSync(watermarkPath)
-              ? ['[1:v]scale=140:140:force_original_aspect_ratio=decrease[wm];[0:v][wm]overlay=W-w-20:H-h-20[mainv];[mainv][2:v][0:a][2:a]concat=n=2:v=1:a=1[outv][outa]']
-              : ['[0:v][1:v][0:a][1:a]concat=n=2:v=1:a=1[outv][outa]']
-            )
-          ], ['outv', 'outa']);
+          filters.push('[1:v]scale=140:140[wm]');
+          filters.push('[0:v][wm]overlay=W-w-20:H-h-20[mainv]');
+        } else {
+          filters.push('[0:v]copy[mainv]');
         }
 
-        ffmpegCmd
-          .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
-          .save(finalPath);
+        let audioInputs = '[0:a]';
+        if (musicExists) {
+          filters.push('[1:a]volume=0.25[music]');
+          filters.push('[0:a][music]amix=inputs=2:duration=first[aout]');
+          audioInputs = '[aout]';
+        }
+
+        if (addOutro && fs.existsSync(outroPath)) {
+          filters.push('[2:v]copy[outv2]');
+          filters.push('[2:a]copy[outa2]');
+          filters.push(`[mainv][outv2]${audioInputs}[outa2]concat=n=2:v=1:a=1[outv][outa]`);
+        } else {
+          filters.push(`[mainv]${audioInputs}copy[outv][outa]`);
+        }
 
         await new Promise((resolve, reject) => {
-          ffmpegCmd.on('end', resolve).on('error', reject);
+          ffmpegArgs
+            .complexFilter(filters, outputs)
+            .outputOptions(['-map', '[outv]', '-map', '[outa]', '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'])
+            .save(finalPath)
+            .on('end', resolve)
+            .on('error', reject);
         });
+
         if (!fs.existsSync(finalPath) || fs.statSync(finalPath).size < 10240) {
           throw new Error(`Final output missing or too small: ${finalPath}`);
         }
@@ -899,13 +908,11 @@ app.post('/api/generate-video', (req, res) => {
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // === Save a copy for local serving (ENSURE DIR EXISTS) ===
       fs.mkdirSync(path.resolve(__dirname, 'public', 'video'), { recursive: true });
       const serveCopyPath = path.resolve(__dirname, 'public', 'video', `${jobId}.mp4`);
       fs.copyFileSync(finalPath, serveCopyPath);
       console.log(`[LOCAL SERVE] Video copied to: ${serveCopyPath}`);
 
-      // === Upload to R2 (background, don't block serve) ===
       try {
         const s3Key = `videos/${jobId}.mp4`;
         const fileData = fs.readFileSync(finalPath);
@@ -930,7 +937,6 @@ app.post('/api/generate-video', (req, res) => {
       clearTimeout(watchdog);
       setTimeout(() => cleanupJob(jobId), 30 * 60 * 1000);
       console.log(`[DONE] Video job ${jobId} finished and available at /video/${jobId}.mp4`);
-
     } catch (err) {
       console.error(`[CRASH] Fatal video generation error`, err);
       progress[jobId] = { percent: 100, status: 'Failed: Crash' };
@@ -938,6 +944,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

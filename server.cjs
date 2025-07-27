@@ -777,6 +777,7 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[SCENE] Working on scene ${i + 1}/${scenes.length}: "${sceneText}"`);
 
         try {
+          console.log(`[AUDIO] Generating scene ${i + 1} audio…`);
           await generateSceneAudio(sceneText, voice, audioPath, ttsProvider);
           if (!fs.existsSync(audioPath) || fs.statSync(audioPath).size < 1024) {
             throw new Error(`Audio output missing or too small: ${audioPath}`);
@@ -793,6 +794,7 @@ app.post('/api/generate-video', (req, res) => {
           clipUrl = sharedClipUrl;
         } else {
           try {
+            console.log(`[CLIP] Selecting video clip for scene ${i + 1}…`);
             clipUrl = await findClipForScene(sceneText, i, scenes.map(s => s.text), title || '');
           } catch (err) {
             console.error(`[ERR] Clip matching failed for scene ${i + 1}`, err);
@@ -805,6 +807,7 @@ app.post('/api/generate-video', (req, res) => {
         }
 
         try {
+          console.log(`[VIDEO] Downloading video for scene ${i + 1}…`);
           await downloadRemoteFileToLocal(clipUrl, rawVideoPath);
           if (!fs.existsSync(rawVideoPath) || fs.statSync(rawVideoPath).size < 10240) {
             throw new Error(`Video output missing or too small: ${rawVideoPath}`);
@@ -818,8 +821,10 @@ app.post('/api/generate-video', (req, res) => {
 
         let audioDuration;
         try {
+          console.log(`[AUDIO] Getting audio duration for scene ${i + 1}…`);
           audioDuration = await getAudioDuration(audioPath);
           if (!audioDuration || audioDuration < 0.2) throw new Error("Audio duration zero or invalid.");
+          console.log(`[AUDIO] Duration for scene ${i + 1}: ${audioDuration}s`);
         } catch (err) {
           console.error(`[ERR] Could not get audio duration for scene ${i + 1}`, err);
           progress[jobId] = { percent: 100, status: `Failed: Audio duration error (scene ${i + 1})` };
@@ -829,6 +834,7 @@ app.post('/api/generate-video', (req, res) => {
         const sceneDuration = leadIn + audioDuration + tail;
 
         try {
+          console.log(`[TRIM] Trimming video for scene ${i + 1} to ${sceneDuration}s…`);
           await trimVideo(rawVideoPath, trimmedVideoPath, sceneDuration, 0);
           if (!fs.existsSync(trimmedVideoPath) || fs.statSync(trimmedVideoPath).size < 10240) {
             throw new Error(`Trimmed video missing or too small: ${trimmedVideoPath}`);
@@ -841,6 +847,7 @@ app.post('/api/generate-video', (req, res) => {
         }
 
         try {
+          console.log(`[COMBINE] Combining audio and video for scene ${i + 1}…`);
           await combineAudioVideoWithOffsets(trimmedVideoPath, audioPath, sceneMp4, leadIn, tail);
           if (!fs.existsSync(sceneMp4) || fs.statSync(sceneMp4).size < 10240) {
             throw new Error(`Combined scene output missing or too small: ${sceneMp4}`);
@@ -852,6 +859,7 @@ app.post('/api/generate-video', (req, res) => {
           progress[jobId] = { percent: 100, status: `Failed: Scene combine error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
+        console.log(`[SCENE] Finished processing scene ${i + 1}/${scenes.length}.`);
       }
 
       const listFile = path.resolve(workDir, 'list.txt');
@@ -982,6 +990,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

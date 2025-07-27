@@ -584,9 +584,7 @@ const getAudioDuration = (audioPath) => {
 // Helper: Trim video to [duration] seconds (with optional offset)
 const trimVideo = (inPath, outPath, duration, seek = 0) => {
   return new Promise((resolve, reject) => {
-    // Ensure output dir exists
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    // Build the correct FFmpeg command: use -ss before -i for fast seek, encode for accurate trim
     const ffmpegArgs = [
       '-ss', String(seek),
       '-i', path.resolve(inPath),
@@ -599,7 +597,6 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
     ];
     console.log(`[FFMPEG][TRIM] ffmpeg ${ffmpegArgs.join(' ')}`);
     const ff = require('child_process').spawn('ffmpeg', ffmpegArgs);
-
     ff.stderr.on('data', d => process.stderr.write(d));
     ff.on('exit', (code) => {
       if (code === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
@@ -613,16 +610,17 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
 
 // Helper: Overlay audio onto video, start audio at +0.5s
 const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
-  // Ensure output dir exists
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const audioDuration = await getAudioDuration(audioPath);
   const totalDuration = leadIn + audioDuration + tail;
-  // Strictly correct filter for all audio types (mono/stereo)
+
+  // NOTE: FFmpeg expects adelay=500|500 for stereo!
+  const delay = Math.round(leadIn * 1000);
   const filter = [
-    `[1:a]adelay=${Math.round(leadIn * 1000)}:all=1,apad,atrim=0:${totalDuration}[aud];`,
+    `[1:a]adelay=${delay}|${delay},apad,atrim=0:${totalDuration}[aud];`,
     `[0:a]apad,atrim=0:${totalDuration}[vad];`,
     `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];`,
-    `[vid][vad][aud]amix=inputs=2:duration=first[aout]`
+    `[vid][vad][aud]amix=inputs=2[aout]`
   ].join('');
   console.log(`[FFMPEG][COMBINE] Mixing audio and video for scene.\n    Video: ${videoPath}\n    Audio: ${audioPath}\n    Out:   ${outPath}\n    Filter: ${filter}`);
 
@@ -862,7 +860,6 @@ app.post('/api/generate-video', (req, res) => {
       try {
         progress[jobId] = { percent: 85, status: `Adding outro, watermark, and${backgroundMusic ? '' : ' no'} music...` };
 
-        // -- You may want to adjust these file paths --
         let useWatermark = !(paidUser && removeWatermark);
         const watermarkPath = path.resolve(__dirname, 'frontend', 'logo.png');
         const outroPath = path.resolve(__dirname, 'frontend', 'outro.mp4');
@@ -921,22 +918,17 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[UPLOAD] Uploaded final video to R2: ${s3Key}`);
       } catch (err) {
         console.error(`[ERR] R2 upload failed`, err);
-        // No need to fail the job if R2 upload fails
       }
 
-      // === Mark job done, point to local copy for instant playback ===
       progress[jobId] = {
         percent: 100,
         status: 'Done',
-        key: `${jobId}.mp4` // always accessible locally
+        key: `${jobId}.mp4`
       };
 
       finished = true;
       clearTimeout(watchdog);
-
-      // === Delayed cleanup ===
       setTimeout(() => cleanupJob(jobId), 30 * 60 * 1000);
-
       console.log(`[DONE] Video job ${jobId} finished and available at /video/${jobId}.mp4`);
 
     } catch (err) {
@@ -946,6 +938,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

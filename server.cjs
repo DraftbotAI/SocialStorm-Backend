@@ -626,8 +626,7 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
       '-i', path.resolve(inPath),
       '-t', String(duration),
       '-c:v', 'libx264',
-      '-c:a', 'aac',
-      '-shortest',
+      '-an', // drop any audio, we will add our own
       '-avoid_negative_ts', 'make_zero',
       '-y',
       path.resolve(outPath)
@@ -645,14 +644,15 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
   });
 };
 
-// Helper: Always replace audio with silent track (remux, even if source has "audio")
-const forceSilentAudioTrack = (inPath, outPath) => {
+// Helper: Add a silent AAC audio track (always remux video with silence)
+const addSilentAudioTrack = (inPath, outPath, duration) => {
   return new Promise((resolve, reject) => {
     ffmpeg()
       .input(inPath)
       .input('anullsrc=channel_layout=stereo:sample_rate=44100')
       .inputOptions(['-f lavfi'])
       .outputOptions([
+        '-t', String(duration),
         '-c:v copy',
         '-c:a aac',
         '-shortest',
@@ -664,42 +664,27 @@ const forceSilentAudioTrack = (inPath, outPath) => {
   });
 };
 
-// Helper: Overlay audio onto video, with audio delay (always expects input video already has a track)
-const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  const audioDuration = await getAudioDuration(audioPath);
-  const totalDuration = leadIn + audioDuration + tail;
-
-  const delay = Math.round(leadIn * 1000);
-  const filter = [
-    `[1:a]adelay=${delay}|${delay},apad,atrim=0:${totalDuration}[aud]`,
-    `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vout]`,
-    `[0:a]apad,atrim=0:${totalDuration}[vad]`,
-    `[vad][aud]amix=inputs=2[aout]`
-  ];
-  console.log(`[FFMPEG][COMBINE] Mixing audio and video for scene.\n    Video: ${videoPath}\n    Audio: ${audioPath}\n    Out:   ${outPath}\n    Filter: ${filter.join(';')}`);
-
+// Helper: Replace video’s audio with narration (no mix, narration only)
+const muxVideoWithNarration = (videoWithSilence, narrationPath, outPath, duration) => {
   return new Promise((resolve, reject) => {
     ffmpeg()
-      .input(path.resolve(videoPath))
-      .input(path.resolve(audioPath))
-      .complexFilter(filter, ['vout', 'aout']) // <--- THE FIX: Use [vout] and [aout]
+      .input(videoWithSilence)
+      .input(narrationPath)
       .outputOptions([
-        '-map', '[vout]',
-        '-map', '[aout]',
-        '-c:v', 'libx264',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-c:v', 'copy',
         '-c:a', 'aac',
         '-shortest',
-        '-movflags', '+faststart',
+        '-t', String(duration),
         '-y'
       ])
-      .duration(totalDuration)
-      .save(path.resolve(outPath))
+      .save(outPath)
       .on('end', () => {
         if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
           resolve(outPath);
         } else {
-          reject(new Error(`FFmpeg combine produced no output`));
+          reject(new Error('muxVideoWithNarration produced no output'));
         }
       })
       .on('error', reject);
@@ -786,7 +771,7 @@ app.post('/api/generate-video', (req, res) => {
         const audioPath = path.resolve(workDir, `${base}-audio.mp3`);
         const rawVideoPath = path.resolve(workDir, `${base}-rawvideo.mp4`);
         const trimmedVideoPath = path.resolve(workDir, `${base}-trimmed.mp4`);
-        const trimmedAudioFixedPath = path.resolve(workDir, `${base}-trimmed-audiofix.mp4`);
+        const videoWithSilence = path.resolve(workDir, `${base}-silence.mp4`);
         const sceneMp4 = path.resolve(workDir, `${base}.mp4`);
 
         progress[jobId] = {
@@ -865,31 +850,29 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // ---- Always PATCH with silent audio for consistency
-        let videoForCombine = trimmedAudioFixedPath;
+        // Always add silent audio, then mux with narration (reliable)
         try {
-          await forceSilentAudioTrack(trimmedVideoPath, trimmedAudioFixedPath);
-          if (!fs.existsSync(trimmedAudioFixedPath) || fs.statSync(trimmedAudioFixedPath).size < 10240) {
-            throw new Error(`Audio-patched video missing or too small: ${trimmedAudioFixedPath}`);
+          await addSilentAudioTrack(trimmedVideoPath, videoWithSilence, sceneDuration);
+          if (!fs.existsSync(videoWithSilence) || fs.statSync(videoWithSilence).size < 10240) {
+            throw new Error(`Silent-audio video missing or too small: ${videoWithSilence}`);
           }
-          console.log(`[AUDIOFIX] Forced silent audio added for scene ${i + 1}: ${trimmedAudioFixedPath}`);
+          console.log(`[AUDIOFIX] Silent audio added for scene ${i + 1}: ${videoWithSilence}`);
         } catch (err) {
-          console.error(`[ERR] Could not force audio for scene ${i + 1}`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Force audio error (scene ${i + 1})` };
+          console.error(`[ERR] Could not add silent audio for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Silent audio error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
         try {
-          console.log(`[COMBINE] Combining audio and video for scene ${i + 1}…`);
-          await combineAudioVideoWithOffsets(videoForCombine, audioPath, sceneMp4, leadIn, tail);
+          await muxVideoWithNarration(videoWithSilence, audioPath, sceneMp4, sceneDuration);
           if (!fs.existsSync(sceneMp4) || fs.statSync(sceneMp4).size < 10240) {
             throw new Error(`Combined scene output missing or too small: ${sceneMp4}`);
           }
           sceneFiles.push(sceneMp4);
           console.log(`[COMBINE] Scene ${i + 1} ready for concat: ${sceneMp4}`);
         } catch (err) {
-          console.error(`[ERR] Scene combine failed (scene ${i + 1})`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Scene combine error (scene ${i + 1})` };
+          console.error(`[ERR] Scene mux failed (scene ${i + 1})`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Scene mux error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
         console.log(`[SCENE] Finished processing scene ${i + 1}/${scenes.length}.`);

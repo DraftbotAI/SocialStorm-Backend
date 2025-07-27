@@ -561,7 +561,6 @@ Tags: secrets landmarks travel viral history
 
 
 
-
 /* ===========================================================
    SECTION 5: VIDEO GENERATION ENDPOINT
    -----------------------------------------------------------
@@ -620,7 +619,7 @@ const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadI
   const totalDuration = leadIn + audioDuration + tail;
   // Compose filter for offset and mix
   const filter = [
-    `[1:a]adelay=${Math.round(leadIn * 1000)}|${Math.round(leadIn * 1000)},apad,atrim=0:${totalDuration}[aud];`,
+    `[1:a]adelay=${Math.round(leadIn * 1000)}:all=1,apad,atrim=0:${totalDuration}[aud];`,
     `[0:a]apad,atrim=0:${totalDuration}[vad];`,
     `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];`,
     `[vid][vad][aud]amix=inputs=2:duration=first[aout]`

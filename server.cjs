@@ -614,10 +614,10 @@ const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadI
   const audioDuration = await getAudioDuration(audioPath);
   const totalDuration = leadIn + audioDuration + tail;
 
-  // NOTE: FFmpeg expects adelay=500|500 for stereo!
+  // Correct filter: Always use :all=1 for adelay so it works for mono or stereo
   const delay = Math.round(leadIn * 1000);
   const filter = [
-    `[1:a]adelay=${delay}|${delay},apad,atrim=0:${totalDuration}[aud];`,
+    `[1:a]adelay=${delay}:all=1,apad,atrim=0:${totalDuration}[aud];`,
     `[0:a]apad,atrim=0:${totalDuration}[vad];`,
     `[0:v]trim=duration=${totalDuration},setpts=PTS-STARTPTS[vid];`,
     `[vid][vad][aud]amix=inputs=2[aout]`
@@ -938,6 +938,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

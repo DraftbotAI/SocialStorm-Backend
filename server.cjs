@@ -626,7 +626,7 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
       '-i', path.resolve(inPath),
       '-t', String(duration),
       '-c:v', 'libx264',
-      '-an', // drop any audio, we will add our own
+      '-an',
       '-avoid_negative_ts', 'make_zero',
       '-y',
       path.resolve(outPath)
@@ -850,7 +850,6 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // Always add silent audio, then mux with narration (reliable)
         try {
           await addSilentAudioTrack(trimmedVideoPath, videoWithSilence, sceneDuration);
           if (!fs.existsSync(videoWithSilence) || fs.statSync(videoWithSilence).size < 10240) {
@@ -914,50 +913,65 @@ app.post('/api/generate-video', (req, res) => {
       try {
         progress[jobId] = { percent: 85, status: `Adding outro, watermark, and${backgroundMusic ? '' : ' no'} music...` };
 
-        let useWatermark = !(paidUser && removeWatermark);
-
-        // UPDATED: All static paths now reference public/assets/
         const watermarkPath = path.resolve(__dirname, 'public', 'assets', 'logo.png');
         const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
         const musicPath = path.resolve(__dirname, 'public', 'assets', 'thunder.mp3');
-        const addOutro = !removeWatermark;
 
-        // === Logging: file existence check
-        console.log(`[ASSET CHECK] Watermark: ${watermarkPath} (${fs.existsSync(watermarkPath)})`);
-        console.log(`[ASSET CHECK] Outro: ${outroPath} (${fs.existsSync(outroPath)})`);
-        console.log(`[ASSET CHECK] Music: ${musicPath} (${fs.existsSync(musicPath)})`);
-
+        const watermarkExists = fs.existsSync(watermarkPath);
+        const outroExists = fs.existsSync(outroPath);
         const musicExists = backgroundMusic && fs.existsSync(musicPath);
 
-        let ffmpegArgs = ffmpeg().input(concatFile);
-        if (musicExists) ffmpegArgs = ffmpegArgs.input(musicPath);
-        if (useWatermark && fs.existsSync(watermarkPath)) ffmpegArgs = ffmpegArgs.input(watermarkPath);
-        if (addOutro && fs.existsSync(outroPath)) ffmpegArgs = ffmpegArgs.input(outroPath);
+        let useWatermark = !(paidUser && removeWatermark) && watermarkExists;
+        let addOutro = !removeWatermark && outroExists;
 
-        // === Compose filters based on what's present
+        // Log what's actually going to be used
+        console.log(`[ASSET CHECK] Watermark: ${watermarkPath} (${watermarkExists && useWatermark})`);
+        console.log(`[ASSET CHECK] Outro: ${outroPath} (${outroExists && addOutro})`);
+        console.log(`[ASSET CHECK] Music: ${musicPath} (${musicExists})`);
+
+        // Dynamic input order
+        let inputCount = 1; // always at least [0] = concatFile
+        let ffmpegArgs = ffmpeg().input(concatFile);
+
+        // These indexes will depend on what files exist and are to be used
+        let musicInputIndex = null;
+        let watermarkInputIndex = null;
+        let outroInputIndex = null;
+
+        if (musicExists) { musicInputIndex = inputCount++; ffmpegArgs = ffmpegArgs.input(musicPath); }
+        if (useWatermark) { watermarkInputIndex = inputCount++; ffmpegArgs = ffmpegArgs.input(watermarkPath); }
+        if (addOutro) { outroInputIndex = inputCount++; ffmpegArgs = ffmpegArgs.input(outroPath); }
+
+        // Build filter graph dynamically
         const filters = [];
         const outputs = ['outv', 'outa'];
+        let videoLabel = '[0:v]';
+        let audioLabel = '[0:a]';
 
-        if (useWatermark && fs.existsSync(watermarkPath)) {
-          filters.push('[1:v]scale=140:140[wm]');
-          filters.push('[0:v][wm]overlay=W-w-20:H-h-20[mainv]');
+        // Watermark overlay if present
+        if (useWatermark) {
+          filters.push(`[${watermarkInputIndex}:v]scale=140:140[wm]`);
+          filters.push(`${videoLabel}[wm]overlay=W-w-20:H-h-20[mainv]`);
+          videoLabel = '[mainv]';
         } else {
-          filters.push('[0:v]copy[mainv]');
+          filters.push(`${videoLabel}copy[mainv]`);
+          videoLabel = '[mainv]';
         }
 
-        let audioInputs = '[0:a]';
+        // Music mix if present
         if (musicExists) {
-          filters.push('[1:a]volume=0.25[music]');
-          filters.push('[0:a][music]amix=inputs=2:duration=first[aout]');
-          audioInputs = '[aout]';
+          filters.push(`[${musicInputIndex}:a]volume=0.25[music]`);
+          filters.push(`${audioLabel}[music]amix=inputs=2:duration=first[aout]`);
+          audioLabel = '[aout]';
         }
 
-        if (addOutro && fs.existsSync(outroPath)) {
-          filters.push('[2:v]copy[outv2]');
-          filters.push('[2:a]copy[outa2]');
-          filters.push(`[mainv][outv2]${audioInputs}[outa2]concat=n=2:v=1:a=1[outv][outa]`);
+        // Outro concat if present
+        if (addOutro) {
+          filters.push(`[${outroInputIndex}:v]copy[outv2]`);
+          filters.push(`[${outroInputIndex}:a]copy[outa2]`);
+          filters.push(`${videoLabel}[outv2]${audioLabel}[outa2]concat=n=2:v=1:a=1[outv][outa]`);
         } else {
-          filters.push(`[mainv]${audioInputs}copy[outv][outa]`);
+          filters.push(`${videoLabel}${audioLabel}copy[outv][outa]`);
         }
 
         await new Promise((resolve, reject) => {

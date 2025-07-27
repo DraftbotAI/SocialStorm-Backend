@@ -645,6 +645,33 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
   });
 };
 
+// Helper: Ensure video has an audio stream, add silent track if not
+const ensureVideoHasAudio = (inPath, outPath) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(inPath, (err, info) => {
+      if (err) return reject(err);
+      const hasAudio = info.streams.some(s => s.codec_type === 'audio');
+      if (hasAudio) {
+        resolve(inPath); // Already has audio, nothing to do
+      } else {
+        ffmpeg()
+          .input(inPath)
+          .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+          .inputOptions(['-f lavfi'])
+          .outputOptions([
+            '-c:v copy',
+            '-c:a aac',
+            '-shortest',
+            '-y'
+          ])
+          .save(outPath)
+          .on('end', () => resolve(outPath))
+          .on('error', reject);
+      }
+    });
+  });
+};
+
 // Helper: Overlay audio onto video, with audio delay (assumes video already has audio stream)
 const combineAudioVideoWithOffsets = async (videoPath, audioPath, outPath, leadIn = 0.5, tail = 1) => {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -761,13 +788,13 @@ app.post('/api/generate-video', (req, res) => {
         console.error(`[ERR] Could not select shared video clip for scenes 1 & 2`, err);
       }
 
-      // === OLD-SCHOOL RELIABLE LOOP, NO ASYNC FOREACH ===
       for (let i = 0; i < scenes.length; i++) {
         const { id: sceneId, text: sceneText } = scenes[i];
         const base = sceneId;
         const audioPath = path.resolve(workDir, `${base}-audio.mp3`);
         const rawVideoPath = path.resolve(workDir, `${base}-rawvideo.mp4`);
         const trimmedVideoPath = path.resolve(workDir, `${base}-trimmed.mp4`);
+        const trimmedAudioFixedPath = path.resolve(workDir, `${base}-trimmed-audiofix.mp4`);
         const sceneMp4 = path.resolve(workDir, `${base}.mp4`);
 
         progress[jobId] = {
@@ -846,9 +873,25 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
+        // ---- NEW: ENSURE TRIMMED VIDEO HAS AUDIO ----
+        let videoForCombine = trimmedVideoPath;
+        try {
+          await ensureVideoHasAudio(trimmedVideoPath, trimmedAudioFixedPath);
+          if (fs.existsSync(trimmedAudioFixedPath) && fs.statSync(trimmedAudioFixedPath).size > 10240) {
+            videoForCombine = trimmedAudioFixedPath;
+            console.log(`[AUDIOFIX] Silent audio added to video for scene ${i + 1}: ${trimmedAudioFixedPath}`);
+          } else {
+            console.log(`[AUDIOFIX] Video for scene ${i + 1} already had audio`);
+          }
+        } catch (err) {
+          console.error(`[ERR] Could not ensure audio for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Ensure audio error (scene ${i + 1})` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
+        }
+
         try {
           console.log(`[COMBINE] Combining audio and video for scene ${i + 1}…`);
-          await combineAudioVideoWithOffsets(trimmedVideoPath, audioPath, sceneMp4, leadIn, tail);
+          await combineAudioVideoWithOffsets(videoForCombine, audioPath, sceneMp4, leadIn, tail);
           if (!fs.existsSync(sceneMp4) || fs.statSync(sceneMp4).size < 10240) {
             throw new Error(`Combined scene output missing or too small: ${sceneMp4}`);
           }

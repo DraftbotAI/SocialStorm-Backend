@@ -537,6 +537,30 @@ const pickMusicForMood = (mood = null) => {
   }
 };
 
+// --- Amazon Polly TTS ---
+async function generatePollyTTS(text, voiceId, outPath) {
+  const polly = new AWS.Polly();
+  const params = {
+    OutputFormat: 'mp3',
+    Text: text,
+    VoiceId: voiceId,
+    Engine: 'neural'
+  };
+  const data = await polly.synthesizeSpeech(params).promise();
+  fs.writeFileSync(outPath, data.AudioStream);
+  console.log(`[POLLY] Generated TTS audio: ${outPath}`);
+}
+
+// --- Google TTS (stub) ---
+async function generateGoogleTTS(text, voiceId, outPath) {
+  throw new Error('Google TTS not implemented');
+}
+
+// --- ElevenLabs TTS (stub) ---
+async function generateElevenLabsTTS(text, voiceId, outPath) {
+  throw new Error('ElevenLabs TTS not implemented');
+}
+
 // --- FULL DEFINITION: Generate scene audio for all TTS providers ---
 async function generateSceneAudio(sceneText, voiceId, outPath, provider) {
   if (!provider) throw new Error("No TTS provider specified");

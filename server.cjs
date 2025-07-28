@@ -908,6 +908,41 @@ app.post('/api/generate-video', (req, res) => {
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
+      // ==== [AUDIO PATCH] Ensure concat.mp4 has audio ====
+      let concatInputFile = concatFile;
+      let audioStreamExists = false;
+      try {
+        const probe = await new Promise((resolve, reject) => {
+          ffmpeg.ffprobe(concatFile, (err, metadata) => {
+            if (err) reject(err);
+            resolve(metadata);
+          });
+        });
+        audioStreamExists = (probe.streams || []).some(s => s.codec_type === 'audio');
+      } catch (err) {
+        console.error('[ERR] Could not probe concat.mp4:', err);
+      }
+      if (!audioStreamExists) {
+        const concatWithAudioPath = path.resolve(workDir, 'concat-audio.mp4');
+        console.log('[AUDIOFIX] concat.mp4 is missing audio, adding silent track...');
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(concatFile)
+            .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+            .inputOptions(['-f lavfi'])
+            .outputOptions([
+              '-shortest',
+              '-c:v copy',
+              '-c:a aac',
+              '-y'
+            ])
+            .save(concatWithAudioPath)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+        concatInputFile = concatWithAudioPath;
+      }
+
       // === Watermark, outro, music ===
       const finalPath = path.resolve(workDir, `final.mp4`);
       try {
@@ -930,8 +965,8 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[ASSET CHECK] Music: ${musicPath} (${musicExists})`);
 
         // Dynamic input order with explicit debug printout
-        let inputMap = [{ type: 'concatFile', path: concatFile }];
-        let ffmpegArgs = ffmpeg().input(concatFile);
+        let inputMap = [{ type: 'concatFile', path: concatInputFile }];
+        let ffmpegArgs = ffmpeg().input(concatInputFile);
 
         if (musicExists) {
           inputMap.push({ type: 'music', path: musicPath });

@@ -997,45 +997,50 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[ASSET CHECK] Music: ${selectedMusicPath} (${musicExists})`);
         console.log(`[INFO] Final rendering with combo: watermark=${useWatermark}, outro=${addOutro}, music=${musicExists}`);
 
-        // === FFmpeg Input Order ===
-        // 0: main (concatenated) video+audio (concatInputFile)
-        // 1: watermark (if present)
-        // 2: outro video+audio (if present)
-        // 3: music (if present, as a separate audio input for mixing)
+        // --- Build ffmpeg inputs and filter graph ---
         let ffmpegArgs = ffmpeg().input(concatInputFile);
         let filterGraph = [];
         let inputIdx = 0;
         let nextInputIdx = 1;
-
-        // Indices we'll use for watermark, outro, and music
         let watermarkIdx = null;
         let outroIdx = null;
         let musicIdx = null;
 
-        // 1. Watermark overlay
-        let concatVideoInput = `[${inputIdx}:v]`;
-        let concatAudioInput = `[${inputIdx}:a]`;
-
+        // Add watermark as input if used
         if (useWatermark) {
           ffmpegArgs = ffmpegArgs.input(watermarkPath);
           watermarkIdx = nextInputIdx++;
-          filterGraph.push(`[${inputIdx}:v][${watermarkIdx}:v]overlay=W-w-20:H-h-20[wmv]`);
-          concatVideoInput = '[wmv]';
         }
-
-        if (musicExists) {
-          ffmpegArgs = ffmpegArgs.input(selectedMusicPath);
-          musicIdx = nextInputIdx++;
-          filterGraph.push(`[${inputIdx}:a][${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
-          concatAudioInput = '[mixa]';
-        }
-
+        // Add outro as input if used
         if (addOutro) {
           ffmpegArgs = ffmpegArgs.input(outroPath);
           outroIdx = nextInputIdx++;
-          filterGraph.push(`${concatVideoInput}${concatAudioInput}[${outroIdx}:v][${outroIdx}:a]concat=n=2:v=1:a=1[outv][outa]`);
+        }
+        // Add music as input if used
+        if (musicExists) {
+          ffmpegArgs = ffmpegArgs.input(selectedMusicPath);
+          musicIdx = nextInputIdx++;
+        }
+
+        // 1. Watermark overlay (if used)
+        let videoStream = `[${inputIdx}:v]`;
+        if (useWatermark) {
+          filterGraph.push(`[${inputIdx}:v][${watermarkIdx}:v]overlay=W-w-20:H-h-20[wmv]`);
+          videoStream = '[wmv]';
+        }
+        // 2. Music mix (if present)
+        let audioStream = `[${inputIdx}:a]`;
+        if (musicExists) {
+          filterGraph.push(`[${inputIdx}:a][${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
+          audioStream = '[mixa]';
+        }
+
+        // 3. Outro handling
+        if (addOutro) {
+          filterGraph.push(`${videoStream}${audioStream}[${outroIdx}:v][${outroIdx}:a]concat=n=2:v=1:a=1[outv][outa]`);
         } else {
-          filterGraph.push(`${concatVideoInput}${concatAudioInput}concat=n=1:v=1:a=1[outv][outa]`);
+          // **Do not use concat here!** Just map to outv/outa
+          filterGraph.push(`${videoStream}copyv`, `${audioStream}copya`);
         }
 
         // Print the full filter graph for debugging
@@ -1047,14 +1052,28 @@ app.post('/api/generate-video', (req, res) => {
         });
         console.log('[FFMPEG][FILTER GRAPH]', JSON.stringify(filterGraph, null, 2));
 
-        await new Promise((resolve, reject) => {
-          ffmpegArgs
-            .complexFilter(filterGraph, ['outv', 'outa'])
-            .outputOptions(['-map', '[outv]', '-map', '[outa]', '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'])
-            .save(finalPath)
-            .on('end', resolve)
-            .on('error', reject);
-        });
+        // Final ffmpeg render step:
+        if (addOutro) {
+          // Outro: use [outv][outa] from concat
+          await new Promise((resolve, reject) => {
+            ffmpegArgs
+              .complexFilter(filterGraph, ['outv', 'outa'])
+              .outputOptions(['-map', '[outv]', '-map', '[outa]', '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'])
+              .save(finalPath)
+              .on('end', resolve)
+              .on('error', reject);
+          });
+        } else {
+          // No outro: map main video/audio to output
+          await new Promise((resolve, reject) => {
+            ffmpegArgs
+              .complexFilter(filterGraph, ['copyv', 'copya'])
+              .outputOptions(['-map', '[copyv]', '-map', '[copya]', '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'])
+              .save(finalPath)
+              .on('end', resolve)
+              .on('error', reject);
+          });
+        }
 
         if (!fs.existsSync(finalPath) || fs.statSync(finalPath).size < 10240) {
           throw new Error(`Final output missing or too small: ${finalPath}`);

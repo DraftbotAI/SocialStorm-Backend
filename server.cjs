@@ -718,6 +718,12 @@ const pickMusicForMood = (mood = null) => {
   }
 };
 
+// ---- PATCHED: Dummy extractVisualSubject so backend cannot crash ----
+async function extractVisualSubject(line, scriptTopic = '') {
+  // For now, just return the line itself (so nothing crashes)
+  return line;
+}
+
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -1112,14 +1118,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
-
-
-
-
-
-
-
 
 
 

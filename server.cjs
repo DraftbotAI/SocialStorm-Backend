@@ -607,39 +607,6 @@ Tags: secrets landmarks mystery history viral
 
 console.log('[INIT] Video generation endpoint initialized');
 
-// === GPT-4.1 Scene Subject Extractor Helper ===
-
-
-
-async function extractVisualSubject(line, scriptTopic = '') {
-  const prompt = `Extract the main visual subject of this sentence for a video search. Return ONLY the real-world thing (object, person, landmark, or place), not generic words, not a verb, not a question, not a connector. If the sentence is abstract, return the most visually matchable noun or, if none exists, return the main script topic.
-
-Sentence: "${line}"
-Script Topic: "${scriptTopic}"
-
-Return just the one best subject for visuals. Example answers: "Eiffel Tower", "Statue of Liberty", "Qutb Minar", "Taj Mahal", "Trevi Fountain", "Hidden chamber", "Disney World’s Cinderella Castle", "Mount Rushmore".
-
-Strictly respond with only the subject, never the whole sentence or anything else.`;
-
-  try {
-    const response = await openai.createChatCompletion({
-      model: "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 16
-    });
-    let subject = response.data.choices[0].message.content.trim();
-    if (!subject || subject.length < 2 || ['what', 'and', 'but', 'the', 'this'].includes(subject.toLowerCase())) {
-      subject = scriptTopic || 'history';
-    }
-    console.log(`[SUBJECT][GPT] For: "${line}" | Extracted subject: "${subject}"`);
-    return subject;
-  } catch (err) {
-    console.error('[GPT SUBJECT ERROR]', err?.response?.data || err);
-    return scriptTopic || (line.split(' ').slice(0, 2).join(' '));
-  }
-}
-
 // Helper: Get audio duration in seconds using ffprobe
 const getAudioDuration = (audioPath) => {
   return new Promise((resolve, reject) => {

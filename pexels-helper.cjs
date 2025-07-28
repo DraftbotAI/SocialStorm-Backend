@@ -14,11 +14,11 @@ const fs = require('fs');
 const path = require('path');
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 
-// GPT Subject Extraction
-const { Configuration, OpenAIApi } = require("openai");
-const openai = new OpenAIApi(new Configuration({
+// ✅ FIXED: OpenAI Import for CommonJS (.cjs) compatibility
+const OpenAI = require("openai");
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
-}));
+});
 
 // ENV
 const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || 'socialstorm-library';
@@ -38,13 +38,13 @@ Return just the one best subject for visuals. Example answers: "Eiffel Tower", "
 Strictly respond with only the subject, never the whole sentence or anything else.`;
 
   try {
-    const response = await openai.createChatCompletion({
+    const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.2,
       max_tokens: 16
     });
-    let subject = response.data.choices[0].message.content.trim();
+    let subject = response.choices[0].message.content.trim();
     if (!subject || subject.length < 2 || ['what', 'and', 'but', 'the', 'this'].includes(subject.toLowerCase())) {
       subject = scriptTopic || 'history';
     }
@@ -52,7 +52,6 @@ Strictly respond with only the subject, never the whole sentence or anything els
     return subject;
   } catch (err) {
     console.error('[GPT SUBJECT ERROR]', err?.response?.data || err);
-    // Fallback to script topic or keyword extraction
     return scriptTopic || (line.split(' ').slice(0, 2).join(' '));
   }
 }
@@ -61,8 +60,8 @@ Strictly respond with only the subject, never the whole sentence or anything els
 function normalize(str) {
   return String(str)
     .toLowerCase()
-    .replace(/[\s_\-]+/g, '') // Remove spaces/underscores/dashes for fuzzy matching
-    .replace(/[^a-z0-9]/g, ''); // Strip non-alphanum
+    .replace(/[\s_\-]+/g, '')
+    .replace(/[^a-z0-9]/g, '');
 }
 
 // --- R2 CLIP MATCHING ---
@@ -100,7 +99,6 @@ async function findClipInR2(subject, s3Client, usedClips = []) {
       }
     }
     if (!best) {
-      // Try loose partial match (split subject into words)
       const words = subject.split(/\s+/).map(normalize);
       for (let file of files) {
         const normFile = normalize(file);
@@ -180,30 +178,26 @@ async function findClipInPixabay(subject, usedClips = []) {
   }
 }
 
-// --- MAIN MATCHER: R2 → PEXELS → PIXABAY ---
+// --- MAIN MATCHER ---
 async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client, usedClips = []) {
-  // 1. Extract main visual subject using GPT-4
   const subject = await extractVisualSubject(sceneText, title || '');
   console.log(`[MATCH] Scene ${idx + 1} subject: "${subject}"`);
 
-  // 2. Try R2 first (deep search, skip used)
   if (s3Client) {
     const r2 = await findClipInR2(subject, s3Client, usedClips);
     if (r2) return r2;
   }
 
-  // 3. Try Pexels (skip used)
   const pexels = await findClipInPexels(subject, usedClips);
   if (pexels) return pexels;
 
-  // 4. Try Pixabay (skip used)
   const pixabay = await findClipInPixabay(subject, usedClips);
   if (pixabay) return pixabay;
 
   return null;
 }
 
-// --- Download function: saves a remote file to disk with logging ---
+// --- Download Remote File ---
 async function downloadRemoteFileToLocal(url, outPath) {
   try {
     if (!url) throw new Error('No URL provided to download.');
@@ -248,7 +242,7 @@ async function downloadRemoteFileToLocal(url, outPath) {
   }
 }
 
-// --- Script splitter: splits raw script into array of { id, text } ---
+// --- Script Splitter ---
 function splitScriptToScenes(script) {
   if (!script) return [];
   return script
@@ -262,7 +256,7 @@ function splitScriptToScenes(script) {
 }
 
 module.exports = {
-  findClipForScene, // now returns { url, file }
+  findClipForScene,
   splitScriptToScenes,
   downloadRemoteFileToLocal
 };

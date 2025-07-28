@@ -741,13 +741,13 @@ app.post('/api/generate-video', (req, res) => {
         script = '',
         voice = '',
         paidUser = false,
-        removeWatermark = false, // Not used anymore
+        removeOutro = false,
         title = '',
         backgroundMusic = true,
         musicMood = null // This should be passed from frontend/script analysis
       } = req.body || {};
 
-      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Music: ${backgroundMusic} | Mood: ${musicMood}`);
+      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Music: ${backgroundMusic} | Mood: ${musicMood} | Remove Outro: ${removeOutro}`);
       console.log(`[DEBUG] Raw script:\n${script}`);
 
       if (!script || !voice) {
@@ -972,101 +972,67 @@ app.post('/api/generate-video', (req, res) => {
         concatInputFile = concatWithAudioPath;
       }
 
-      // === Outro, music (NO WATERMARK) ===
-      const finalPath = path.resolve(workDir, `final.mp4`);
-      try {
-        // === GPT-powered mood-based music selection ===
-        let selectedMusicPath = null;
-        if (backgroundMusic && musicMood) {
-          selectedMusicPath = pickMusicForMood(musicMood);
-        }
-        const musicExists = !!selectedMusicPath && fs.existsSync(selectedMusicPath);
-
-        const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
-        const outroExists = fs.existsSync(outroPath);
-
-        let addOutro = outroExists;
-
-        // Log what's actually going to be used
-        console.log(`[ASSET CHECK] Outro: ${outroPath} (${outroExists && addOutro})`);
-        console.log(`[ASSET CHECK] Music: ${selectedMusicPath} (${musicExists})`);
-        console.log(`[INFO] Final rendering with combo: outro=${addOutro}, music=${musicExists}`);
-
-        // --- Build ffmpeg inputs and filter graph ---
-        let ffmpegArgs = ffmpeg().input(concatInputFile);
-        let filterGraph = [];
-        let inputIdx = 0;
-        let nextInputIdx = 1;
-        let outroIdx = null;
-        let musicIdx = null;
-
-        // Add outro as input if used
-        if (addOutro) {
-          ffmpegArgs = ffmpegArgs.input(outroPath);
-          outroIdx = nextInputIdx++;
-        }
-        // Add music as input if used
-        if (musicExists) {
-          ffmpegArgs = ffmpegArgs.input(selectedMusicPath);
-          musicIdx = nextInputIdx++;
-        }
-
-        // 1. Music mix (if present)
-        let videoStream = `[${inputIdx}:v]`;
-        let audioStream = `[${inputIdx}:a]`;
-        if (musicExists) {
-          filterGraph.push(`[${inputIdx}:a][${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
-          audioStream = '[mixa]';
-        }
-
-        // 2. Outro handling
-        if (addOutro) {
-          filterGraph.push(`${videoStream}${audioStream}[${outroIdx}:v][${outroIdx}:a]concat=n=2:v=1:a=1[outv][outa]`);
-        } else {
-          // No outro: map main video/audio to output
-          filterGraph.push(`${videoStream}copyv`, `${audioStream}copya`);
-        }
-
-        // Print the full filter graph for debugging
-        console.log('[FFMPEG][INPUT INDEX MAP]', {
-          concatInputFileIdx: inputIdx,
-          outroIdx,
-          musicIdx
-        });
-        console.log('[FFMPEG][FILTER GRAPH]', JSON.stringify(filterGraph, null, 2));
-
-        // Final ffmpeg render step:
-        if (addOutro) {
-          // Outro: use [outv][outa] from concat
+      // === [OPTIONAL] Mix music over concatInputFile ===
+      let concatWithMusicFile = concatInputFile;
+      let musicUsed = false;
+      let selectedMusicPath = null;
+      if (backgroundMusic && musicMood) {
+        selectedMusicPath = pickMusicForMood(musicMood);
+        if (selectedMusicPath && fs.existsSync(selectedMusicPath)) {
+          const musicMixPath = path.resolve(workDir, 'concat-music.mp4');
+          console.log(`[MUSIC] Mixing music over: ${concatInputFile}`);
           await new Promise((resolve, reject) => {
-            ffmpegArgs
-              .complexFilter(filterGraph, ['outv', 'outa'])
-              .outputOptions(['-map', '[outv]', '-map', '[outa]', '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'])
-              .save(finalPath)
+            ffmpeg()
+              .input(concatInputFile)
+              .input(selectedMusicPath)
+              .complexFilter('[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]')
+              .outputOptions(['-map', '0:v', '-map', '[mixa]', '-c:v', 'copy', '-c:a', 'aac', '-shortest', '-y'])
+              .save(musicMixPath)
               .on('end', resolve)
               .on('error', reject);
           });
-        } else {
-          // No outro: map main video/audio to output
-          await new Promise((resolve, reject) => {
-            ffmpegArgs
-              .complexFilter(filterGraph, ['copyv', 'copya'])
-              .outputOptions(['-map', '[copyv]', '-map', '[copya]', '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'])
-              .save(finalPath)
-              .on('end', resolve)
-              .on('error', reject);
-          });
+          if (fs.existsSync(musicMixPath) && fs.statSync(musicMixPath).size > 10240) {
+            concatWithMusicFile = musicMixPath;
+            musicUsed = true;
+            console.log(`[MUSIC] Music mixed over concat, output: ${musicMixPath}`);
+          } else {
+            console.warn('[MUSIC] Music mix failed, continuing without music.');
+          }
         }
-
-        if (!fs.existsSync(finalPath) || fs.statSync(finalPath).size < 10240) {
-          throw new Error(`Final output missing or too small: ${finalPath}`);
-        }
-        console.log(`[FINAL] Final video written: ${finalPath}`);
-      } catch (err) {
-        console.error(`[ERR] Final touches failed`, err);
-        progress[jobId] = { percent: 100, status: 'Failed: Final touches' };
-        cleanupJob(jobId); clearTimeout(watchdog); return;
       }
+
+      // === [OPTIONAL] Concatenate outro.mp4 as last scene ===
+      const finalPath = path.resolve(workDir, 'final.mp4');
+      const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
+      const outroExists = fs.existsSync(outroPath);
+      let doAddOutro = outroExists && !(paidUser && removeOutro);
+
+      if (doAddOutro) {
+        const list2 = path.resolve(workDir, 'list2.txt');
+        fs.writeFileSync(
+          list2,
+          [`file '${concatWithMusicFile.replace(/'/g, "'\\''")}'`, `file '${outroPath.replace(/'/g, "'\\''")}'`].join('\n')
+        );
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(list2)
+            .inputOptions(['-f concat', '-safe 0'])
+            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
+            .save(finalPath)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+        console.log(`[FINAL] Outro appended, output: ${finalPath}`);
+      } else {
+        // Just copy (rename) concatWithMusicFile to final.mp4
+        fs.copyFileSync(concatWithMusicFile, finalPath);
+        console.log(`[FINAL] No outro, output: ${finalPath}`);
+      }
+
+      if (!fs.existsSync(finalPath) || fs.statSync(finalPath).size < 10240) {
+        throw new Error(`Final output missing or too small: ${finalPath}`);
+      }
+      console.log(`[FINAL] Final video written: ${finalPath}`);
 
       fs.mkdirSync(path.resolve(__dirname, 'public', 'video'), { recursive: true });
       const serveCopyPath = path.resolve(__dirname, 'public', 'video', `${jobId}.mp4`);

@@ -1016,38 +1016,36 @@ app.post('/api/generate-video', (req, res) => {
           ffmpegArgs = ffmpegArgs.input(watermarkPath);
           watermarkIdx = nextInputIdx++;
         }
-
         if (addOutro) {
           ffmpegArgs = ffmpegArgs.input(outroPath);
           outroIdx = nextInputIdx++;
         }
-
         if (musicExists) {
           ffmpegArgs = ffmpegArgs.input(selectedMusicPath);
           musicIdx = nextInputIdx++;
         }
 
-        // --- Filter graph construction ---
-        // Watermark
+        // === Ultra-bulletproof Filter Graph ===
+        // 1. Watermark overlay
+        let concatVideoInput = useWatermark ? '[wmv]' : `[${inputIdx}:v]`;
+        let concatAudioInput = '';
         if (useWatermark) {
           filterGraph.push(`[${inputIdx}:v][${watermarkIdx}:v]overlay=W-w-20:H-h-20[wmv]`);
-        } else {
-          filterGraph.push(`[${inputIdx}:v]null[wmv]`);
         }
-
-        // Music (if any): mix with main audio only
+        // 2. Music mix (if present)
         if (musicExists) {
           filterGraph.push(`[${inputIdx}:a][${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
+          concatAudioInput = '[mixa]';
         } else {
-          filterGraph.push(`[${inputIdx}:a]anull[mixa]`);
+          // No music: use original audio directly
+          concatAudioInput = `[${inputIdx}:a]`;
         }
-
-        // Outro concat
+        // 3. Outro concat
         if (addOutro) {
-          filterGraph.push(`[wmv][mixa][${outroIdx}:v][${outroIdx}:a]concat=n=2:v=1:a=1[outv][outa]`);
+          filterGraph.push(`${concatVideoInput}${concatAudioInput}[${outroIdx}:v][${outroIdx}:a]concat=n=2:v=1:a=1[outv][outa]`);
         } else {
-          // No outro, just output wmv and mixa directly
-          filterGraph.push(`[wmv][mixa]concat=n=1:v=1:a=1[outv][outa]`);
+          // No outro, just output the main video and audio directly
+          filterGraph.push(`${concatVideoInput}${concatAudioInput}concat=n=1:v=1:a=1[outv][outa]`);
         }
 
         // Print the full filter graph for debugging
@@ -1114,7 +1112,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
 
 
 

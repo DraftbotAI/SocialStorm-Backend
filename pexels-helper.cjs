@@ -3,7 +3,7 @@
    -----------------------------------------------------------
    - Finds the best-matching video clip for a scene.
    - Search order: R2 > Pexels > Pixabay (fallback)
-   - Includes GPT-powered visual subject extraction.
+   - Includes refined visual subject extraction.
    - Handles all download/streaming and normalization.
    =========================================================== */
 
@@ -15,46 +15,64 @@ const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 
 // ENV
 const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || 'socialstorm-library';
-const R2_ENDPOINT = process.env.R2_ENDPOINT; // e.g., https://[ACCOUNT_ID].r2.cloudflarestorage.com
+const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
 
-// -- Subject Extraction (Very Basic Visual Subject Picker. GPT can be plugged here) --
+// --- Smarter Visual Subject Extraction ---
+// Returns the most visual, matchable subject (landmark/object/thing)
 function extractVisualSubject(line, title = '') {
-  // Replace with GPT if you want, for now use rules:
-  // Priority: look for famous landmark keywords, fallback to most proper-noun-like word
   const famousLandmarks = [
     "statue of liberty", "eiffel tower", "taj mahal", "mount rushmore", "great wall of china",
     "disney", "vatican", "empire state building", "sphinx", "london bridge", "lincoln memorial",
     "big ben", "colosseum", "golden gate bridge", "brooklyn bridge", "machu picchu"
   ];
-
   let text = `${line} ${title || ''}`.toLowerCase();
 
-  // Find any famous landmark keyword in the line
+  // 1. Landmark override
   for (let name of famousLandmarks) {
     if (text.includes(name)) return name;
   }
 
-  // Fallback: try to grab first capitalized word group
-  const match = line.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/);
-  if (match) return match[1];
+  // 2. Try: proper noun phrases / 'the X' (e.g. 'the fountain', 'Central Park')
+  const nounPhrase = line.match(/\b(the|a|an)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+  if (nounPhrase) return nounPhrase[2];
 
-  // Final fallback: use the title if nothing else
-  if (title) return title;
-  return line;
+  // 3. Try: longest capitalized word group in the line
+  const caps = [...line.matchAll(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g)];
+  if (caps.length > 0) {
+    // Use the longest capitalized group (so 'Trevi Fountain' > 'Rome')
+    const best = caps.map(m => m[1]).sort((a, b) => b.length - a.length)[0];
+    if (best && best.length > 2) return best;
+  }
+
+  // 4. Try: most "noun-like" word (last fallback, prefer after 'of' or 'at')
+  const ofMatch = line.match(/of ([A-Za-z ]+)/i);
+  if (ofMatch) {
+    let guess = ofMatch[1].trim();
+    if (guess.split(' ').length <= 5) return guess;
+  }
+  const atMatch = line.match(/at ([A-Za-z ]+)/i);
+  if (atMatch) {
+    let guess = atMatch[1].trim();
+    if (guess.split(' ').length <= 5) return guess;
+  }
+
+  // 5. Title fallback if no strong noun found
+  if (title && title.length > 2) return title;
+  // 6. Last fallback: first two words
+  return line.split(/\s+/).slice(0, 3).join(' ');
 }
 
-// --- Util: Normalize subject and filenames for matching ---
+// --- Normalize subject and filenames for fuzzy matching ---
 function normalize(str) {
   return String(str)
     .toLowerCase()
-    .replace(/[\s_\-]+/g, '') // Remove spaces/underscores/dashes for fuzzy matching
-    .replace(/[^a-z0-9]/g, ''); // Strip non-alphanum
+    .replace(/[\s_\-]+/g, '')
+    .replace(/[^a-z0-9]/g, '');
 }
 
-// --- R2 CLIP MATCHING ---
-// List all objects (recursive, all subfolders)
+// --- List all objects in R2 (recursive/all subfolders) ---
 async function listAllFilesInR2(s3Client, prefix = '') {
   let files = [];
   let continuationToken = undefined;
@@ -73,6 +91,7 @@ async function listAllFilesInR2(s3Client, prefix = '') {
   return files;
 }
 
+// --- R2 Matching with Smarter Logic ---
 async function findClipInR2(subject, s3Client) {
   if (!s3Client) throw new Error('[R2] s3Client not provided!');
   try {
@@ -80,34 +99,40 @@ async function findClipInR2(subject, s3Client) {
     const normQuery = normalize(subject);
     console.log(`[R2] Looking for: "${subject}" → normalized: "${normQuery}" in ${files.length} files`);
 
-    // Match: look for subject keywords in file/folder names
-    let best = null;
-    for (let file of files) {
-      const normFile = normalize(file);
-      if (normFile.includes(normQuery)) {
-        best = file;
-        break;
-      }
-    }
-    if (!best) {
-      // Try loose partial match (split subject into words)
-      const words = subject.split(/\s+/).map(normalize);
-      for (let file of files) {
-        const normFile = normalize(file);
-        if (words.every(w => normFile.includes(w))) {
-          best = file;
-          break;
-        }
-      }
-    }
+    // 1. Strong: full exact match
+    let best = files.find(file => normalize(file).includes(normQuery));
     if (best) {
-      console.log(`[R2] Found match: ${best}`);
-      // Compose the direct public URL (assuming bucket public or via R2 gateway)
+      console.log(`[R2] Exact match: ${best}`);
       let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
       url += `${R2_LIBRARY_BUCKET}/${best}`;
       return url;
     }
-    console.log('[R2] No match found for:', subject);
+
+    // 2. Try: all subject words must appear (any order)
+    const words = subject.split(/\s+/).map(normalize).filter(Boolean);
+    for (let file of files) {
+      const normFile = normalize(file);
+      if (words.length > 1 && words.every(w => normFile.includes(w))) {
+        console.log(`[R2] Combo word match: ${file}`);
+        let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
+        url += `${R2_LIBRARY_BUCKET}/${file}`;
+        return url;
+      }
+    }
+
+    // 3. Partial: any big word (min 5 chars)
+    const bigWords = words.filter(w => w.length > 4);
+    for (let file of files) {
+      const normFile = normalize(file);
+      if (bigWords.some(w => normFile.includes(w))) {
+        console.log(`[R2] Partial big-word match: ${file}`);
+        let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
+        url += `${R2_LIBRARY_BUCKET}/${file}`;
+        return url;
+      }
+    }
+
+    console.log('[R2] No strong match found for:', subject);
     return null;
   } catch (err) {
     console.error('[R2] Error listing or matching:', err);
@@ -115,7 +140,7 @@ async function findClipInR2(subject, s3Client) {
   }
 }
 
-// --- PEXELS FALLBACK ---
+// --- PEXELS Fallback (HD-First, Top-5 Results) ---
 async function findClipInPexels(subject) {
   if (!PEXELS_API_KEY) {
     console.warn('[PEXELS] No API key set.');
@@ -126,12 +151,14 @@ async function findClipInPexels(subject) {
     const url = `https://api.pexels.com/videos/search?query=${query}&per_page=5`;
     const resp = await axios.get(url, { headers: { Authorization: PEXELS_API_KEY } });
     if (resp.data && resp.data.videos && resp.data.videos.length > 0) {
-      // Pick the highest quality clip from results
       const sorted = resp.data.videos.sort((a, b) => (b.width * b.height) - (a.width * a.height));
-      const bestClip = sorted[0];
-      const fileLink = bestClip.video_files.find(f => f.quality === 'hd') || bestClip.video_files[0];
-      console.log('[PEXELS] Clip found:', fileLink.link);
-      return fileLink.link;
+      for (let vid of sorted) {
+        const fileLink = vid.video_files.find(f => f.quality === 'hd') || vid.video_files[0];
+        if (fileLink && fileLink.link) {
+          console.log('[PEXELS] Clip found:', fileLink.link);
+          return fileLink.link;
+        }
+      }
     }
     console.log('[PEXELS] No match found for:', subject);
     return null;
@@ -141,7 +168,7 @@ async function findClipInPexels(subject) {
   }
 }
 
-// --- PIXABAY FALLBACK ---
+// --- PIXABAY Fallback (HD-First, Top-5 Results) ---
 async function findClipInPixabay(subject) {
   if (!PIXABAY_API_KEY) {
     console.warn('[PIXABAY] No API key set.');
@@ -152,10 +179,14 @@ async function findClipInPixabay(subject) {
     const url = `https://pixabay.com/api/videos/?key=${PIXABAY_API_KEY}&q=${query}&per_page=5`;
     const resp = await axios.get(url);
     if (resp.data && resp.data.hits && resp.data.hits.length > 0) {
-      // Pick the highest quality video
-      const best = resp.data.hits.sort((a, b) => (b.videos.large.width * b.videos.large.height) - (a.videos.large.width * a.videos.large.height))[0];
-      console.log('[PIXABAY] Clip found:', best.videos.large.url);
-      return best.videos.large.url;
+      const sorted = resp.data.hits.sort((a, b) => (b.videos.large.width * b.videos.large.height) - (a.videos.large.width * a.videos.large.height));
+      for (let best of sorted) {
+        const url = best.videos.large.url;
+        if (url) {
+          console.log('[PIXABAY] Clip found:', url);
+          return url;
+        }
+      }
     }
     console.log('[PIXABAY] No match found for:', subject);
     return null;
@@ -167,24 +198,24 @@ async function findClipInPixabay(subject) {
 
 // --- MAIN MATCHER: R2 → PEXELS → PIXABAY ---
 async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client) {
-  // 1. Extract main visual subject
   const subject = extractVisualSubject(sceneText, title || '');
   console.log(`[MATCH] Scene ${idx + 1} subject: "${subject}"`);
 
-  // 2. Try R2 first (deep search)
+  // 1. Try R2 first (deep match)
   if (s3Client) {
     const r2Url = await findClipInR2(subject, s3Client);
     if (r2Url) return r2Url;
   }
 
-  // 3. Try Pexels
+  // 2. Try Pexels
   const pexelsUrl = await findClipInPexels(subject);
   if (pexelsUrl) return pexelsUrl;
 
-  // 4. Try Pixabay
+  // 3. Try Pixabay
   const pixabayUrl = await findClipInPixabay(subject);
   if (pixabayUrl) return pixabayUrl;
 
+  // 4. Nothing found, fallback to title or generic
   return null;
 }
 
@@ -194,7 +225,6 @@ async function downloadRemoteFileToLocal(url, outPath) {
     if (!url) throw new Error('No URL provided to download.');
     console.log('[DL] Downloading remote file:', url, '→', outPath);
 
-    // If already downloaded, skip (optional)
     if (fs.existsSync(outPath)) {
       console.log('[DL] File already exists, skipping:', outPath);
       return;
@@ -205,7 +235,7 @@ async function downloadRemoteFileToLocal(url, outPath) {
       url,
       method: 'GET',
       responseType: 'stream',
-      timeout: 60000 // 60 sec timeout
+      timeout: 60000
     });
 
     await new Promise((resolve, reject) => {
@@ -225,7 +255,6 @@ async function downloadRemoteFileToLocal(url, outPath) {
       });
     });
 
-    // Double-check file written
     if (!fs.existsSync(outPath)) {
       throw new Error('[DL] File not written after download: ' + outPath);
     }

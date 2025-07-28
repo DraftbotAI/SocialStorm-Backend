@@ -41,7 +41,6 @@ try {
 }
 
 // === R2 / S3 BUCKETS & CLIENT SETUP ===
-// Loads both library (clips) and output (videos) buckets
 const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || 'socialstorm-library';
 const R2_VIDEOS_BUCKET = process.env.R2_VIDEOS_BUCKET || 'socialstorm-videos';
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
@@ -149,10 +148,7 @@ module.exports = {
 };
 
 
-
-
-
-/* ============================================================
+/* ===========================================================
    SECTION 2: BASIC ROUTES & STATIC FILE SERVING
    -----------------------------------------------------------
    - Serve frontend files (HTML, assets)
@@ -190,220 +186,27 @@ app.get('/api/progress/:jobId', (req, res) => {
   }
 });
 
-// =====================================================
-// SCENE TTS GENERATOR: POLLY OR ELEVENLABS (HELPER)
-// =====================================================
-
-async function generateSceneAudio(text, voiceId, outputPath, ttsProvider) {
-  console.log(`[TTS] Generating audio with provider: ${ttsProvider}, voice: ${voiceId}`);
-
-  if (ttsProvider.toLowerCase() === 'polly' || ttsProvider === 'Amazon Polly') {
-    // --- AWS Polly TTS ---
-    const polly = new AWS.Polly({
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      region: process.env.AWS_REGION
-    });
-    const params = {
-      OutputFormat: 'mp3',
-      Text: text,
-      VoiceId: voiceId.replace('polly-', ''), // e.g., "polly-Matthew" → "Matthew"
-      Engine: 'neural'
-    };
-    const data = await polly.synthesizeSpeech(params).promise();
-    fs.writeFileSync(outputPath, data.AudioStream);
-    console.log(`[TTS] Polly audio saved: ${outputPath}`);
-    return outputPath;
-  }
-
-  if (ttsProvider.toLowerCase() === 'elevenlabs') {
-    // --- ElevenLabs TTS ---
-    const res = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-      { text, model_id: 'eleven_monolingual_v1' },
-      {
-        headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY },
-        responseType: 'arraybuffer'
-      }
-    );
-    fs.writeFileSync(outputPath, res.data);
-    console.log(`[TTS] ElevenLabs audio saved: ${outputPath}`);
-    return outputPath;
-  }
-
-  throw new Error(`Unknown TTS provider: ${ttsProvider}`);
-}
-
-// =====================================================
-// REMOTE VIDEO FILE DOWNLOADER (HELPER)
-// =====================================================
-
-/**
- * Downloads a remote file (video) to a local path.
- * @param {string} url - The URL to download.
- * @param {string} dest - Local path to save to.
- * @returns {Promise<string>} - Resolves to dest if successful.
- */
-async function downloadRemoteFileToLocal(url, dest) {
-  console.log(`[DL] Downloading remote file: ${url} → ${dest}`);
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const writer = fs.createWriteStream(dest);
-  const response = await axios.get(url, { responseType: 'stream' });
-
-  return new Promise((resolve, reject) => {
-    response.data.pipe(writer);
-    let finished = false;
-    writer.on('finish', () => {
-      finished = true;
-      console.log(`[DL] Download complete: ${dest}`);
-      resolve(dest);
-    });
-    writer.on('error', err => {
-      if (!finished) {
-        console.error(`[DL] Download error:`, err);
-        reject(err);
-      }
-    });
-  });
-}
-
-// =====================================================
-// COMBINE AUDIO + VIDEO INTO ONE SCENE (HELPER)
-// =====================================================
-
-/**
- * Combines audio and video into a single output video using ffmpeg.
- * @param {string} audioPath - Path to the .mp3 audio file.
- * @param {string} videoPath - Path to the downloaded video file.
- * @param {string} outputPath - Where to save the combined scene video.
- */
-async function combineAudioAndVideo(audioPath, videoPath, outputPath) {
-  console.log(`[FFMPEG] Combining audio (${audioPath}) + video (${videoPath}) → ${outputPath}`);
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(videoPath)
-      .input(audioPath)
-      .outputOptions([
-        '-c:v copy',
-        '-c:a aac',
-        '-shortest',
-        '-y'
-      ])
-      .save(outputPath)
-      .on('end', () => {
-        console.log(`[FFMPEG] Scene combined: ${outputPath}`);
-        resolve(outputPath);
-      })
-      .on('error', (err) => {
-        console.error(`[FFMPEG] Combine error:`, err);
-        reject(err);
-      });
-  });
-}
-
-// =====================================================
-// CONCATENATE ALL SCENE VIDEOS INTO FINAL VIDEO (HELPER)
-// =====================================================
-
-/**
- * Concatenates multiple scene videos into one using ffmpeg concat demuxer.
- * @param {string[]} scenePaths - Array of full paths to scene videos (in order).
- * @param {string} outputPath - Where to save the stitched video.
- */
-async function stitchScenes(scenePaths, outputPath) {
-  console.log(`[FFMPEG] Stitching scenes: ${scenePaths.length} → ${outputPath}`);
-  const tempListFile = outputPath + '.txt';
-  fs.writeFileSync(
-    tempListFile,
-    scenePaths.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
-  );
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(tempListFile)
-      .inputOptions(['-f concat', '-safe 0'])
-      .outputOptions(['-c:v copy', '-c:a aac', '-movflags +faststart'])
-      .save(outputPath)
-      .on('end', () => {
-        fs.unlinkSync(tempListFile);
-        console.log(`[FFMPEG] Scenes stitched to: ${outputPath}`);
-        resolve(outputPath);
-      })
-      .on('error', (err) => {
-        console.error(`[FFMPEG] Stitch error:`, err);
-        if (fs.existsSync(tempListFile)) fs.unlinkSync(tempListFile);
-        reject(err);
-      });
-  });
-}
-
-// =====================================================
-// FINAL TOUCHES: WATERMARK / OUTRO / MUSIC (HELPER)
-// =====================================================
-
-/**
- * Applies watermark, outro, and/or background music to final stitched video.
- * - watermark: boolean, overlay logo at bottom-right
- * - outro: boolean, placeholder (no-op for now)
- * - backgroundMusic: boolean, placeholder (no-op for now)
- *
- * @param {string} inputPath - Path to stitched video.
- * @param {string} outputPath - Where to save final output.
- * @param {Object} opts - Options { watermark, outro, backgroundMusic }
- */
-async function addFinalTouches(inputPath, outputPath, opts = {}) {
-  console.log(`[STEP] Adding final touches: watermark=${!!opts.watermark}, outro=${!!opts.outro}, bgm=${!!opts.backgroundMusic}`);
-  let cmd = ffmpeg().input(inputPath);
-
-  // === Watermark ===
-  if (opts.watermark) {
-    const watermarkPath = path.join(__dirname, 'public', 'logo.png');
-    if (!fs.existsSync(watermarkPath)) {
-      console.warn('[WATERMARK] Logo not found:', watermarkPath);
-      // fallback: just copy
-      fs.copyFileSync(inputPath, outputPath);
-      return outputPath;
-    }
-    cmd = cmd.input(watermarkPath)
-      .complexFilter([
-        '[0:v][1:v]overlay=W-w-40:H-h-40' // logo bottom right, adjust offset as needed
-      ]);
-  }
-
-  // === Outro ===
-  // Placeholder: no-op for now (can append in future version)
-
-  // === Background Music ===
-  // Placeholder: no-op for now (can add bg music layer here)
-
-  return new Promise((resolve, reject) => {
-    cmd
-      .outputOptions(['-c:v libx264', '-c:a aac', '-pix_fmt yuv420p', '-movflags +faststart'])
-      .save(outputPath)
-      .on('end', () => {
-        console.log(`[FINAL] Final video with touches saved: ${outputPath}`);
-        resolve(outputPath);
-      })
-      .on('error', (err) => {
-        console.error(`[FINAL] Final touches error:`, err);
-        reject(err);
-      });
-  });
-}
-
-
-
 
 /* ===========================================================
-   SECTION 3: VOICES ENDPOINTS
+   SECTION 3: VOICES ENDPOINTS (POLLY FIRST)
    -----------------------------------------------------------
    - Returns all available voices with metadata
-   - No placeholders, all live voices with descriptions/tier/preview
-   - Logs total voices, breakdown by tier, and request info
+   - Polly voices first, then ElevenLabs
    =========================================================== */
 
 console.log('[INFO] Registering /api/voices endpoint...');
 
+// ===== POLLY FREE TIER VOICES (NOW FIRST) =====
 const voices = [
+  { id: "Matthew", name: "Matthew (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Joey", name: "Joey (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Brian", name: "Brian (British Male)", description: "Amazon Polly, Male, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Russell", name: "Russell (Australian Male)", description: "Amazon Polly, Male, Australian English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
+  { id: "Joanna", name: "Joanna (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Kimberly", name: "Kimberly (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Amy", name: "Amy (British Female)", description: "Amazon Polly, Female, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+  { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
+
   // ===== ELEVENLABS PRO VOICES =====
   { id: "ZthjuvLPty3kTMaNKVKb", name: "Mike (Pro)", description: "ElevenLabs, Deep US Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
   { id: "6F5Zhi321D3Oq7v1oNT4", name: "Jackson (Pro)", description: "ElevenLabs, Movie Style Narration", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
@@ -420,17 +223,7 @@ const voices = [
   { id: "zA6D7RyKdc2EClouEMkP", name: "Aimee (ASMR Pro)", description: "Female British Meditation ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false },
   { id: "RCQHZdatZm4oG3N6Nwme", name: "Dr. Lovelace (ASMR Pro)", description: "Pro Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false },
   { id: "RBknfnzK8KHNwv44gIrh", name: "James Whitmore (ASMR Pro)", description: "Gentle Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "male", disabled: false },
-  { id: "GL7nH05mDrxcH1JPJK5T", name: "Aimee (ASMR Gentle)", description: "ASMR Gentle Whisper", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false },
-
-  // ===== POLLY FREE TIER VOICES =====
-  { id: "Matthew", name: "Matthew (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
-  { id: "Joey", name: "Joey (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
-  { id: "Brian", name: "Brian (British Male)", description: "Amazon Polly, Male, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
-  { id: "Russell", name: "Russell (Australian Male)", description: "Amazon Polly, Male, Australian English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
-  { id: "Joanna", name: "Joanna (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
-  { id: "Kimberly", name: "Kimberly (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
-  { id: "Amy", name: "Amy (British Female)", description: "Amazon Polly, Female, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
-  { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false }
+  { id: "GL7nH05mDrxcH1JPJK5T", name: "Aimee (ASMR Gentle)", description: "ASMR Gentle Whisper", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false }
 ];
 
 // ==== Polly Voice List for Validation ====
@@ -454,8 +247,6 @@ module.exports = {
   voices,
   POLLY_VOICE_IDS
 };
-
-
 
 
 /* ===========================================================
@@ -594,8 +385,6 @@ Tags: secrets landmarks mystery history viral
 
 
 
-
-
 /* ===========================================================
    SECTION 5: VIDEO GENERATION ENDPOINT
    -----------------------------------------------------------
@@ -613,6 +402,37 @@ const getAudioDuration = (audioPath) => {
       if (err) return reject(err);
       resolve(metadata.format.duration);
     });
+  });
+};
+
+// Helper: Get video info (codec, size, pix_fmt, streams, duration)
+const getVideoInfo = (filePath) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) return reject(err);
+      resolve(metadata);
+    });
+  });
+};
+
+// Helper: Standardize video (codec, pix_fmt, size, audio stream)
+const standardizeVideo = async (inputPath, outputPath, refInfo) => {
+  return new Promise((resolve, reject) => {
+    let cmd = ffmpeg().input(inputPath);
+    // Always use H.264, yuv420p, AAC, reference size
+    cmd = cmd.outputOptions([
+      `-vf scale=${refInfo.width}:${refInfo.height}`,
+      '-c:v libx264',
+      '-pix_fmt yuv420p',
+      '-c:a aac',
+      '-ar 44100',
+      '-b:a 128k',
+      '-movflags +faststart',
+      '-y'
+    ]);
+    cmd.save(outputPath)
+      .on('end', () => resolve(outputPath))
+      .on('error', reject);
   });
 };
 
@@ -915,6 +735,48 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[SCENE] Finished processing scene ${i + 1}/${scenes.length}.`);
       }
 
+      // === BULLETPROOF: Validate and standardize all scenes before concat ===
+      // Gather reference size/codec from first scene
+      let refInfo = null;
+      try {
+        refInfo = await getVideoInfo(sceneFiles[0]);
+        const v = (refInfo.streams || []).find(s => s.codec_type === 'video');
+        refInfo.width = v.width;
+        refInfo.height = v.height;
+        refInfo.codec_name = v.codec_name;
+        refInfo.pix_fmt = v.pix_fmt;
+      } catch (err) {
+        console.error('[ERR] Could not get reference video info:', err);
+        progress[jobId] = { percent: 100, status: 'Failed: Reference video info error' };
+        cleanupJob(jobId); clearTimeout(watchdog); return;
+      }
+
+      // Standardize all scene files to match reference
+      for (let i = 0; i < sceneFiles.length; i++) {
+        try {
+          const info = await getVideoInfo(sceneFiles[i]);
+          const v = (info.streams || []).find(s => s.codec_type === 'video');
+          const a = (info.streams || []).find(s => s.codec_type === 'audio');
+          const needsFix =
+            !v ||
+            v.codec_name !== refInfo.codec_name ||
+            v.width !== refInfo.width ||
+            v.height !== refInfo.height ||
+            v.pix_fmt !== refInfo.pix_fmt ||
+            !a;
+          if (needsFix) {
+            const fixedPath = sceneFiles[i].replace(/\.mp4$/, '-fixed.mp4');
+            await standardizeVideo(sceneFiles[i], fixedPath, refInfo);
+            fs.renameSync(fixedPath, sceneFiles[i]);
+            console.log(`[BULLETPROOF] Fixed scene ${i + 1} video: ${sceneFiles[i]}`);
+          }
+        } catch (err) {
+          console.error(`[ERR] Bulletproof check failed for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Scene video validation error (${i + 1})` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
+        }
+      }
+
       // === CONCATENATE SCENES ===
       const listFile = path.resolve(workDir, 'list.txt');
       fs.writeFileSync(
@@ -1019,38 +881,25 @@ app.post('/api/generate-video', (req, res) => {
       // Ensure outro has audio and video, and matches resolution/codec
       let patchedOutroPath = outroPath;
       if (doAddOutro) {
-        // 1. Ensure outro.mp4 has an audio stream (if not, add silence)
+        // 1. Ensure outro.mp4 has an audio stream (if not, add silence), and matches ref video size/codec
         let outroNeedsPatch = false;
         try {
-          const probe = await new Promise((resolve, reject) => {
-            ffmpeg.ffprobe(outroPath, (err, metadata) => {
-              if (err) reject(err);
-              resolve(metadata);
-            });
-          });
-          const hasVideo = (probe.streams || []).some(s => s.codec_type === 'video');
-          const hasAudio = (probe.streams || []).some(s => s.codec_type === 'audio');
-          if (!hasAudio) outroNeedsPatch = true;
+          const probe = await getVideoInfo(outroPath);
+          const v = (probe.streams || []).find(s => s.codec_type === 'video');
+          const a = (probe.streams || []).find(s => s.codec_type === 'audio');
+          outroNeedsPatch =
+            !v ||
+            !a ||
+            v.width !== refInfo.width ||
+            v.height !== refInfo.height ||
+            v.codec_name !== refInfo.codec_name ||
+            v.pix_fmt !== refInfo.pix_fmt;
         } catch (err) {
           outroNeedsPatch = true;
         }
         if (outroNeedsPatch) {
-          const outroFixed = path.resolve(workDir, 'outro-audiofix.mp4');
-          await new Promise((resolve, reject) => {
-            ffmpeg()
-              .input(outroPath)
-              .input('anullsrc=channel_layout=stereo:sample_rate=44100')
-              .inputOptions(['-f lavfi'])
-              .outputOptions([
-                '-shortest',
-                '-c:v copy',
-                '-c:a aac',
-                '-y'
-              ])
-              .save(outroFixed)
-              .on('end', resolve)
-              .on('error', reject);
-          });
+          const outroFixed = path.resolve(workDir, 'outro-fixed.mp4');
+          await standardizeVideo(outroPath, outroFixed, refInfo);
           patchedOutroPath = outroFixed;
         }
       }
@@ -1118,13 +967,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
-
-
-
-
-
-
 /* ===========================================================
    SECTION 6: THUMBNAIL GENERATION ENDPOINT
    -----------------------------------------------------------
@@ -1204,7 +1046,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
       const dataUrl = canvas.toDataURL('image/png');
       previews.push({ idx: i + 1, dataUrl });
-      console.log(`[PREVIEW] Generated preview ${i+1}/10`);
+      console.log(`[PREVIEW] Generated preview ${i + 1}/10`);
     }
 
     // Make ZIP (for unlock/download)
@@ -1228,8 +1070,8 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       ctx.shadowBlur = 12;
       ctx.fillText(label, 240, 148, 420);
 
-      zip.file(`SocialStorm-thumbnail-${i+1}.png`, canvas.toBuffer('image/png'));
-      console.log(`[ZIP] Added thumbnail ${i+1}/10 to ZIP`);
+      zip.file(`SocialStorm-thumbnail-${i + 1}.png`, canvas.toBuffer('image/png'));
+      console.log(`[ZIP] Added thumbnail ${i + 1}/10 to ZIP`);
     }
     const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
     // Store ZIP to temp dir for download
@@ -1250,7 +1092,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
     res.json({ success: false, error: "Failed to generate thumbnails." });
   }
 });
-
 
 
 /* ===========================================================
@@ -1311,9 +1152,6 @@ app.get('/video/:key', (req, res) => {
     }
   });
 });
-
-
-
 
 
 /* ===========================================================

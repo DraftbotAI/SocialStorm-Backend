@@ -3,7 +3,7 @@
    -----------------------------------------------------------
    - Finds the best-matching video clip for a scene.
    - Search order: R2 > Pexels > Pixabay (fallback)
-   - Includes refined visual subject extraction.
+   - Improved visual subject extraction (no AI, just rules)
    - Handles all download/streaming and normalization.
    =========================================================== */
 
@@ -19,60 +19,52 @@ const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
 
-// --- Smarter Visual Subject Extraction ---
-// Returns the most visual, matchable subject (landmark/object/thing)
+// --- IMPROVED Visual Subject Picker (Rule-Based, No AI) ---
 function extractVisualSubject(line, title = '') {
-  const famousLandmarks = [
+  // Step 1: Prioritize famous landmarks or objects
+  const famousSubjects = [
     "statue of liberty", "eiffel tower", "taj mahal", "mount rushmore", "great wall of china",
     "disney", "vatican", "empire state building", "sphinx", "london bridge", "lincoln memorial",
-    "big ben", "colosseum", "golden gate bridge", "brooklyn bridge", "machu picchu"
+    "big ben", "colosseum", "golden gate bridge", "brooklyn bridge", "machu picchu",
+    "trevi fountain", "niagara falls", "burj khalifa", "space needle", "grand canyon", "sydney opera house"
   ];
+
   let text = `${line} ${title || ''}`.toLowerCase();
 
-  // 1. Landmark override
-  for (let name of famousLandmarks) {
+  for (let name of famousSubjects) {
     if (text.includes(name)) return name;
   }
 
-  // 2. Try: proper noun phrases / 'the X' (e.g. 'the fountain', 'Central Park')
-  const nounPhrase = line.match(/\b(the|a|an)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
-  if (nounPhrase) return nounPhrase[2];
+  // Step 2: Look for capitalized multi-word "proper noun" phrase (e.g., "Empire State Building")
+  const proper = line.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/);
+  if (proper) return proper[1];
 
-  // 3. Try: longest capitalized word group in the line
-  const caps = [...line.matchAll(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g)];
-  if (caps.length > 0) {
-    // Use the longest capitalized group (so 'Trevi Fountain' > 'Rome')
-    const best = caps.map(m => m[1]).sort((a, b) => b.length - a.length)[0];
-    if (best && best.length > 2) return best;
+  // Step 3: Look for a single capitalized word (often a place/object)
+  const capWord = line.match(/\b([A-Z][a-z]+)\b/);
+  if (capWord) return capWord[1];
+
+  // Step 4: Look for the last noun-like word (simple: last word longer than 3 letters)
+  const words = line.split(/\s+/).filter(Boolean);
+  for (let i = words.length - 1; i >= 0; i--) {
+    if (words[i].length > 3 && /^[a-zA-Z]+$/.test(words[i])) {
+      return words[i];
+    }
   }
 
-  // 4. Try: most "noun-like" word (last fallback, prefer after 'of' or 'at')
-  const ofMatch = line.match(/of ([A-Za-z ]+)/i);
-  if (ofMatch) {
-    let guess = ofMatch[1].trim();
-    if (guess.split(' ').length <= 5) return guess;
-  }
-  const atMatch = line.match(/at ([A-Za-z ]+)/i);
-  if (atMatch) {
-    let guess = atMatch[1].trim();
-    if (guess.split(' ').length <= 5) return guess;
-  }
-
-  // 5. Title fallback if no strong noun found
-  if (title && title.length > 2) return title;
-  // 6. Last fallback: first two words
-  return line.split(/\s+/).slice(0, 3).join(' ');
+  // Step 5: Fallback to title or whole line
+  if (title) return title;
+  return line;
 }
 
-// --- Normalize subject and filenames for fuzzy matching ---
+// --- Util: Normalize subject and filenames for matching ---
 function normalize(str) {
   return String(str)
     .toLowerCase()
-    .replace(/[\s_\-]+/g, '')
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/[\s_\-]+/g, '') // Remove spaces/underscores/dashes for fuzzy matching
+    .replace(/[^a-z0-9]/g, ''); // Strip non-alphanum
 }
 
-// --- List all objects in R2 (recursive/all subfolders) ---
+// --- R2 CLIP MATCHING ---
 async function listAllFilesInR2(s3Client, prefix = '') {
   let files = [];
   let continuationToken = undefined;
@@ -91,7 +83,6 @@ async function listAllFilesInR2(s3Client, prefix = '') {
   return files;
 }
 
-// --- R2 Matching with Smarter Logic ---
 async function findClipInR2(subject, s3Client) {
   if (!s3Client) throw new Error('[R2] s3Client not provided!');
   try {
@@ -99,40 +90,33 @@ async function findClipInR2(subject, s3Client) {
     const normQuery = normalize(subject);
     console.log(`[R2] Looking for: "${subject}" → normalized: "${normQuery}" in ${files.length} files`);
 
-    // 1. Strong: full exact match
-    let best = files.find(file => normalize(file).includes(normQuery));
+    // 1. Exact match (whole phrase)
+    let best = null;
+    for (let file of files) {
+      const normFile = normalize(file);
+      if (normFile.includes(normQuery)) {
+        best = file;
+        break;
+      }
+    }
+    // 2. Partial match (all words must appear somewhere)
+    if (!best) {
+      const words = subject.split(/\s+/).map(normalize).filter(Boolean);
+      for (let file of files) {
+        const normFile = normalize(file);
+        if (words.every(w => normFile.includes(w))) {
+          best = file;
+          break;
+        }
+      }
+    }
     if (best) {
-      console.log(`[R2] Exact match: ${best}`);
+      console.log(`[R2] Found match: ${best}`);
       let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
       url += `${R2_LIBRARY_BUCKET}/${best}`;
       return url;
     }
-
-    // 2. Try: all subject words must appear (any order)
-    const words = subject.split(/\s+/).map(normalize).filter(Boolean);
-    for (let file of files) {
-      const normFile = normalize(file);
-      if (words.length > 1 && words.every(w => normFile.includes(w))) {
-        console.log(`[R2] Combo word match: ${file}`);
-        let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
-        url += `${R2_LIBRARY_BUCKET}/${file}`;
-        return url;
-      }
-    }
-
-    // 3. Partial: any big word (min 5 chars)
-    const bigWords = words.filter(w => w.length > 4);
-    for (let file of files) {
-      const normFile = normalize(file);
-      if (bigWords.some(w => normFile.includes(w))) {
-        console.log(`[R2] Partial big-word match: ${file}`);
-        let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
-        url += `${R2_LIBRARY_BUCKET}/${file}`;
-        return url;
-      }
-    }
-
-    console.log('[R2] No strong match found for:', subject);
+    console.log('[R2] No match found for:', subject);
     return null;
   } catch (err) {
     console.error('[R2] Error listing or matching:', err);
@@ -140,7 +124,7 @@ async function findClipInR2(subject, s3Client) {
   }
 }
 
-// --- PEXELS Fallback (HD-First, Top-5 Results) ---
+// --- PEXELS FALLBACK ---
 async function findClipInPexels(subject) {
   if (!PEXELS_API_KEY) {
     console.warn('[PEXELS] No API key set.');
@@ -152,13 +136,10 @@ async function findClipInPexels(subject) {
     const resp = await axios.get(url, { headers: { Authorization: PEXELS_API_KEY } });
     if (resp.data && resp.data.videos && resp.data.videos.length > 0) {
       const sorted = resp.data.videos.sort((a, b) => (b.width * b.height) - (a.width * a.height));
-      for (let vid of sorted) {
-        const fileLink = vid.video_files.find(f => f.quality === 'hd') || vid.video_files[0];
-        if (fileLink && fileLink.link) {
-          console.log('[PEXELS] Clip found:', fileLink.link);
-          return fileLink.link;
-        }
-      }
+      const bestClip = sorted[0];
+      const fileLink = bestClip.video_files.find(f => f.quality === 'hd') || bestClip.video_files[0];
+      console.log('[PEXELS] Clip found:', fileLink.link);
+      return fileLink.link;
     }
     console.log('[PEXELS] No match found for:', subject);
     return null;
@@ -168,7 +149,7 @@ async function findClipInPexels(subject) {
   }
 }
 
-// --- PIXABAY Fallback (HD-First, Top-5 Results) ---
+// --- PIXABAY FALLBACK ---
 async function findClipInPixabay(subject) {
   if (!PIXABAY_API_KEY) {
     console.warn('[PIXABAY] No API key set.');
@@ -179,14 +160,9 @@ async function findClipInPixabay(subject) {
     const url = `https://pixabay.com/api/videos/?key=${PIXABAY_API_KEY}&q=${query}&per_page=5`;
     const resp = await axios.get(url);
     if (resp.data && resp.data.hits && resp.data.hits.length > 0) {
-      const sorted = resp.data.hits.sort((a, b) => (b.videos.large.width * b.videos.large.height) - (a.videos.large.width * a.videos.large.height));
-      for (let best of sorted) {
-        const url = best.videos.large.url;
-        if (url) {
-          console.log('[PIXABAY] Clip found:', url);
-          return url;
-        }
-      }
+      const best = resp.data.hits.sort((a, b) => (b.videos.large.width * b.videos.large.height) - (a.videos.large.width * a.videos.large.height))[0];
+      console.log('[PIXABAY] Clip found:', best.videos.large.url);
+      return best.videos.large.url;
     }
     console.log('[PIXABAY] No match found for:', subject);
     return null;
@@ -201,7 +177,7 @@ async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Cli
   const subject = extractVisualSubject(sceneText, title || '');
   console.log(`[MATCH] Scene ${idx + 1} subject: "${subject}"`);
 
-  // 1. Try R2 first (deep match)
+  // 1. Try R2 first
   if (s3Client) {
     const r2Url = await findClipInR2(subject, s3Client);
     if (r2Url) return r2Url;
@@ -215,7 +191,6 @@ async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Cli
   const pixabayUrl = await findClipInPixabay(subject);
   if (pixabayUrl) return pixabayUrl;
 
-  // 4. Nothing found, fallback to title or generic
   return null;
 }
 

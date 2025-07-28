@@ -946,7 +946,7 @@ app.post('/api/generate-video', (req, res) => {
       // === Watermark, outro, music ===
       const finalPath = path.resolve(workDir, `final.mp4`);
       try {
-        progress[jobId] = { percent: 85, status: `Adding outro, watermark, and${backgroundMusic ? '' : ' no'} music...` };
+        progress[jobId] = { percent: 85, status: `Adding outro, watermark,${backgroundMusic ? '' : ' no'} music...` };
 
         const watermarkPath = path.resolve(__dirname, 'public', 'assets', 'logo.png');
         const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
@@ -964,71 +964,65 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[ASSET CHECK] Outro: ${outroPath} (${outroExists && addOutro})`);
         console.log(`[ASSET CHECK] Music: ${musicPath} (${musicExists})`);
 
-        // Dynamic input order with explicit debug printout
-        let inputMap = [{ type: 'concatFile', path: concatInputFile }];
+        // === FFmpeg Input Order ===
+        // 0: main (concatenated) video+audio (concatInputFile)
+        // 1: watermark (if present)
+        // 2: outro video+audio (if present)
+        // 3: music (if present, as a separate audio input for mixing)
         let ffmpegArgs = ffmpeg().input(concatInputFile);
+        let filterGraph = [];
+        let inputIdx = 0;
+        let nextInputIdx = 1;
 
-        if (musicExists) {
-          inputMap.push({ type: 'music', path: musicPath });
-          ffmpegArgs = ffmpegArgs.input(musicPath);
-        }
+        // Indices we'll use for watermark, outro, and music
+        let watermarkIdx = null;
+        let outroIdx = null;
+        let musicIdx = null;
+
         if (useWatermark) {
-          inputMap.push({ type: 'watermark', path: watermarkPath });
           ffmpegArgs = ffmpegArgs.input(watermarkPath);
+          watermarkIdx = nextInputIdx++;
         }
+
         if (addOutro) {
-          inputMap.push({ type: 'outro', path: outroPath });
           ffmpegArgs = ffmpegArgs.input(outroPath);
+          outroIdx = nextInputIdx++;
         }
 
-        // Index map for building filter graph
-        const inputIndexes = {};
-        inputMap.forEach((v, i) => { inputIndexes[v.type] = i; });
-
-        // Print mapping for debug!
-        console.log('[FFMPEG][INPUTS]');
-        inputMap.forEach((inp, idx) => {
-          console.log(`  [${idx}] ${inp.type}: ${inp.path}`);
-        });
-
-        // Build filter graph dynamically (fully bulletproof)
-        const filters = [];
-        const outputs = ['outv', 'outa'];
-        let videoLabel = `[${inputIndexes.concatFile}:v]`;
-        let audioLabel = `[${inputIndexes.concatFile}:a]`;
-
-        // Watermark overlay if present
-        if (useWatermark) {
-          filters.push(`[${inputIndexes.watermark}:v]scale=140:140[wm]`);
-          filters.push(`${videoLabel}[wm]overlay=W-w-20:H-h-20[mainv]`);
-          videoLabel = '[mainv]';
-        } else {
-          filters.push(`${videoLabel}copy[mainv]`);
-          videoLabel = '[mainv]';
-        }
-
-        // Music mix if present
         if (musicExists) {
-          filters.push(`[${inputIndexes.music}:a]volume=0.25[music]`);
-          filters.push(`${audioLabel}[music]amix=inputs=2:duration=first[aout]`);
-          audioLabel = '[aout]';
+          ffmpegArgs = ffmpegArgs.input(musicPath);
+          musicIdx = nextInputIdx++;
         }
 
-        // Outro concat if present
-        if (addOutro) {
-          filters.push(`[${inputIndexes.outro}:v]copy[outv2]`);
-          filters.push(`[${inputIndexes.outro}:a]copy[outa2]`);
-          filters.push(`${videoLabel}[outv2]${audioLabel}[outa2]concat=n=2:v=1:a=1[outv][outa]`);
+        // --- Filter graph construction ---
+        // Watermark
+        if (useWatermark) {
+          filterGraph.push(`[${inputIdx}:v][${watermarkIdx}:v]overlay=W-w-20:H-h-20[wmv]`);
         } else {
-          filters.push(`${videoLabel}${audioLabel}copy[outv][outa]`);
+          filterGraph.push(`[${inputIdx}:v]null[wmv]`);
+        }
+
+        // Music (if any): mix with main audio only
+        if (musicExists) {
+          filterGraph.push(`[${inputIdx}:a][${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
+        } else {
+          filterGraph.push(`[${inputIdx}:a]anull[mixa]`);
+        }
+
+        // Outro concat
+        if (addOutro) {
+          filterGraph.push(`[wmv][mixa][${outroIdx}:v][${outroIdx}:a]concat=n=2:v=1:a=1[outv][outa]`);
+        } else {
+          // No outro, just output wmv and mixa directly
+          filterGraph.push(`[wmv][mixa]concat=n=1:v=1:a=1[outv][outa]`);
         }
 
         // Print the full filter graph for debugging
-        console.log('[FFMPEG][FILTER GRAPH]', JSON.stringify(filters, null, 2));
+        console.log('[FFMPEG][FILTER GRAPH]', JSON.stringify(filterGraph, null, 2));
 
         await new Promise((resolve, reject) => {
           ffmpegArgs
-            .complexFilter(filters, outputs)
+            .complexFilter(filterGraph, ['outv', 'outa'])
             .outputOptions(['-map', '[outv]', '-map', '[outa]', '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart'])
             .save(finalPath)
             .on('end', resolve)

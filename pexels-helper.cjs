@@ -258,5 +258,6 @@ function splitScriptToScenes(script) {
 module.exports = {
   findClipForScene,
   splitScriptToScenes,
-  downloadRemoteFileToLocal
+  downloadRemoteFileToLocal,
+  extractVisualSubject // <--- Exported so you can import in server.cjs!
 };

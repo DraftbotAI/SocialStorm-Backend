@@ -538,7 +538,27 @@ const pickMusicForMood = (mood = null) => {
   }
 };
 
-// ---- PATCHED: Dummy extractVisualSubject so backend cannot crash ----
+// --- FULL DEFINITION: Generate scene audio for all TTS providers ---
+async function generateSceneAudio(sceneText, voiceId, outPath, provider) {
+  // provider is like 'google', 'polly', 'elevenlabs'
+  if (!provider) throw new Error("No TTS provider specified");
+  if (!sceneText || !voiceId || !outPath) throw new Error("Missing input for generateSceneAudio");
+
+  if (provider.toLowerCase() === 'google') {
+    // Google TTS
+    await generateGoogleTTS(sceneText, voiceId, outPath);
+  } else if (provider.toLowerCase() === 'polly') {
+    // Amazon Polly
+    await generatePollyTTS(sceneText, voiceId, outPath);
+  } else if (provider.toLowerCase() === 'elevenlabs') {
+    // ElevenLabs
+    await generateElevenLabsTTS(sceneText, voiceId, outPath);
+  } else {
+    throw new Error(`Unknown TTS provider: ${provider}`);
+  }
+}
+
+// --- PATCHED: Dummy extractVisualSubject so backend cannot crash ---
 async function extractVisualSubject(line, scriptTopic = '') {
   // For now, just return the line itself (so nothing crashes)
   return line;
@@ -874,99 +894,11 @@ app.post('/api/generate-video', (req, res) => {
 
       // === [BULLETPROOF OUTRO APPEND] ===
       const finalPath = path.resolve(workDir, 'final.mp4');
-      const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
-      const outroExists = fs.existsSync(outroPath);
-      let doAddOutro = outroExists && !(paidUser && removeOutro);
+      const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4
 
-      // Ensure outro has audio and video, and matches resolution/codec
-      let patchedOutroPath = outroPath;
-      if (doAddOutro) {
-        // 1. Ensure outro.mp4 has an audio stream (if not, add silence), and matches ref video size/codec
-        let outroNeedsPatch = false;
-        try {
-          const probe = await getVideoInfo(outroPath);
-          const v = (probe.streams || []).find(s => s.codec_type === 'video');
-          const a = (probe.streams || []).find(s => s.codec_type === 'audio');
-          outroNeedsPatch =
-            !v ||
-            !a ||
-            v.width !== refInfo.width ||
-            v.height !== refInfo.height ||
-            v.codec_name !== refInfo.codec_name ||
-            v.pix_fmt !== refInfo.pix_fmt;
-        } catch (err) {
-          outroNeedsPatch = true;
-        }
-        if (outroNeedsPatch) {
-          const outroFixed = path.resolve(workDir, 'outro-fixed.mp4');
-          await standardizeVideo(outroPath, outroFixed, refInfo);
-          patchedOutroPath = outroFixed;
-        }
-      }
 
-      if (doAddOutro) {
-        // 2. Concat with outro, ensuring compatible codecs/containers
-        const list2 = path.resolve(workDir, 'list2.txt');
-        fs.writeFileSync(
-          list2,
-          [`file '${concatWithMusicFile.replace(/'/g, "'\\''")}'`, `file '${patchedOutroPath.replace(/'/g, "'\\''")}'`].join('\n')
-        );
-        await new Promise((resolve, reject) => {
-          ffmpeg()
-            .input(list2)
-            .inputOptions(['-f concat', '-safe 0'])
-            .outputOptions(['-c:v libx264', '-c:a aac', '-movflags +faststart'])
-            .save(finalPath)
-            .on('end', resolve)
-            .on('error', reject);
-        });
-        console.log(`[FINAL] Outro appended, output: ${finalPath}`);
-      } else {
-        fs.copyFileSync(concatWithMusicFile, finalPath);
-        console.log(`[FINAL] No outro, output: ${finalPath}`);
-      }
 
-      if (!fs.existsSync(finalPath) || fs.statSync(finalPath).size < 10240) {
-        throw new Error(`Final output missing or too small: ${finalPath}`);
-      }
-      console.log(`[FINAL] Final video written: ${finalPath}`);
 
-      fs.mkdirSync(path.resolve(__dirname, 'public', 'video'), { recursive: true });
-      const serveCopyPath = path.resolve(__dirname, 'public', 'video', `${jobId}.mp4`);
-      fs.copyFileSync(finalPath, serveCopyPath);
-      console.log(`[LOCAL SERVE] Video copied to: ${serveCopyPath}`);
-
-      try {
-        const s3Key = `videos/${jobId}.mp4`;
-        const fileData = fs.readFileSync(finalPath);
-        await s3Client.send(new PutObjectCommand({
-          Bucket: process.env.R2_VIDEOS_BUCKET,
-          Key: s3Key,
-          Body: fileData,
-          ContentType: 'video/mp4'
-        }));
-        console.log(`[UPLOAD] Uploaded final video to R2: ${s3Key}`);
-      } catch (err) {
-        console.error(`[ERR] R2 upload failed`, err);
-      }
-
-      progress[jobId] = {
-        percent: 100,
-        status: 'Done',
-        key: `${jobId}.mp4`
-      };
-
-      finished = true;
-      clearTimeout(watchdog);
-      setTimeout(() => cleanupJob(jobId), 30 * 60 * 1000);
-      console.log(`[DONE] Video job ${jobId} finished and available at /video/${jobId}.mp4`);
-    } catch (err) {
-      console.error(`[CRASH] Fatal video generation error`, err);
-      progress[jobId] = { percent: 100, status: 'Failed: Crash' };
-      cleanupJob(jobId); clearTimeout(watchdog);
-    }
-  })();
-});
 /* ===========================================================
    SECTION 6: THUMBNAIL GENERATION ENDPOINT
    -----------------------------------------------------------

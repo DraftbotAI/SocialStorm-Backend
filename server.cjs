@@ -607,6 +607,14 @@ Tags: secrets landmarks mystery history viral
 
 console.log('[INIT] Video generation endpoint initialized');
 
+// === Import helpers from pexels-helper.cjs (including extractVisualSubject!) ===
+const {
+  findClipForScene,
+  splitScriptToScenes,
+  downloadRemoteFileToLocal,
+  extractVisualSubject
+} = require('./pexels-helper.cjs');
+
 // Helper: Get audio duration in seconds using ffprobe
 const getAudioDuration = (audioPath) => {
   return new Promise((resolve, reject) => {
@@ -1113,7 +1121,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
 
 
 

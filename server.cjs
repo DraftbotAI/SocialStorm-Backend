@@ -691,6 +691,34 @@ const muxVideoWithNarration = (videoWithSilence, narrationPath, outPath, duratio
   });
 };
 
+// Helper: Select music file by mood (folder-based), returns full path or null
+const pickMusicForMood = (mood = null) => {
+  try {
+    const musicRoot = path.resolve(__dirname, 'public', 'assets', 'music_library');
+    if (!mood) {
+      console.warn('[MUSIC] No mood provided, skipping music selection.');
+      return null;
+    }
+    const moodFolder = path.join(musicRoot, mood);
+    if (!fs.existsSync(moodFolder) || !fs.statSync(moodFolder).isDirectory()) {
+      console.warn(`[MUSIC] Mood folder does not exist: ${moodFolder}`);
+      return null;
+    }
+    const candidates = fs.readdirSync(moodFolder).filter(f => f.endsWith('.mp3'));
+    if (!candidates.length) {
+      console.warn(`[MUSIC] No mp3 files found in mood folder: ${moodFolder}`);
+      return null;
+    }
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    const chosenPath = path.join(moodFolder, pick);
+    console.log(`[MUSIC] Picked "${pick}" for mood "${mood}" from: ${moodFolder}`);
+    return chosenPath;
+  } catch (err) {
+    console.error('[MUSIC] Error picking mood-based music:', err);
+    return null;
+  }
+};
+
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -715,10 +743,11 @@ app.post('/api/generate-video', (req, res) => {
         paidUser = false,
         removeWatermark = false,
         title = '',
-        backgroundMusic = true
+        backgroundMusic = true,
+        musicMood = null // This should be passed from frontend/script analysis
       } = req.body || {};
 
-      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark} | Music: ${backgroundMusic}`);
+      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark} | Music: ${backgroundMusic} | Mood: ${musicMood}`);
       console.log(`[DEBUG] Raw script:\n${script}`);
 
       if (!script || !voice) {
@@ -946,15 +975,18 @@ app.post('/api/generate-video', (req, res) => {
       // === Watermark, outro, music ===
       const finalPath = path.resolve(workDir, `final.mp4`);
       try {
-        progress[jobId] = { percent: 85, status: `Adding outro, watermark,${backgroundMusic ? '' : ' no'} music...` };
+        // === GPT-powered mood-based music selection ===
+        let selectedMusicPath = null;
+        if (backgroundMusic && musicMood) {
+          selectedMusicPath = pickMusicForMood(musicMood);
+        }
+        const musicExists = !!selectedMusicPath && fs.existsSync(selectedMusicPath);
 
         const watermarkPath = path.resolve(__dirname, 'public', 'assets', 'logo.png');
         const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
-        const musicPath = path.resolve(__dirname, 'public', 'assets', 'thunder.mp3');
 
         const watermarkExists = fs.existsSync(watermarkPath);
         const outroExists = fs.existsSync(outroPath);
-        const musicExists = backgroundMusic && fs.existsSync(musicPath);
 
         let useWatermark = !(paidUser && removeWatermark) && watermarkExists;
         let addOutro = !removeWatermark && outroExists;
@@ -962,7 +994,8 @@ app.post('/api/generate-video', (req, res) => {
         // Log what's actually going to be used
         console.log(`[ASSET CHECK] Watermark: ${watermarkPath} (${watermarkExists && useWatermark})`);
         console.log(`[ASSET CHECK] Outro: ${outroPath} (${outroExists && addOutro})`);
-        console.log(`[ASSET CHECK] Music: ${musicPath} (${musicExists})`);
+        console.log(`[ASSET CHECK] Music: ${selectedMusicPath} (${musicExists})`);
+        console.log(`[INFO] Final rendering with combo: watermark=${useWatermark}, outro=${addOutro}, music=${musicExists}`);
 
         // === FFmpeg Input Order ===
         // 0: main (concatenated) video+audio (concatInputFile)
@@ -990,7 +1023,7 @@ app.post('/api/generate-video', (req, res) => {
         }
 
         if (musicExists) {
-          ffmpegArgs = ffmpegArgs.input(musicPath);
+          ffmpegArgs = ffmpegArgs.input(selectedMusicPath);
           musicIdx = nextInputIdx++;
         }
 
@@ -1018,6 +1051,12 @@ app.post('/api/generate-video', (req, res) => {
         }
 
         // Print the full filter graph for debugging
+        console.log('[FFMPEG][INPUT INDEX MAP]', {
+          concatInputFileIdx: inputIdx,
+          watermarkIdx,
+          outroIdx,
+          musicIdx
+        });
         console.log('[FFMPEG][FILTER GRAPH]', JSON.stringify(filterGraph, null, 2));
 
         await new Promise((resolve, reject) => {
@@ -1075,7 +1114,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
 
 
 

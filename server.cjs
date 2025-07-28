@@ -744,7 +744,7 @@ app.post('/api/generate-video', (req, res) => {
         removeWatermark = false,
         title = '',
         backgroundMusic = true,
-        musicMood = null // This should be passed from frontend/script analysis
+        musicMood = null
       } = req.body || {};
 
       console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark} | Music: ${backgroundMusic} | Mood: ${musicMood}`);
@@ -999,62 +999,52 @@ app.post('/api/generate-video', (req, res) => {
 
         // --- Build ffmpeg inputs and filter graph ---
         let ffmpegArgs = ffmpeg().input(concatInputFile);
-        let filterGraph = [];
-        let inputIdx = 0;
-        let nextInputIdx = 1;
-        let watermarkIdx = null;
-        let outroIdx = null;
-        let musicIdx = null;
+        let inputIdx = 0, idx = 1;
+        let watermarkIdx = null, outroIdx = null, musicIdx = null;
 
-        // Add watermark as input if used
         if (useWatermark) {
           ffmpegArgs = ffmpegArgs.input(watermarkPath);
-          watermarkIdx = nextInputIdx++;
+          watermarkIdx = idx++;
         }
-        // Add outro as input if used
         if (addOutro) {
           ffmpegArgs = ffmpegArgs.input(outroPath);
-          outroIdx = nextInputIdx++;
+          outroIdx = idx++;
         }
-        // Add music as input if used
         if (musicExists) {
           ffmpegArgs = ffmpegArgs.input(selectedMusicPath);
-          musicIdx = nextInputIdx++;
+          musicIdx = idx++;
         }
 
-        // 1. Watermark overlay (if used)
+        // FFmpeg filter logic
+        let filterGraph = [];
         let videoStream = `[${inputIdx}:v]`;
-        if (useWatermark) {
-          filterGraph.push(`[${inputIdx}:v][${watermarkIdx}:v]overlay=W-w-20:H-h-20[wmv]`);
-          videoStream = '[wmv]';
-        }
-        // 2. Music mix (if present)
         let audioStream = `[${inputIdx}:a]`;
+
+        // Watermark overlay (if enabled)
+        if (useWatermark) {
+          filterGraph.push(`${videoStream}[${watermarkIdx}:v]overlay=W-w-20:H-h-20[wm]`);
+          videoStream = '[wm]';
+        }
+
+        // Music mix (if present)
         if (musicExists) {
-          filterGraph.push(`[${inputIdx}:a][${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
+          filterGraph.push(`${audioStream}[${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
           audioStream = '[mixa]';
         }
 
-        // 3. Outro handling
+        // Concat outro (if present)
         if (addOutro) {
           filterGraph.push(`${videoStream}${audioStream}[${outroIdx}:v][${outroIdx}:a]concat=n=2:v=1:a=1[outv][outa]`);
         } else {
-          // **Do not use concat here!** Just map to outv/outa
           filterGraph.push(`${videoStream}copyv`, `${audioStream}copya`);
         }
 
-        // Print the full filter graph for debugging
-        console.log('[FFMPEG][INPUT INDEX MAP]', {
-          concatInputFileIdx: inputIdx,
-          watermarkIdx,
-          outroIdx,
-          musicIdx
-        });
+        // Print filter debug info
+        console.log('[FFMPEG][INPUT INDEX MAP]', { concatInputFileIdx: inputIdx, watermarkIdx, outroIdx, musicIdx });
         console.log('[FFMPEG][FILTER GRAPH]', JSON.stringify(filterGraph, null, 2));
 
-        // Final ffmpeg render step:
+        // Run ffmpeg
         if (addOutro) {
-          // Outro: use [outv][outa] from concat
           await new Promise((resolve, reject) => {
             ffmpegArgs
               .complexFilter(filterGraph, ['outv', 'outa'])
@@ -1064,7 +1054,6 @@ app.post('/api/generate-video', (req, res) => {
               .on('error', reject);
           });
         } else {
-          // No outro: map main video/audio to output
           await new Promise((resolve, reject) => {
             ffmpegArgs
               .complexFilter(filterGraph, ['copyv', 'copya'])

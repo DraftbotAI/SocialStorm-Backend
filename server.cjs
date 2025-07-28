@@ -929,28 +929,42 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[ASSET CHECK] Outro: ${outroPath} (${outroExists && addOutro})`);
         console.log(`[ASSET CHECK] Music: ${musicPath} (${musicExists})`);
 
-        // Dynamic input order
-        let inputCount = 1; // always at least [0] = concatFile
+        // Dynamic input order with explicit debug printout
+        let inputMap = [{ type: 'concatFile', path: concatFile }];
         let ffmpegArgs = ffmpeg().input(concatFile);
 
-        // These indexes will depend on what files exist and are to be used
-        let musicInputIndex = null;
-        let watermarkInputIndex = null;
-        let outroInputIndex = null;
+        if (musicExists) {
+          inputMap.push({ type: 'music', path: musicPath });
+          ffmpegArgs = ffmpegArgs.input(musicPath);
+        }
+        if (useWatermark) {
+          inputMap.push({ type: 'watermark', path: watermarkPath });
+          ffmpegArgs = ffmpegArgs.input(watermarkPath);
+        }
+        if (addOutro) {
+          inputMap.push({ type: 'outro', path: outroPath });
+          ffmpegArgs = ffmpegArgs.input(outroPath);
+        }
 
-        if (musicExists) { musicInputIndex = inputCount++; ffmpegArgs = ffmpegArgs.input(musicPath); }
-        if (useWatermark) { watermarkInputIndex = inputCount++; ffmpegArgs = ffmpegArgs.input(watermarkPath); }
-        if (addOutro) { outroInputIndex = inputCount++; ffmpegArgs = ffmpegArgs.input(outroPath); }
+        // Index map for building filter graph
+        const inputIndexes = {};
+        inputMap.forEach((v, i) => { inputIndexes[v.type] = i; });
 
-        // Build filter graph dynamically
+        // Print mapping for debug!
+        console.log('[FFMPEG][INPUTS]');
+        inputMap.forEach((inp, idx) => {
+          console.log(`  [${idx}] ${inp.type}: ${inp.path}`);
+        });
+
+        // Build filter graph dynamically (fully bulletproof)
         const filters = [];
         const outputs = ['outv', 'outa'];
-        let videoLabel = '[0:v]';
-        let audioLabel = '[0:a]';
+        let videoLabel = `[${inputIndexes.concatFile}:v]`;
+        let audioLabel = `[${inputIndexes.concatFile}:a]`;
 
         // Watermark overlay if present
         if (useWatermark) {
-          filters.push(`[${watermarkInputIndex}:v]scale=140:140[wm]`);
+          filters.push(`[${inputIndexes.watermark}:v]scale=140:140[wm]`);
           filters.push(`${videoLabel}[wm]overlay=W-w-20:H-h-20[mainv]`);
           videoLabel = '[mainv]';
         } else {
@@ -960,19 +974,22 @@ app.post('/api/generate-video', (req, res) => {
 
         // Music mix if present
         if (musicExists) {
-          filters.push(`[${musicInputIndex}:a]volume=0.25[music]`);
+          filters.push(`[${inputIndexes.music}:a]volume=0.25[music]`);
           filters.push(`${audioLabel}[music]amix=inputs=2:duration=first[aout]`);
           audioLabel = '[aout]';
         }
 
         // Outro concat if present
         if (addOutro) {
-          filters.push(`[${outroInputIndex}:v]copy[outv2]`);
-          filters.push(`[${outroInputIndex}:a]copy[outa2]`);
+          filters.push(`[${inputIndexes.outro}:v]copy[outv2]`);
+          filters.push(`[${inputIndexes.outro}:a]copy[outa2]`);
           filters.push(`${videoLabel}[outv2]${audioLabel}[outa2]concat=n=2:v=1:a=1[outv][outa]`);
         } else {
           filters.push(`${videoLabel}${audioLabel}copy[outv][outa]`);
         }
+
+        // Print the full filter graph for debugging
+        console.log('[FFMPEG][FILTER GRAPH]', JSON.stringify(filters, null, 2));
 
         await new Promise((resolve, reject) => {
           ffmpegArgs

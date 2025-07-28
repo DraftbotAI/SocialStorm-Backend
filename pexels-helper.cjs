@@ -2,7 +2,7 @@
    PEXELS HELPER – SocialStormAI
    -----------------------------------------------------------
    - Finds the best-matching video clip for a scene.
-   - DUMMY PATCH: Always returns local test.mp4 for all scenes.
+   - DUMMY PATCH: Always returns local outro.mp4 for all scenes.
    =========================================================== */
 
 const AWS = require('aws-sdk');
@@ -63,18 +63,18 @@ function normalize(str) {
 }
 
 // --- DUMMY MAIN MATCHER ---
-// This always returns your local test.mp4 for every scene.
+// This always returns your local outro.mp4 for every scene.
 async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client, usedClips = []) {
-  // Adjust this path if your test video is elsewhere!
-  const testClipPath = path.resolve(__dirname, 'public', 'assets', 'test.mp4');
+  // Always use outro.mp4 because you have it!
+  const testClipPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
   if (!fs.existsSync(testClipPath)) {
-    console.error(`[DUMMY MATCHER] test.mp4 not found at ${testClipPath}. Please add your test video!`);
+    console.error(`[DUMMY MATCHER] outro.mp4 not found at ${testClipPath}. Please add your test video!`);
     throw new Error('Test video file not found.');
   }
-  console.log(`[DUMMY MATCHER] Returning test.mp4 for scene ${idx + 1}`);
+  console.log(`[DUMMY MATCHER] Returning outro.mp4 for scene ${idx + 1}`);
   return {
     url: testClipPath,
-    file: 'test.mp4'
+    file: 'outro.mp4'
   };
 }
 

@@ -3,7 +3,7 @@
    -----------------------------------------------------------
    - Finds the best-matching video clip for a scene.
    - Search order: R2 > Pexels > Pixabay (fallback)
-   - Includes GPT-powered visual subject extraction.
+   - Includes GPT-powered visual subject extraction (optional).
    - Handles all download/streaming and normalization.
    =========================================================== */
 
@@ -19,10 +19,13 @@ const R2_ENDPOINT = process.env.R2_ENDPOINT; // e.g., https://[ACCOUNT_ID].r2.cl
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
 
-// -- Subject Extraction (Very Basic Visual Subject Picker. GPT can be plugged here) --
+/* -- Visual Subject Extraction -- 
+ * By default uses rule-based fallback; can upgrade to GPT-4.1.
+ * Plug your GPT helper here if available.
+ */
 function extractVisualSubject(line, title = '') {
-  // Replace with GPT if you want, for now use rules:
-  // Priority: look for famous landmark keywords, fallback to most proper-noun-like word
+  // Replace with GPT-4.1-powered extraction for best results!
+  // For now: Priority on famous landmarks; fallback to first proper noun.
   const famousLandmarks = [
     "statue of liberty", "eiffel tower", "taj mahal", "mount rushmore", "great wall of china",
     "disney", "vatican", "empire state building", "sphinx", "london bridge", "lincoln memorial",
@@ -31,16 +34,15 @@ function extractVisualSubject(line, title = '') {
 
   let text = `${line} ${title || ''}`.toLowerCase();
 
-  // Find any famous landmark keyword in the line
   for (let name of famousLandmarks) {
     if (text.includes(name)) return name;
   }
 
-  // Fallback: try to grab first capitalized word group
+  // Fallback: first capitalized group
   const match = line.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/);
   if (match) return match[1];
 
-  // Final fallback: use the title if nothing else
+  // Fallback: use title or whole line
   if (title) return title;
   return line;
 }
@@ -54,7 +56,6 @@ function normalize(str) {
 }
 
 // --- R2 CLIP MATCHING ---
-// List all objects (recursive, all subfolders)
 async function listAllFilesInR2(s3Client, prefix = '') {
   let files = [];
   let continuationToken = undefined;

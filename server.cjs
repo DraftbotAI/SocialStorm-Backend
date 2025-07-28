@@ -601,7 +601,7 @@ Tags: secrets landmarks mystery history viral
    SECTION 5: VIDEO GENERATION ENDPOINT
    -----------------------------------------------------------
    - POST /api/generate-video
-   - Handles script, voice, branding, watermark, outro, background music
+   - Handles script, voice, branding, outro, background music
    - Bulletproof file/dir safety; logs every step
    =========================================================== */
 
@@ -741,13 +741,13 @@ app.post('/api/generate-video', (req, res) => {
         script = '',
         voice = '',
         paidUser = false,
-        removeWatermark = false,
+        removeWatermark = false, // Not used anymore
         title = '',
         backgroundMusic = true,
-        musicMood = null
+        musicMood = null // This should be passed from frontend/script analysis
       } = req.body || {};
 
-      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Remove WM: ${removeWatermark} | Music: ${backgroundMusic} | Mood: ${musicMood}`);
+      console.log(`[STEP] Inputs parsed. Voice: ${voice} | Paid: ${paidUser} | Music: ${backgroundMusic} | Mood: ${musicMood}`);
       console.log(`[DEBUG] Raw script:\n${script}`);
 
       if (!script || !voice) {
@@ -972,7 +972,7 @@ app.post('/api/generate-video', (req, res) => {
         concatInputFile = concatWithAudioPath;
       }
 
-      // === Watermark, outro, music ===
+      // === Outro, music (NO WATERMARK) ===
       const finalPath = path.resolve(workDir, `final.mp4`);
       try {
         // === GPT-powered mood-based music selection ===
@@ -982,69 +982,62 @@ app.post('/api/generate-video', (req, res) => {
         }
         const musicExists = !!selectedMusicPath && fs.existsSync(selectedMusicPath);
 
-        const watermarkPath = path.resolve(__dirname, 'public', 'assets', 'logo.png');
         const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
-
-        const watermarkExists = fs.existsSync(watermarkPath);
         const outroExists = fs.existsSync(outroPath);
 
-        let useWatermark = !(paidUser && removeWatermark) && watermarkExists;
-        let addOutro = !removeWatermark && outroExists;
+        let addOutro = outroExists;
 
         // Log what's actually going to be used
-        console.log(`[ASSET CHECK] Watermark: ${watermarkPath} (${watermarkExists && useWatermark})`);
         console.log(`[ASSET CHECK] Outro: ${outroPath} (${outroExists && addOutro})`);
         console.log(`[ASSET CHECK] Music: ${selectedMusicPath} (${musicExists})`);
-        console.log(`[INFO] Final rendering with combo: watermark=${useWatermark}, outro=${addOutro}, music=${musicExists}`);
+        console.log(`[INFO] Final rendering with combo: outro=${addOutro}, music=${musicExists}`);
 
         // --- Build ffmpeg inputs and filter graph ---
         let ffmpegArgs = ffmpeg().input(concatInputFile);
-        let inputIdx = 0, idx = 1;
-        let watermarkIdx = null, outroIdx = null, musicIdx = null;
+        let filterGraph = [];
+        let inputIdx = 0;
+        let nextInputIdx = 1;
+        let outroIdx = null;
+        let musicIdx = null;
 
-        if (useWatermark) {
-          ffmpegArgs = ffmpegArgs.input(watermarkPath);
-          watermarkIdx = idx++;
-        }
+        // Add outro as input if used
         if (addOutro) {
           ffmpegArgs = ffmpegArgs.input(outroPath);
-          outroIdx = idx++;
+          outroIdx = nextInputIdx++;
         }
+        // Add music as input if used
         if (musicExists) {
           ffmpegArgs = ffmpegArgs.input(selectedMusicPath);
-          musicIdx = idx++;
+          musicIdx = nextInputIdx++;
         }
 
-        // FFmpeg filter logic
-        let filterGraph = [];
+        // 1. Music mix (if present)
         let videoStream = `[${inputIdx}:v]`;
         let audioStream = `[${inputIdx}:a]`;
-
-        // Watermark overlay (if enabled)
-        if (useWatermark) {
-          filterGraph.push(`${videoStream}[${watermarkIdx}:v]overlay=W-w-20:H-h-20[wm]`);
-          videoStream = '[wm]';
-        }
-
-        // Music mix (if present)
         if (musicExists) {
-          filterGraph.push(`${audioStream}[${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
+          filterGraph.push(`[${inputIdx}:a][${musicIdx}:a]amix=inputs=2:duration=first:dropout_transition=2[mixa]`);
           audioStream = '[mixa]';
         }
 
-        // Concat outro (if present)
+        // 2. Outro handling
         if (addOutro) {
           filterGraph.push(`${videoStream}${audioStream}[${outroIdx}:v][${outroIdx}:a]concat=n=2:v=1:a=1[outv][outa]`);
         } else {
+          // No outro: map main video/audio to output
           filterGraph.push(`${videoStream}copyv`, `${audioStream}copya`);
         }
 
-        // Print filter debug info
-        console.log('[FFMPEG][INPUT INDEX MAP]', { concatInputFileIdx: inputIdx, watermarkIdx, outroIdx, musicIdx });
+        // Print the full filter graph for debugging
+        console.log('[FFMPEG][INPUT INDEX MAP]', {
+          concatInputFileIdx: inputIdx,
+          outroIdx,
+          musicIdx
+        });
         console.log('[FFMPEG][FILTER GRAPH]', JSON.stringify(filterGraph, null, 2));
 
-        // Run ffmpeg
+        // Final ffmpeg render step:
         if (addOutro) {
+          // Outro: use [outv][outa] from concat
           await new Promise((resolve, reject) => {
             ffmpegArgs
               .complexFilter(filterGraph, ['outv', 'outa'])
@@ -1054,6 +1047,7 @@ app.post('/api/generate-video', (req, res) => {
               .on('error', reject);
           });
         } else {
+          // No outro: map main video/audio to output
           await new Promise((resolve, reject) => {
             ffmpegArgs
               .complexFilter(filterGraph, ['copyv', 'copya'])
@@ -1110,6 +1104,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

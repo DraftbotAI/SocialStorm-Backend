@@ -610,8 +610,8 @@ console.log('[INIT] Video generation endpoint initialized');
 // === GPT-4.1 Scene Subject Extractor Helper ===
 
 
+
 async function extractVisualSubject(line, scriptTopic = '') {
-  // You may want to rate limit this in production.
   const prompt = `Extract the main visual subject of this sentence for a video search. Return ONLY the real-world thing (object, person, landmark, or place), not generic words, not a verb, not a question, not a connector. If the sentence is abstract, return the most visually matchable noun or, if none exists, return the main script topic.
 
 Sentence: "${line}"
@@ -623,13 +623,12 @@ Strictly respond with only the subject, never the whole sentence or anything els
 
   try {
     const response = await openai.createChatCompletion({
-      model: "gpt-4o", // or "gpt-4-1106-preview"
+      model: "gpt-4o",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.2,
       max_tokens: 16
     });
     let subject = response.data.choices[0].message.content.trim();
-    // Sanity check for stopwords or non-visual junk:
     if (!subject || subject.length < 2 || ['what', 'and', 'but', 'the', 'this'].includes(subject.toLowerCase())) {
       subject = scriptTopic || 'history';
     }
@@ -637,7 +636,6 @@ Strictly respond with only the subject, never the whole sentence or anything els
     return subject;
   } catch (err) {
     console.error('[GPT SUBJECT ERROR]', err?.response?.data || err);
-    // Fallback to script topic or keyword extraction
     return scriptTopic || (line.split(' ').slice(0, 2).join(' '));
   }
 }
@@ -865,7 +863,6 @@ app.post('/api/generate-video', (req, res) => {
           clipUrl = sharedClipUrl;
         } else {
           try {
-            // ----- GPT-powered subject extraction -----
             const sceneSubject = await extractVisualSubject(sceneText, mainTopic);
             console.log(`[MATCH] Scene ${i + 1} subject: "${sceneSubject}"`);
             clipUrl = await findClipForScene(sceneSubject, i, scenes.map(s => s.text), mainTopic);
@@ -1041,17 +1038,57 @@ app.post('/api/generate-video', (req, res) => {
         }
       }
 
-      // === [OPTIONAL] Concatenate outro.mp4 as last scene ===
+      // === [BULLETPROOF OUTRO APPEND] ===
       const finalPath = path.resolve(workDir, 'final.mp4');
       const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
       const outroExists = fs.existsSync(outroPath);
       let doAddOutro = outroExists && !(paidUser && removeOutro);
 
+      // Ensure outro has audio and video, and matches resolution/codec
+      let patchedOutroPath = outroPath;
       if (doAddOutro) {
+        // 1. Ensure outro.mp4 has an audio stream (if not, add silence)
+        let outroNeedsPatch = false;
+        try {
+          const probe = await new Promise((resolve, reject) => {
+            ffmpeg.ffprobe(outroPath, (err, metadata) => {
+              if (err) reject(err);
+              resolve(metadata);
+            });
+          });
+          const hasVideo = (probe.streams || []).some(s => s.codec_type === 'video');
+          const hasAudio = (probe.streams || []).some(s => s.codec_type === 'audio');
+          if (!hasAudio) outroNeedsPatch = true;
+        } catch (err) {
+          outroNeedsPatch = true;
+        }
+        if (outroNeedsPatch) {
+          const outroFixed = path.resolve(workDir, 'outro-audiofix.mp4');
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input(outroPath)
+              .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+              .inputOptions(['-f lavfi'])
+              .outputOptions([
+                '-shortest',
+                '-c:v copy',
+                '-c:a aac',
+                '-y'
+              ])
+              .save(outroFixed)
+              .on('end', resolve)
+              .on('error', reject);
+          });
+          patchedOutroPath = outroFixed;
+        }
+      }
+
+      if (doAddOutro) {
+        // 2. Concat with outro, ensuring compatible codecs/containers
         const list2 = path.resolve(workDir, 'list2.txt');
         fs.writeFileSync(
           list2,
-          [`file '${concatWithMusicFile.replace(/'/g, "'\\''")}'`, `file '${outroPath.replace(/'/g, "'\\''")}'`].join('\n')
+          [`file '${concatWithMusicFile.replace(/'/g, "'\\''")}'`, `file '${patchedOutroPath.replace(/'/g, "'\\''")}'`].join('\n')
         );
         await new Promise((resolve, reject) => {
           ffmpeg()
@@ -1064,7 +1101,6 @@ app.post('/api/generate-video', (req, res) => {
         });
         console.log(`[FINAL] Outro appended, output: ${finalPath}`);
       } else {
-        // Just copy (rename) concatWithMusicFile to final.mp4
         fs.copyFileSync(concatWithMusicFile, finalPath);
         console.log(`[FINAL] No outro, output: ${finalPath}`);
       }
@@ -1110,7 +1146,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
 
 
 

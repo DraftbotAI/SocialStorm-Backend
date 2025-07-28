@@ -3,7 +3,8 @@
    -----------------------------------------------------------
    - Finds the best-matching video clip for a scene.
    - Search order: R2 > Pexels > Pixabay (fallback)
-   - Includes GPT-powered visual subject extraction (optional).
+   - GPT-powered visual subject extraction (async, bulletproof).
+   - Avoids duplicate clips within a video job.
    - Handles all download/streaming and normalization.
    =========================================================== */
 
@@ -13,38 +14,47 @@ const fs = require('fs');
 const path = require('path');
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 
+// GPT Subject Extraction
+const { Configuration, OpenAIApi } = require("openai");
+const openai = new OpenAIApi(new Configuration({
+  apiKey: process.env.OPENAI_API_KEY
+}));
+
 // ENV
 const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || 'socialstorm-library';
 const R2_ENDPOINT = process.env.R2_ENDPOINT; // e.g., https://[ACCOUNT_ID].r2.cloudflarestorage.com
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
 
-/* -- Visual Subject Extraction -- 
- * By default uses rule-based fallback; can upgrade to GPT-4.1.
- * Plug your GPT helper here if available.
- */
-function extractVisualSubject(line, title = '') {
-  // Replace with GPT-4.1-powered extraction for best results!
-  // For now: Priority on famous landmarks; fallback to first proper noun.
-  const famousLandmarks = [
-    "statue of liberty", "eiffel tower", "taj mahal", "mount rushmore", "great wall of china",
-    "disney", "vatican", "empire state building", "sphinx", "london bridge", "lincoln memorial",
-    "big ben", "colosseum", "golden gate bridge", "brooklyn bridge", "machu picchu"
-  ];
+// --- GPT-4 Scene Visual Subject Extraction ---
+async function extractVisualSubject(line, scriptTopic = '') {
+  const prompt = `Extract the main visual subject of this sentence for a video search. Return ONLY the real-world thing (object, person, landmark, or place), not generic words, not a verb, not a question, not a connector. If the sentence is abstract, return the most visually matchable noun or, if none exists, return the main script topic.
 
-  let text = `${line} ${title || ''}`.toLowerCase();
+Sentence: "${line}"
+Script Topic: "${scriptTopic}"
 
-  for (let name of famousLandmarks) {
-    if (text.includes(name)) return name;
+Return just the one best subject for visuals. Example answers: "Eiffel Tower", "Statue of Liberty", "Qutb Minar", "Taj Mahal", "Trevi Fountain", "Hidden chamber", "Disney World’s Cinderella Castle", "Mount Rushmore".
+
+Strictly respond with only the subject, never the whole sentence or anything else.`;
+
+  try {
+    const response = await openai.createChatCompletion({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 16
+    });
+    let subject = response.data.choices[0].message.content.trim();
+    if (!subject || subject.length < 2 || ['what', 'and', 'but', 'the', 'this'].includes(subject.toLowerCase())) {
+      subject = scriptTopic || 'history';
+    }
+    console.log(`[SUBJECT][GPT] For: "${line}" | Extracted subject: "${subject}"`);
+    return subject;
+  } catch (err) {
+    console.error('[GPT SUBJECT ERROR]', err?.response?.data || err);
+    // Fallback to script topic or keyword extraction
+    return scriptTopic || (line.split(' ').slice(0, 2).join(' '));
   }
-
-  // Fallback: first capitalized group
-  const match = line.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/);
-  if (match) return match[1];
-
-  // Fallback: use title or whole line
-  if (title) return title;
-  return line;
 }
 
 // --- Util: Normalize subject and filenames for matching ---
@@ -74,18 +84,17 @@ async function listAllFilesInR2(s3Client, prefix = '') {
   return files;
 }
 
-async function findClipInR2(subject, s3Client) {
+async function findClipInR2(subject, s3Client, usedClips = []) {
   if (!s3Client) throw new Error('[R2] s3Client not provided!');
   try {
     const files = await listAllFilesInR2(s3Client, '');
     const normQuery = normalize(subject);
     console.log(`[R2] Looking for: "${subject}" → normalized: "${normQuery}" in ${files.length} files`);
 
-    // Match: look for subject keywords in file/folder names
     let best = null;
     for (let file of files) {
       const normFile = normalize(file);
-      if (normFile.includes(normQuery)) {
+      if (normFile.includes(normQuery) && !usedClips.includes(file)) {
         best = file;
         break;
       }
@@ -95,7 +104,7 @@ async function findClipInR2(subject, s3Client) {
       const words = subject.split(/\s+/).map(normalize);
       for (let file of files) {
         const normFile = normalize(file);
-        if (words.every(w => normFile.includes(w))) {
+        if (words.every(w => normFile.includes(w)) && !usedClips.includes(file)) {
           best = file;
           break;
         }
@@ -103,10 +112,9 @@ async function findClipInR2(subject, s3Client) {
     }
     if (best) {
       console.log(`[R2] Found match: ${best}`);
-      // Compose the direct public URL (assuming bucket public or via R2 gateway)
       let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
       url += `${R2_LIBRARY_BUCKET}/${best}`;
-      return url;
+      return { url, file };
     }
     console.log('[R2] No match found for:', subject);
     return null;
@@ -117,7 +125,7 @@ async function findClipInR2(subject, s3Client) {
 }
 
 // --- PEXELS FALLBACK ---
-async function findClipInPexels(subject) {
+async function findClipInPexels(subject, usedClips = []) {
   if (!PEXELS_API_KEY) {
     console.warn('[PEXELS] No API key set.');
     return null;
@@ -127,12 +135,14 @@ async function findClipInPexels(subject) {
     const url = `https://api.pexels.com/videos/search?query=${query}&per_page=5`;
     const resp = await axios.get(url, { headers: { Authorization: PEXELS_API_KEY } });
     if (resp.data && resp.data.videos && resp.data.videos.length > 0) {
-      // Pick the highest quality clip from results
       const sorted = resp.data.videos.sort((a, b) => (b.width * b.height) - (a.width * a.height));
-      const bestClip = sorted[0];
-      const fileLink = bestClip.video_files.find(f => f.quality === 'hd') || bestClip.video_files[0];
-      console.log('[PEXELS] Clip found:', fileLink.link);
-      return fileLink.link;
+      for (let bestClip of sorted) {
+        const fileLink = bestClip.video_files.find(f => f.quality === 'hd') || bestClip.video_files[0];
+        if (fileLink && !usedClips.includes(fileLink.link)) {
+          console.log('[PEXELS] Clip found:', fileLink.link);
+          return { url: fileLink.link, file: fileLink.link };
+        }
+      }
     }
     console.log('[PEXELS] No match found for:', subject);
     return null;
@@ -143,7 +153,7 @@ async function findClipInPexels(subject) {
 }
 
 // --- PIXABAY FALLBACK ---
-async function findClipInPixabay(subject) {
+async function findClipInPixabay(subject, usedClips = []) {
   if (!PIXABAY_API_KEY) {
     console.warn('[PIXABAY] No API key set.');
     return null;
@@ -153,10 +163,14 @@ async function findClipInPixabay(subject) {
     const url = `https://pixabay.com/api/videos/?key=${PIXABAY_API_KEY}&q=${query}&per_page=5`;
     const resp = await axios.get(url);
     if (resp.data && resp.data.hits && resp.data.hits.length > 0) {
-      // Pick the highest quality video
-      const best = resp.data.hits.sort((a, b) => (b.videos.large.width * b.videos.large.height) - (a.videos.large.width * a.videos.large.height))[0];
-      console.log('[PIXABAY] Clip found:', best.videos.large.url);
-      return best.videos.large.url;
+      const sorted = resp.data.hits.sort((a, b) => (b.videos.large.width * b.videos.large.height) - (a.videos.large.width * a.videos.large.height));
+      for (let best of sorted) {
+        const clipUrl = best.videos.large.url;
+        if (clipUrl && !usedClips.includes(clipUrl)) {
+          console.log('[PIXABAY] Clip found:', clipUrl);
+          return { url: clipUrl, file: clipUrl };
+        }
+      }
     }
     console.log('[PIXABAY] No match found for:', subject);
     return null;
@@ -167,24 +181,24 @@ async function findClipInPixabay(subject) {
 }
 
 // --- MAIN MATCHER: R2 → PEXELS → PIXABAY ---
-async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client) {
-  // 1. Extract main visual subject
-  const subject = extractVisualSubject(sceneText, title || '');
+async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client, usedClips = []) {
+  // 1. Extract main visual subject using GPT-4
+  const subject = await extractVisualSubject(sceneText, title || '');
   console.log(`[MATCH] Scene ${idx + 1} subject: "${subject}"`);
 
-  // 2. Try R2 first (deep search)
+  // 2. Try R2 first (deep search, skip used)
   if (s3Client) {
-    const r2Url = await findClipInR2(subject, s3Client);
-    if (r2Url) return r2Url;
+    const r2 = await findClipInR2(subject, s3Client, usedClips);
+    if (r2) return r2;
   }
 
-  // 3. Try Pexels
-  const pexelsUrl = await findClipInPexels(subject);
-  if (pexelsUrl) return pexelsUrl;
+  // 3. Try Pexels (skip used)
+  const pexels = await findClipInPexels(subject, usedClips);
+  if (pexels) return pexels;
 
-  // 4. Try Pixabay
-  const pixabayUrl = await findClipInPixabay(subject);
-  if (pixabayUrl) return pixabayUrl;
+  // 4. Try Pixabay (skip used)
+  const pixabay = await findClipInPixabay(subject, usedClips);
+  if (pixabay) return pixabay;
 
   return null;
 }
@@ -195,7 +209,6 @@ async function downloadRemoteFileToLocal(url, outPath) {
     if (!url) throw new Error('No URL provided to download.');
     console.log('[DL] Downloading remote file:', url, '→', outPath);
 
-    // If already downloaded, skip (optional)
     if (fs.existsSync(outPath)) {
       console.log('[DL] File already exists, skipping:', outPath);
       return;
@@ -206,7 +219,7 @@ async function downloadRemoteFileToLocal(url, outPath) {
       url,
       method: 'GET',
       responseType: 'stream',
-      timeout: 60000 // 60 sec timeout
+      timeout: 60000
     });
 
     await new Promise((resolve, reject) => {
@@ -226,7 +239,6 @@ async function downloadRemoteFileToLocal(url, outPath) {
       });
     });
 
-    // Double-check file written
     if (!fs.existsSync(outPath)) {
       throw new Error('[DL] File not written after download: ' + outPath);
     }
@@ -250,7 +262,7 @@ function splitScriptToScenes(script) {
 }
 
 module.exports = {
-  findClipForScene,
+  findClipForScene, // now returns { url, file }
   splitScriptToScenes,
   downloadRemoteFileToLocal
 };

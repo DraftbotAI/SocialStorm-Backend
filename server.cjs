@@ -396,14 +396,7 @@ Tags: secrets landmarks mystery history viral
 
 console.log('[INIT] Video generation endpoint initialized');
 
-// ==== ALL NEEDED IMPORTS (ensure these are declared globally if using split files) ====
-const fs = require('fs');
-const path = require('path');
-const axios = require('axios');
-const ffmpeg = require('fluent-ffmpeg');
-const AWS = require('aws-sdk');
-const { v4: uuidv4 } = require('uuid');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
 
 // === DUMMY/EXAMPLE HELPERS & CONSTANTS (Replace with your real logic) ===
 const cleanupJob = (jobId) => { /* Clean temp files, progress, etc */ };

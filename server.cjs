@@ -375,172 +375,25 @@ Tags: secrets landmarks mystery history viral
 
 console.log('[INIT] Video generation endpoint initialized');
 
-// === Helper: Download remote file to local disk (uses axios) ===
-const downloadRemoteFileToLocal = async (url, outPath) => {
-  const writer = fs.createWriteStream(outPath);
-  try {
-    const response = await axios({
-      url,
-      method: 'GET',
-      responseType: 'stream',
-      timeout: 90000,
-    });
-    response.data.pipe(writer);
-    await new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
-    if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 2048) {
-      throw new Error(`Downloaded file missing or too small: ${outPath}`);
-    }
-    return outPath;
-  } catch (err) {
-    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
-    throw new Error(`Failed to download remote file: ${url} => ${err.message}`);
-  }
-};
-
-// === Helper: Get audio duration in seconds using ffprobe ===
-const getAudioDuration = (audioPath) => {
+// Helper: Get audio duration in seconds
+async function getAudioDuration(audioPath) {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(audioPath, (err, metadata) => {
       if (err) return reject(err);
       resolve(metadata.format.duration);
     });
   });
-};
+}
 
-// === Helper: Get video info (codec, size, pix_fmt, streams, duration) ===
-const getVideoInfo = (filePath) => {
+// Helper: Get video info for stream matching/debugging
+async function getVideoInfo(filePath) {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) return reject(err);
       resolve(metadata);
     });
   });
-};
-
-// === Helper: Standardize video (codec, pix_fmt, size, audio stream) ===
-const standardizeVideo = async (inputPath, outputPath, refInfo) => {
-  return new Promise((resolve, reject) => {
-    let cmd = ffmpeg().input(inputPath);
-    cmd = cmd.outputOptions([
-      `-vf scale=${refInfo.width}:${refInfo.height}`,
-      '-c:v libx264',
-      '-pix_fmt yuv420p',
-      '-c:a aac',
-      '-ar 44100',
-      '-b:a 128k',
-      '-movflags +faststart',
-      '-y'
-    ]);
-    cmd.save(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', reject);
-  });
-};
-
-// === Helper: Trim video to [duration] seconds (NO -af anullsrc, just trims and copies audio) ===
-const trimVideo = (inPath, outPath, duration, seek = 0) => {
-  return new Promise((resolve, reject) => {
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    const ffmpegArgs = [
-      '-ss', String(seek),
-      '-i', path.resolve(inPath),
-      '-t', String(duration),
-      '-c:v', 'libx264',
-      '-an',
-      '-avoid_negative_ts', 'make_zero',
-      '-y',
-      path.resolve(outPath)
-    ];
-    console.log(`[FFMPEG][TRIM] ffmpeg ${ffmpegArgs.join(' ')}`);
-    const ff = require('child_process').spawn('ffmpeg', ffmpegArgs);
-    ff.stderr.on('data', d => process.stderr.write(d));
-    ff.on('exit', (code) => {
-      if (code === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-        resolve(outPath);
-      } else {
-        reject(new Error(`FFmpeg trim failed, exit code ${code}`));
-      }
-    });
-  });
-};
-
-// === Helper: Add a silent AAC audio track (always remux video with silence) ===
-const addSilentAudioTrack = (inPath, outPath, duration) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(inPath)
-      .input('anullsrc=channel_layout=stereo:sample_rate=44100')
-      .inputOptions(['-f lavfi'])
-      .outputOptions([
-        '-t', String(duration),
-        '-c:v copy',
-        '-c:a aac',
-        '-shortest',
-        '-y'
-      ])
-      .save(outPath)
-      .on('end', () => resolve(outPath))
-      .on('error', reject);
-  });
-};
-
-// === Helper: Replace video’s audio with narration (no mix, narration only) ===
-const muxVideoWithNarration = (videoWithSilence, narrationPath, outPath, duration) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(videoWithSilence)
-      .input(narrationPath)
-      .outputOptions([
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-shortest',
-        '-t', String(duration),
-        '-y'
-      ])
-      .save(outPath)
-      .on('end', () => {
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-          resolve(outPath);
-        } else {
-          reject(new Error('muxVideoWithNarration produced no output'));
-        }
-      })
-      .on('error', reject);
-  });
-};
-
-// === Helper: Select music file by mood (folder-based), returns full path or null ===
-const pickMusicForMood = (mood = null) => {
-  try {
-    const musicRoot = path.resolve(__dirname, 'public', 'assets', 'music_library');
-    if (!mood) {
-      console.warn('[MUSIC] No mood provided, skipping music selection.');
-      return null;
-    }
-    const moodFolder = path.join(musicRoot, mood);
-    if (!fs.existsSync(moodFolder) || !fs.statSync(moodFolder).isDirectory()) {
-      console.warn(`[MUSIC] Mood folder does not exist: ${moodFolder}`);
-      return null;
-    }
-    const candidates = fs.readdirSync(moodFolder).filter(f => f.endsWith('.mp3'));
-    if (!candidates.length) {
-      console.warn(`[MUSIC] No mp3 files found in mood folder: ${moodFolder}`);
-      return null;
-    }
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    const chosenPath = path.join(moodFolder, pick);
-    console.log(`[MUSIC] Picked "${pick}" for mood "${mood}" from: ${moodFolder}`);
-    return chosenPath;
-  } catch (err) {
-    console.error('[MUSIC] Error picking mood-based music:', err);
-    return null;
-  }
-};
+}
 
 // --- Amazon Polly TTS ---
 async function generatePollyTTS(text, voiceId, outPath) {
@@ -581,11 +434,139 @@ async function generateSceneAudio(sceneText, voiceId, outPath, provider) {
   }
 }
 
-// --- PATCHED: Dummy extractVisualSubject so backend cannot crash ---
+// --- Add silent audio track to video (always add, even if audio is present) ---
+async function addSilentAudioTrack(inPath, outPath, duration) {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(inPath)
+      .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+      .inputOptions(['-f lavfi'])
+      .outputOptions([
+        '-t', String(duration),
+        '-c:v copy',
+        '-c:a aac',
+        '-shortest',
+        '-y'
+      ])
+      .save(outPath)
+      .on('end', () => resolve(outPath))
+      .on('error', reject);
+  });
+}
+
+// --- Mux (replace) video’s audio with narration (no mix, narration only) ---
+async function muxVideoWithNarration(videoWithSilence, narrationPath, outPath, duration) {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(videoWithSilence)
+      .input(narrationPath)
+      .outputOptions([
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-shortest',
+        '-t', String(duration),
+        '-y'
+      ])
+      .save(outPath)
+      .on('end', () => {
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+          resolve(outPath);
+        } else {
+          reject(new Error('muxVideoWithNarration produced no output'));
+        }
+      })
+      .on('error', reject);
+  });
+}
+
+// --- Standardize video to match reference (codec, pix_fmt, size, audio) ---
+async function standardizeVideo(inputPath, outputPath, refInfo) {
+  return new Promise((resolve, reject) => {
+    let cmd = ffmpeg().input(inputPath);
+    cmd = cmd.outputOptions([
+      `-vf scale=${refInfo.width}:${refInfo.height}`,
+      '-c:v libx264',
+      '-pix_fmt yuv420p',
+      '-c:a aac',
+      '-ar 44100',
+      '-b:a 128k',
+      '-movflags +faststart',
+      '-y'
+    ]);
+    cmd.save(outputPath)
+      .on('end', () => resolve(outputPath))
+      .on('error', reject);
+  });
+}
+
+// --- Trim video to duration (uses -ss/-t) ---
+async function trimVideo(inPath, outPath, duration, seek = 0) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    const ffmpegArgs = [
+      '-ss', String(seek),
+      '-i', path.resolve(inPath),
+      '-t', String(duration),
+      '-c:v', 'libx264',
+      '-an',
+      '-avoid_negative_ts', 'make_zero',
+      '-y',
+      path.resolve(outPath)
+    ];
+    console.log(`[FFMPEG][TRIM] ffmpeg ${ffmpegArgs.join(' ')}`);
+    const ff = require('child_process').spawn('ffmpeg', ffmpegArgs);
+    ff.stderr.on('data', d => process.stderr.write(d));
+    ff.on('exit', (code) => {
+      if (code === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+        resolve(outPath);
+      } else {
+        reject(new Error(`FFmpeg trim failed, exit code ${code}`));
+      }
+    });
+  });
+}
+
+// --- Download remote file to local disk (uses axios) ---
+async function downloadRemoteFileToLocal(url, outPath) {
+  const writer = fs.createWriteStream(outPath);
+  try {
+    const response = await axios({
+      url,
+      method: 'GET',
+      responseType: 'stream',
+      timeout: 90000,
+    });
+    response.data.pipe(writer);
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+    if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 2048) {
+      throw new Error(`Downloaded file missing or too small: ${outPath}`);
+    }
+    return outPath;
+  } catch (err) {
+    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    throw new Error(`Failed to download remote file: ${url} => ${err.message}`);
+  }
+}
+
+// --- Dummy visual subject extractor (replace with GPT logic if needed) ---
 async function extractVisualSubject(line, scriptTopic = '') {
   return line;
 }
 
+// --- Pick music for mood (stub for now) ---
+function pickMusicForMood(mood = null) {
+  // Your music selection logic here, or return null
+  return null;
+}
+
+// ========================
+// Main Video Generation Endpoint
+// ========================
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
   const jobId = uuidv4();
@@ -750,6 +731,7 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
+        // *** Always add silent audio track (even if already present) ***
         try {
           await addSilentAudioTrack(trimmedVideoPath, videoWithSilence, sceneDuration);
           if (!fs.existsSync(videoWithSilence) || fs.statSync(videoWithSilence).size < 10240) {
@@ -815,6 +797,16 @@ app.post('/api/generate-video', (req, res) => {
           console.error(`[ERR] Bulletproof check failed for scene ${i + 1}`, err);
           progress[jobId] = { percent: 100, status: `Failed: Scene video validation error (${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
+        }
+      }
+
+      // === [EXTRA] Print all stream info before concat ===
+      for (let i = 0; i < sceneFiles.length; i++) {
+        try {
+          const info = await getVideoInfo(sceneFiles[i]);
+          console.log(`[DEBUG][SCENE FILE ${i+1}]`, JSON.stringify(info, null, 2));
+        } catch (e) {
+          console.log(`[DEBUG][SCENE FILE ${i+1}] PROBE ERROR`, e);
         }
       }
 
@@ -1007,6 +999,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

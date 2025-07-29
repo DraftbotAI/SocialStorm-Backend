@@ -407,23 +407,8 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 // === DUMMY/EXAMPLE HELPERS & CONSTANTS (Replace with your real logic) ===
 const cleanupJob = (jobId) => { /* Clean temp files, progress, etc */ };
-const progress = {};
-const POLLY_VOICE_IDS = [
-  'Matthew', 'Joanna', 'Joey', 'Brian', 'Kimberly', 'Salli', 'Russell', 'Amy'
-];
-const voices = [
-  { id: 'Matthew', provider: 'polly' },
-  { id: 'Joanna', provider: 'polly' },
-  // ...add your other voices here
-];
-const s3Client = new S3Client({
-  endpoint: process.env.R2_ENDPOINT,
-  region: 'auto',
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-});
+
+
 function splitScriptToScenes(script) {
   // Replace with your actual scene splitting logic!
   return script
@@ -1125,6 +1110,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

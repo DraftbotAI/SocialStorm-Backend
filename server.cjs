@@ -539,6 +539,7 @@ const pickMusicForMood = (mood = null) => {
 
 // --- Amazon Polly TTS ---
 async function generatePollyTTS(text, voiceId, outPath) {
+  // Real implementation
   const polly = new AWS.Polly();
   const params = {
     OutputFormat: 'mp3',
@@ -551,17 +552,17 @@ async function generatePollyTTS(text, voiceId, outPath) {
   console.log(`[POLLY] Generated TTS audio: ${outPath}`);
 }
 
-// --- Google TTS (stub) ---
+// --- Google TTS (stub, safe and clear error) ---
 async function generateGoogleTTS(text, voiceId, outPath) {
   throw new Error('Google TTS not implemented');
 }
 
-// --- ElevenLabs TTS (stub) ---
+// --- ElevenLabs TTS (stub, safe and clear error) ---
 async function generateElevenLabsTTS(text, voiceId, outPath) {
   throw new Error('ElevenLabs TTS not implemented');
 }
 
-// --- FULL DEFINITION: Generate scene audio for all TTS providers ---
+// --- Generate scene audio for all TTS providers ---
 async function generateSceneAudio(sceneText, voiceId, outPath, provider) {
   if (!provider) throw new Error("No TTS provider specified");
   if (!sceneText || !voiceId || !outPath) throw new Error("Missing input for generateSceneAudio");
@@ -1002,7 +1003,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
 
 
 

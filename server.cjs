@@ -768,17 +768,6 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[SCENE] Finished processing scene ${i + 1}/${scenes.length}.`);
       }
 
-      // ... rest of function unchanged ...
-      // If you want the rest (concat, music, outro, upload, etc), just say "continue" again!
-
-    } catch (err) {
-      console.error(`[CRASH] Fatal video generation error`, err);
-      progress[jobId] = { percent: 100, status: 'Failed: Crash' };
-      cleanupJob(jobId); clearTimeout(watchdog);
-    }
-  })();
-});
-
       // === BULLETPROOF: Validate and standardize all scenes before concat ===
       let refInfo = null;
       try {
@@ -1020,26 +1009,6 @@ app.post('/api/generate-video', (req, res) => {
 
 // ===================== UTILITY & VIDEO HELPER FUNCTIONS (God-Tier Logging) =====================
 
-// Get audio duration in seconds using ffprobe
-async function getAudioDuration(audioPath) {
-  console.log(`[UTIL] Getting audio duration for: ${audioPath}`);
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(audioPath, (err, metadata) => {
-      if (err) {
-        console.error(`[ERR] ffprobe failed for audio duration: ${audioPath}`, err);
-        return reject(err);
-      }
-      const duration = metadata?.format?.duration;
-      if (!duration || duration <= 0) {
-        console.error(`[ERR] Invalid or missing duration from ffprobe: ${audioPath}`, metadata);
-        return reject(new Error("Audio duration missing or zero"));
-      }
-      console.log(`[UTIL] Audio duration for ${audioPath}: ${duration}s`);
-      resolve(duration);
-    });
-  });
-}
-
 // Trim video to a given duration (with logging)
 async function trimVideo(inPath, outPath, duration, seek = 0) {
   console.log(`[UTIL] Trimming video: ${inPath} → ${outPath} | duration=${duration} | seek=${seek}`);
@@ -1187,9 +1156,11 @@ function pickMusicForMood(mood) {
   return null;
 }
 
+
 // END OF SECTION 5
 
-// (Section 6, Section 7, Section 8, Section 9 remain as in your previous code)/* ===========================================================
+
+/* ===========================================================
    SECTION 6: THUMBNAIL GENERATION ENDPOINT
    -----------------------------------------------------------
    - POST /api/generate-thumbnails
@@ -1209,121 +1180,84 @@ if (fs.existsSync(fontPath)) {
   console.warn('[FONT] LuckiestGuy font missing:', fontPath);
 }
 
+// Utility: Generate one thumbnail as a buffer
+async function generateSingleThumbnail({ caption, topic, templateIndex = 0 }) {
+  try {
+    const width = 1080, height = 1920;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    // Background
+    ctx.fillStyle = "#00e0fe";
+    ctx.fillRect(0, 0, width, height);
+
+    // Overlay image template (can expand with real template logic)
+    ctx.fillStyle = "#fff";
+    ctx.globalAlpha = 0.08 + 0.1 * (templateIndex % 3);
+    ctx.fillRect(40, 180, width - 80, height - 400);
+    ctx.globalAlpha = 1.0;
+
+    // Topic
+    ctx.font = 'bold 88px LuckiestGuy, Arial';
+    ctx.fillStyle = "#0a2342";
+    ctx.fillText(topic, 70, 300);
+
+    // Caption
+    ctx.font = 'bold 110px LuckiestGuy, Arial';
+    ctx.fillStyle = "#00b3c4";
+    ctx.fillText(caption, 70, 490);
+
+    // Watermark (bottom right)
+    ctx.font = '32px Arial';
+    ctx.fillStyle = "#10141a";
+    ctx.globalAlpha = 0.23;
+    ctx.fillText('SocialStormAI.com', width - 470, height - 60);
+    ctx.globalAlpha = 1.0;
+
+    // Return image as buffer (jpeg)
+    return canvas.toBuffer('image/jpeg', { quality: 0.93 });
+  } catch (err) {
+    console.error(`[ERR][THUMBNAIL] Failed to generate thumbnail`, err);
+    throw err;
+  }
+}
+
+// Endpoint: /api/generate-thumbnails
 app.post('/api/generate-thumbnails', async (req, res) => {
   console.log('[REQ] POST /api/generate-thumbnails');
   try {
-    const { topic = '', caption = '' } = req.body;
-    console.log('[INPUT] topic:', topic, '| caption:', caption);
-
-    let label = (caption && caption.length > 2) ? caption : topic;
-    if (!label || label.length < 2) {
-      console.warn('[WARN] Missing topic or caption. User must enter at least 2 chars.');
-      return res.json({ success: false, error: "Enter a topic or caption." });
+    const { caption = '', topic = '' } = req.body || {};
+    if (!caption || !topic) {
+      console.warn('[ERR][THUMBNAIL] Missing caption or topic');
+      return res.status(400).json({ success: false, error: "Missing caption or topic" });
     }
+    console.log(`[THUMBNAIL] Generating pack for: caption="${caption}", topic="${topic}"`);
 
-    const baseThumbsDir = path.join(__dirname, 'frontend', 'assets', 'thumbnail_templates');
-    console.log('[DIR] Loading template dir:', baseThumbsDir);
-
-    let allTemplates = [];
-    try {
-      allTemplates = fs.readdirSync(baseThumbsDir)
-        .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
-        .map(f => path.join(baseThumbsDir, f));
-      console.log('[DIR] Found', allTemplates.length, 'thumbnail template files.');
-    } catch (err) {
-      console.error('[ERR] Could not read thumbnail templates dir:', err);
-      return res.json({ success: false, error: "Template dir missing or unreadable." });
-    }
-    const templateFiles = allTemplates.filter(f => fs.statSync(f).isFile());
-    console.log('[DIR] Usable template files:', templateFiles.length);
-
-    let picks = [];
+    // Generate 10 thumbnails with minor variation
+    const thumbs = [];
     for (let i = 0; i < 10; i++) {
-      picks.push(templateFiles[i % templateFiles.length]);
-    }
-    console.log('[PICK] Template picks for batch:', picks);
-
-    let previews = [];
-    for (let i = 0; i < 10; i++) {
-      const canvas = createCanvas(480, 270); // 16:9
-      const ctx = canvas.getContext('2d');
-      try {
-        if (fs.existsSync(picks[i])) {
-          const bgImg = await loadImage(picks[i]);
-          ctx.drawImage(bgImg, 0, 0, 480, 270);
-        } else {
-          ctx.fillStyle = '#10141a';
-          ctx.fillRect(0, 0, 480, 270);
-        }
-      } catch (err) {
-        console.error(`[ERR] Could not load background image for thumb #${i + 1}:`, err);
-        ctx.fillStyle = '#10141a';
-        ctx.fillRect(0, 0, 480, 270);
-      }
-      ctx.font = `bold 48px 'LuckiestGuy', Arial, sans-serif`;
-      ctx.fillStyle = '#fff';
-      ctx.textAlign = 'center';
-      ctx.shadowColor = '#00e0fe';
-      ctx.shadowBlur = 12;
-      ctx.fillText(label, 240, 148, 420);
-
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 0.32;
-      ctx.font = 'bold 34px Arial, sans-serif';
-      ctx.fillStyle = '#00e0fe';
-      ctx.fillText('SOCIALSTORM.AI', 240, 265, 470);
-      ctx.globalAlpha = 1.0;
-
-      const dataUrl = canvas.toDataURL('image/png');
-      previews.push({ idx: i + 1, dataUrl });
-      console.log(`[PREVIEW] Generated preview ${i + 1}/10`);
+      thumbs.push(await generateSingleThumbnail({ caption, topic, templateIndex: i }));
     }
 
-    console.log('[ZIP] Creating ZIP of thumbnails...');
+    // Package into a zip
     const zip = new JSZip();
-    for (let i = 0; i < previews.length; i++) {
-      const canvas = createCanvas(480, 270);
-      const ctx = canvas.getContext('2d');
-      try {
-        if (fs.existsSync(picks[i])) {
-          const bgImg = await loadImage(picks[i]);
-          ctx.drawImage(bgImg, 0, 0, 480, 270);
-        } else {
-          ctx.fillStyle = '#10141a';
-          ctx.fillRect(0, 0, 480, 270);
-        }
-      } catch (err) {
-        console.error(`[ERR] Could not load bg for ZIP thumb #${i + 1}:`, err);
-        ctx.fillStyle = '#10141a';
-        ctx.fillRect(0, 0, 480, 270);
-      }
-      ctx.font = `bold 48px 'LuckiestGuy', Arial, sans-serif`;
-      ctx.fillStyle = '#fff';
-      ctx.textAlign = 'center';
-      ctx.shadowColor = '#00e0fe';
-      ctx.shadowBlur = 12;
-      ctx.fillText(label, 240, 148, 420);
-
-      zip.file(`SocialStorm-thumbnail-${i + 1}.png`, canvas.toBuffer('image/png'));
-      console.log(`[ZIP] Added thumbnail ${i + 1}/10 to ZIP`);
-    }
-    const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
-    const zipName = `thumbs_${uuidv4()}.zip`;
-    const zipPath = path.join(JOBS_DIR, zipName);
-    fs.writeFileSync(zipPath, zipBuf);
-    console.log('[ZIP] Wrote ZIP to', zipPath);
-
-    res.json({
-      success: true,
-      previews,
-      zip: `/download/thumbs/${zipName}`
+    thumbs.forEach((buf, i) => {
+      zip.file(`thumbnail_${i + 1}.jpg`, buf);
     });
-    console.log('[DONE] Thumbnail generation and ZIP done.');
+
+    const zipBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="thumbnails.zip"');
+    console.log('[THUMBNAIL] ZIP pack ready, sending...');
+    res.end(zipBuf);
+
   } catch (err) {
-    console.error('[ERROR] /api/generate-thumbnails:', err);
-    res.json({ success: false, error: "Failed to generate thumbnails." });
+    console.error('[ERR][THUMBNAIL] Endpoint error:', err);
+    res.status(500).json({ success: false, error: 'Failed to generate thumbnails' });
   }
 });
+
+
 
 
 /* ===========================================================

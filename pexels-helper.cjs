@@ -5,6 +5,7 @@
    - Search order: R2 > Pexels > Pixabay (fallback)
    - Improved visual subject extraction (no AI, just rules)
    - Handles all download/streaming and normalization.
+   - **MAXIMUM LOGGING IN EVERY FUNCTION**
    =========================================================== */
 
 const AWS = require('aws-sdk');
@@ -21,7 +22,7 @@ const PIXABAY_API_KEY = process.env.PIXABAY_API_KEY;
 
 // --- IMPROVED Visual Subject Picker (Rule-Based, No AI) ---
 function extractVisualSubject(line, title = '') {
-  // Step 1: Prioritize famous landmarks or objects
+  console.log(`[EXTRACT] Starting extractVisualSubject | line="${line}" | title="${title}"`);
   const famousSubjects = [
     "statue of liberty", "eiffel tower", "taj mahal", "mount rushmore", "great wall of china",
     "disney", "vatican", "empire state building", "sphinx", "london bridge", "lincoln memorial",
@@ -30,72 +31,104 @@ function extractVisualSubject(line, title = '') {
   ];
 
   let text = `${line} ${title || ''}`.toLowerCase();
-
   for (let name of famousSubjects) {
-    if (text.includes(name)) return name;
+    if (text.includes(name)) {
+      console.log(`[EXTRACT] Matched famous subject: "${name}"`);
+      return name;
+    }
   }
 
-  // Step 2: Look for capitalized multi-word "proper noun" phrase (e.g., "Empire State Building")
   const proper = line.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/);
-  if (proper) return proper[1];
+  if (proper) {
+    console.log(`[EXTRACT] Matched proper noun: "${proper[1]}"`);
+    return proper[1];
+  }
 
-  // Step 3: Look for a single capitalized word (often a place/object)
   const capWord = line.match(/\b([A-Z][a-z]+)\b/);
-  if (capWord) return capWord[1];
+  if (capWord) {
+    console.log(`[EXTRACT] Matched single capitalized word: "${capWord[1]}"`);
+    return capWord[1];
+  }
 
-  // Step 4: Look for the last noun-like word (simple: last word longer than 3 letters)
   const words = line.split(/\s+/).filter(Boolean);
   for (let i = words.length - 1; i >= 0; i--) {
     if (words[i].length > 3 && /^[a-zA-Z]+$/.test(words[i])) {
+      console.log(`[EXTRACT] Fallback: using last noun-like word: "${words[i]}"`);
       return words[i];
     }
   }
 
-  // Step 5: Fallback to title or whole line
-  if (title) return title;
+  if (title) {
+    console.log(`[EXTRACT] Fallback: using title "${title}"`);
+    return title;
+  }
+  console.log(`[EXTRACT] Ultimate fallback: using full line "${line}"`);
   return line;
 }
 
 // --- Util: Normalize subject and filenames for matching ---
 function normalize(str) {
-  return String(str)
+  const norm = String(str)
     .toLowerCase()
-    .replace(/[\s_\-]+/g, '') // Remove spaces/underscores/dashes for fuzzy matching
-    .replace(/[^a-z0-9]/g, ''); // Strip non-alphanum
+    .replace(/[\s_\-]+/g, '')
+    .replace(/[^a-z0-9]/g, '');
+  console.log(`[NORMALIZE] Input: "${str}" → Normalized: "${norm}"`);
+  return norm;
 }
 
 // --- R2 CLIP MATCHING ---
 async function listAllFilesInR2(s3Client, prefix = '') {
+  console.log(`[R2] listAllFilesInR2 | prefix="${prefix}"`);
   let files = [];
   let continuationToken = undefined;
-  do {
-    const cmd = new ListObjectsV2Command({
-      Bucket: R2_LIBRARY_BUCKET,
-      Prefix: prefix,
-      ContinuationToken: continuationToken,
-    });
-    const resp = await s3Client.send(cmd);
-    if (resp && resp.Contents) {
-      files.push(...resp.Contents.map(obj => obj.Key));
-    }
-    continuationToken = resp.NextContinuationToken;
-  } while (continuationToken);
-  return files;
+  let round = 0;
+  try {
+    do {
+      round++;
+      console.log(`[R2] Fetching R2 file list (round ${round})...`);
+      const cmd = new ListObjectsV2Command({
+        Bucket: R2_LIBRARY_BUCKET,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      });
+      const resp = await s3Client.send(cmd);
+      if (resp && resp.Contents) {
+        console.log(`[R2] Retrieved ${resp.Contents.length} files (round ${round})`);
+        files.push(...resp.Contents.map(obj => obj.Key));
+      } else {
+        console.log(`[R2] No files in resp.Contents for round ${round}`);
+      }
+      continuationToken = resp.NextContinuationToken;
+      if (continuationToken) {
+        console.log(`[R2] NextContinuationToken present; will fetch more...`);
+      }
+    } while (continuationToken);
+    console.log(`[R2] Total files listed from R2: ${files.length}`);
+    return files;
+  } catch (err) {
+    console.error('[R2] Error in listAllFilesInR2:', err);
+    return [];
+  }
 }
 
 async function findClipInR2(subject, s3Client) {
-  if (!s3Client) throw new Error('[R2] s3Client not provided!');
+  console.log(`[R2] findClipInR2 | subject="${subject}"`);
+  if (!s3Client) {
+    console.error('[R2] s3Client not provided!');
+    throw new Error('[R2] s3Client not provided!');
+  }
   try {
     const files = await listAllFilesInR2(s3Client, '');
     const normQuery = normalize(subject);
     console.log(`[R2] Looking for: "${subject}" → normalized: "${normQuery}" in ${files.length} files`);
 
-    // 1. Exact match (whole phrase)
     let best = null;
+    // 1. Exact match (whole phrase)
     for (let file of files) {
       const normFile = normalize(file);
       if (normFile.includes(normQuery)) {
         best = file;
+        console.log(`[R2] Exact/whole phrase match: "${file}"`);
         break;
       }
     }
@@ -106,17 +139,18 @@ async function findClipInR2(subject, s3Client) {
         const normFile = normalize(file);
         if (words.every(w => normFile.includes(w))) {
           best = file;
+          console.log(`[R2] Partial/all-word match: "${file}"`);
           break;
         }
       }
     }
     if (best) {
-      console.log(`[R2] Found match: ${best}`);
       let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
       url += `${R2_LIBRARY_BUCKET}/${best}`;
-      return url; // Always returns a string
+      console.log(`[R2] Found match: ${best} → ${url}`);
+      return url;
     }
-    console.log('[R2] No match found for:', subject);
+    console.log(`[R2] No match found for: "${subject}" after scanning ${files.length} files`);
     return null;
   } catch (err) {
     console.error('[R2] Error listing or matching:', err);
@@ -126,6 +160,7 @@ async function findClipInR2(subject, s3Client) {
 
 // --- PEXELS FALLBACK ---
 async function findClipInPexels(subject) {
+  console.log(`[PEXELS] findClipInPexels | subject="${subject}"`);
   if (!PEXELS_API_KEY) {
     console.warn('[PEXELS] No API key set.');
     return null;
@@ -133,26 +168,36 @@ async function findClipInPexels(subject) {
   try {
     const query = encodeURIComponent(subject);
     const url = `https://api.pexels.com/videos/search?query=${query}&per_page=5`;
+    console.log(`[PEXELS] Request: ${url}`);
     const resp = await axios.get(url, { headers: { Authorization: PEXELS_API_KEY } });
     if (resp.data && resp.data.videos && resp.data.videos.length > 0) {
+      console.log(`[PEXELS] ${resp.data.videos.length} videos found for "${subject}"`);
       const sorted = resp.data.videos.sort((a, b) => (b.width * b.height) - (a.width * a.height));
       const bestClip = sorted[0];
+      console.log(`[PEXELS] Best video: ID=${bestClip.id}, duration=${bestClip.duration}, width=${bestClip.width}, height=${bestClip.height}`);
       const fileLink = bestClip.video_files.find(f => f.quality === 'hd') || bestClip.video_files[0];
       if (fileLink && fileLink.link) {
         console.log('[PEXELS] Clip found:', fileLink.link);
-        return fileLink.link; // ONLY the URL as a string
+        return fileLink.link;
       }
+      console.warn('[PEXELS] No valid video file link found in bestClip');
+    } else {
+      console.log(`[PEXELS] No match found for: "${subject}"`);
     }
-    console.log('[PEXELS] No match found for:', subject);
     return null;
   } catch (err) {
-    console.error('[PEXELS] Request failed:', err.response ? err.response.status : err);
+    if (err.response) {
+      console.error(`[PEXELS] Request failed. Status: ${err.response.status}, Data:`, err.response.data);
+    } else {
+      console.error('[PEXELS] Request failed:', err);
+    }
     return null;
   }
 }
 
 // --- PIXABAY FALLBACK ---
 async function findClipInPixabay(subject) {
+  console.log(`[PIXABAY] findClipInPixabay | subject="${subject}"`);
   if (!PIXABAY_API_KEY) {
     console.warn('[PIXABAY] No API key set.');
     return null;
@@ -160,52 +205,83 @@ async function findClipInPixabay(subject) {
   try {
     const query = encodeURIComponent(subject);
     const url = `https://pixabay.com/api/videos/?key=${PIXABAY_API_KEY}&q=${query}&per_page=5`;
+    console.log(`[PIXABAY] Request: ${url}`);
     const resp = await axios.get(url);
     if (resp.data && resp.data.hits && resp.data.hits.length > 0) {
+      console.log(`[PIXABAY] ${resp.data.hits.length} videos found for "${subject}"`);
       const best = resp.data.hits.sort((a, b) => (b.videos.large.width * b.videos.large.height) - (a.videos.large.width * a.videos.large.height))[0];
       if (best && best.videos && best.videos.large && best.videos.large.url) {
         console.log('[PIXABAY] Clip found:', best.videos.large.url);
-        return best.videos.large.url; // ONLY the URL as a string
+        return best.videos.large.url;
       }
+      console.warn('[PIXABAY] No valid large video link in best result');
+    } else {
+      console.log(`[PIXABAY] No match found for: "${subject}"`);
     }
-    console.log('[PIXABAY] No match found for:', subject);
     return null;
   } catch (err) {
-    console.error('[PIXABAY] Request failed:', err.response ? err.response.status : err);
+    if (err.response) {
+      console.error(`[PIXABAY] Request failed. Status: ${err.response.status}, Data:`, err.response.data);
+    } else {
+      console.error('[PIXABAY] Request failed:', err);
+    }
     return null;
   }
 }
 
 // --- MAIN MATCHER: R2 → PEXELS → PIXABAY ---
 async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client) {
+  console.log(`[MATCH] findClipForScene called | idx=${idx} | sceneText="${sceneText}" | title="${title}"`);
+  if (allLines && allLines.length) console.log(`[MATCH] All lines for context:`, allLines);
   const subject = extractVisualSubject(sceneText, title || '');
-  console.log(`[MATCH] Scene ${idx + 1} subject: "${subject}"`);
+  console.log(`[MATCH] Scene ${idx + 1} subject after extraction: "${subject}"`);
 
   // 1. Try R2 first
   if (s3Client) {
-    const r2Url = await findClipInR2(subject, s3Client);
-    if (typeof r2Url === 'string' && r2Url.startsWith('http')) return r2Url;
+    try {
+      const r2Url = await findClipInR2(subject, s3Client);
+      if (typeof r2Url === 'string' && r2Url.startsWith('http')) {
+        console.log(`[MATCH] Matched in R2: ${r2Url}`);
+        return r2Url;
+      }
+    } catch (err) {
+      console.error('[MATCH] Error in findClipInR2:', err);
+    }
   }
 
   // 2. Try Pexels
-  const pexelsUrl = await findClipInPexels(subject);
-  if (typeof pexelsUrl === 'string' && pexelsUrl.startsWith('http')) return pexelsUrl;
+  try {
+    const pexelsUrl = await findClipInPexels(subject);
+    if (typeof pexelsUrl === 'string' && pexelsUrl.startsWith('http')) {
+      console.log(`[MATCH] Matched in Pexels: ${pexelsUrl}`);
+      return pexelsUrl;
+    }
+  } catch (err) {
+    console.error('[MATCH] Error in findClipInPexels:', err);
+  }
 
   // 3. Try Pixabay
-  const pixabayUrl = await findClipInPixabay(subject);
-  if (typeof pixabayUrl === 'string' && pixabayUrl.startsWith('http')) return pixabayUrl;
+  try {
+    const pixabayUrl = await findClipInPixabay(subject);
+    if (typeof pixabayUrl === 'string' && pixabayUrl.startsWith('http')) {
+      console.log(`[MATCH] Matched in Pixabay: ${pixabayUrl}`);
+      return pixabayUrl;
+    }
+  } catch (err) {
+    console.error('[MATCH] Error in findClipInPixabay:', err);
+  }
 
+  console.warn(`[MATCH] No match found for scene "${sceneText}" (subject="${subject}") in any source.`);
   return null;
 }
 
 // --- Download function: saves a remote file to disk with logging ---
 async function downloadRemoteFileToLocal(url, outPath) {
+  console.log(`[DL] DownloadRemoteFileToLocal called | url="${url}" | outPath="${outPath}"`);
   try {
     if (!url) throw new Error('No URL provided to download.');
-    console.log('[DL] Downloading remote file:', url, '→', outPath);
-
     if (fs.existsSync(outPath)) {
-      console.log('[DL] File already exists, skipping:', outPath);
+      console.log(`[DL] File already exists, skipping download: ${outPath}`);
       return;
     }
 
@@ -228,7 +304,7 @@ async function downloadRemoteFileToLocal(url, outPath) {
       });
       writer.on('finish', () => {
         if (!errored) {
-          console.log('[DL] Download complete:', outPath);
+          console.log('[DL] Download complete:', outPath, 'size:', fs.existsSync(outPath) ? fs.statSync(outPath).size : 'N/A');
           resolve();
         }
       });
@@ -245,8 +321,12 @@ async function downloadRemoteFileToLocal(url, outPath) {
 
 // --- Script splitter: splits raw script into array of { id, text } ----
 function splitScriptToScenes(script) {
-  if (!script) return [];
-  return script
+  console.log(`[SPLIT] splitScriptToScenes called | script length: ${script ? script.length : 0}`);
+  if (!script) {
+    console.warn('[SPLIT] No script provided!');
+    return [];
+  }
+  const arr = script
     .split('\n')
     .map(l => l.trim())
     .filter(Boolean)
@@ -254,6 +334,8 @@ function splitScriptToScenes(script) {
       id: `scene${idx + 1}`,
       text: line
     }));
+  console.log(`[SPLIT] Script split into ${arr.length} scenes`);
+  return arr;
 }
 
 module.exports = {

@@ -397,11 +397,6 @@ Tags: secrets landmarks mystery history viral
 console.log('[INIT] Video generation endpoint initialized');
 
 
-
-// === DUMMY/EXAMPLE HELPERS & CONSTANTS (Replace with your real logic) ===
-const cleanupJob = (jobId) => { /* Clean temp files, progress, etc */ };
-
-
 function splitScriptToScenes(script) {
   // Replace with your actual scene splitting logic!
   return script

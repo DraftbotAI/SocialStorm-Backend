@@ -1,5 +1,14 @@
+<!-- ============================= -->
+<!-- SECTION 1: DOCTYPE & HTML OPEN -->
+<!-- ============================= -->
+
 <!DOCTYPE html>
 <html lang="en">
+
+<!-- ============================= -->
+<!-- SECTION 2: HEAD & CSS -->
+<!-- ============================= -->
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -17,34 +26,141 @@
     a { text-decoration: none; color: inherit; }
     ul { list-style: none; }
     nav {
-      position: sticky; top: 0; background: #10141a;
-      display: flex; justify-content: center; align-items: center;
-      padding: 1rem 2rem; z-index: 1000; gap: 4rem;
+      position: sticky;
+      top: 0;
+      background: #10141a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2rem;
+      z-index: 1000;
+      min-height: 80px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.14);
-      min-height: 112px;
     }
-    nav .logo { position: absolute; left: 2rem; cursor: pointer; display: flex; align-items: center; }
-    nav .logo img { height: 200px; display: block; filter: brightness(100); }
-    nav ul { display: flex; gap: 2rem; }
-    nav ul li a {
-      color: #fff; font-weight: 700; font-size: 1.09rem; letter-spacing: 0.03em;
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+    }
+    .nav-logo img {
+      height: 200px;
+      width: auto;
+      max-width: 90vw;
+      display: block;
+      filter: brightness(100);
+      transition: height 0.22s;
+      margin-bottom: -24px;
+      margin-top: -24px;
+    }
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      align-items: center;
+    }
+    .nav-links li a {
+      color: #fff;
+      font-weight: 700;
+      font-size: 1.09rem;
+      letter-spacing: 0.03em;
       transition: color 0.2s;
     }
-    nav ul li a:hover,
-    nav ul li[aria-current="page"] a {
+    .nav-links li a:hover,
+    .nav-links li[aria-current="page"] a {
       color: #00e0fe;
       text-shadow: 0 0 8px #00e0fe55;
     }
-    nav .btn-primary {
-      position: absolute; right: 2rem;
+    .btn-primary {
       background: #00e0fe; color: #111; font-weight: 900;
       padding: 0.65rem 1.5rem; border: none; border-radius: 8px;
       cursor: pointer; font-size: 1.13rem;
       box-shadow: 0 4px 14px #00e0fe44;
       transition: background 0.2s;
       letter-spacing: 0.01em;
+      margin-left: 1.5rem;
     }
-    nav .btn-primary:hover { background: #00b3c4; }
+    .btn-primary:hover { background: #00b3c4; }
+    .hamburger {
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      width: 46px;
+      height: 46px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      z-index: 2002;
+    }
+    .hamburger span {
+      display: block;
+      width: 28px;
+      height: 4px;
+      margin: 4px 0;
+      background: #00e0fe;
+      border-radius: 2px;
+      transition: all 0.22s;
+    }
+    .hamburger.active span:nth-child(1) {
+      transform: translateY(8px) rotate(45deg);
+    }
+    .hamburger.active span:nth-child(2) {
+      opacity: 0;
+    }
+    .hamburger.active span:nth-child(3) {
+      transform: translateY(-8px) rotate(-45deg);
+    }
+    .mobile-nav {
+      display: none;
+      flex-direction: column;
+      align-items: flex-end;
+      background: #10141a;
+      position: absolute;
+      top: 96px;
+      right: 0;
+      width: 100vw;
+      max-width: 100vw;
+      box-shadow: 0 8px 28px #0008;
+      border-radius: 0 0 18px 18px;
+      padding: 1.2rem 2.2rem 1.8rem 2.2rem;
+      z-index: 2001;
+      animation: slideDown 0.22s;
+    }
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-24px);}
+      to   { opacity: 1; transform: translateY(0);}
+    }
+    .mobile-nav li {
+      margin-bottom: 1.18rem;
+      text-align: right;
+    }
+    .mobile-nav li:last-child {
+      margin-bottom: 0;
+    }
+    .mobile-nav a, .mobile-nav .btn-primary {
+      font-size: 1.2rem;
+      color: #fff;
+      font-weight: 800;
+    }
+    .mobile-nav .btn-primary {
+      width: 100%;
+      margin-left: 0;
+      margin-top: 1.2rem;
+    }
+    @media (max-width: 850px) {
+      .nav-logo img { height: 68px; }
+      nav { min-height: 68px; }
+      .nav-links { gap: 1.1rem; }
+    }
+    @media (max-width: 700px) {
+      .nav-logo img { height: 50px; }
+      nav { min-height: 56px; padding: 0 1rem; }
+      .nav-links { display: none; }
+      .btn-primary { display: none; }
+      .hamburger { display: flex; }
+    }
+    @media (max-width: 480px) {
+      .mobile-nav { padding: 1rem 1rem 1.5rem 1rem; }
+    }
     main.page-content {
       flex: 1 0 auto;
       width: 100%;
@@ -131,8 +247,9 @@
       margin-bottom: 1.5rem;
     }
     .video-container video {
-      width: 640px;
-      height: 360px;
+      width: 100%;
+      max-width: 640px;
+      aspect-ratio: 16/9;
       background: #000;
       border-radius: 12px;
       box-shadow: 0 0 24px #0003;
@@ -155,11 +272,31 @@
       word-break: break-word;
     }
     #downloadBtn { display: none; margin-bottom: 1rem; }
-    #progressBarWrap { width: 100%; background: #e6f2fa; border-radius: 10px; margin: 10px 0; height: 24px; box-shadow: 0 2px 12px #00e0fe33; display: none; }
-    #progressBar { height: 100%; background: linear-gradient(90deg,#00e0fe,#00b3c4 85%); width: 0; border-radius: 10px; transition: width 0.25s; color: #fff; font-weight: 600; font-size: 1rem; text-align: center; line-height: 24px; }
+    #shareBtn { display: none; margin-bottom: 1rem; }
+    #progressBarWrap {
+      width: 100%;
+      background: #e6f2fa;
+      border-radius: 10px;
+      margin: 10px 0;
+      height: 24px;
+      box-shadow: 0 2px 12px #00e0fe33;
+      display: none;
+    }
+    #progressBar {
+      height: 100%;
+      background: linear-gradient(90deg,#00e0fe,#00b3c4 85%);
+      width: 0;
+      border-radius: 10px;
+      transition: width 0.25s;
+      color: #fff;
+      font-weight: 600;
+      font-size: 1rem;
+      text-align: center;
+      line-height: 24px;
+    }
     #progressStatus { margin-top: 6px; font-size: 0.98rem; min-height: 1.4em; }
     .meta-group { margin: 10px 0 22px 0; }
-    .meta-label { font-weight: bold; font-size:1.04em; color:#0a2342; margin-bottom:2px; display:flex; align-items:center; gap:4px; }
+    .meta-label { font-weight: bold; font-size:1.04em; color:#0a2342; margin-bottom:2px; display:flex; align-items:center; gap:4px; position: relative; }
     .meta-value {
       background: #f0f8ff;
       border: 1.5px solid #cce6ff;
@@ -216,46 +353,190 @@
     input:checked + .slider { background-color: #00e0fe; }
     input:checked + .slider:before { transform: translateX(20px); background: #e6f2fa; }
     .branding-label { font-size:1rem; font-weight:600; color:#0a2342; margin-right:10px; user-select:none; }
-    #chatbot-bubble {
-      position: fixed; bottom: 26px; right: 26px;
-      width: 60px; height: 60px;
+    #thumbnail-upsell {
+      margin: 2.4rem 0 0 0;
+      width: 100%;
+      background: linear-gradient(98deg, #eaf7fb 65%, #e9fdf9 100%);
+      border-radius: 12px;
+      box-shadow: 0 2px 18px #00e0fe0a;
+      padding: 2rem 1.4rem 1.7rem 1.4rem;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      border: 2.5px solid #00e0fe44;
+    }
+    #thumbnail-upsell h3 {
+      color: #00b3c4;
+      font-size: 1.41rem;
+      font-weight: 900;
+      margin-bottom: 0.2rem;
+      letter-spacing: -0.5px;
+    }
+    #thumbnail-upsell p {
+      color: #0a2342;
+      font-size: 1.07rem;
+      margin-bottom: 1.4rem;
+      font-weight: 500;
+    }
+    .thumb-price-options {
+      display: flex;
+      gap: 1.2rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 1.3rem;
+    }
+    .thumb-option {
+      background: #fff;
+      border: 2px solid #00e0fe33;
+      border-radius: 10px;
+      box-shadow: 0 3px 12px #00e0fe19;
+      padding: 1.15rem 1.4rem 0.95rem 1.4rem;
+      min-width: 180px;
+      text-align: center;
+      font-weight: 700;
+      color: #00b3c4;
+      transition: box-shadow 0.18s, border 0.18s;
+    }
+    .thumb-option strong { color: #0a2342; font-size: 1.15em; }
+    .thumb-option .cta-thumb {
+      margin-top: 1rem;
       background: #00e0fe;
-      border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      color: #10141a;
+      border: none;
+      border-radius: 6px;
+      font-size: 1.05rem;
+      font-weight: 900;
+      padding: 0.6rem 1.7rem;
       cursor: pointer;
-      box-shadow: 0 8px 18px #00e0fe90;
-      transition: background 0.2s;
+      box-shadow: 0 3px 12px #00e0fe33;
+      transition: background 0.18s, color 0.18s;
+    }
+    .thumb-option .cta-thumb:hover { background: #00b3c4; color: #fff; }
+    .thumb-included {
+      background: #d9fff5;
+      color: #008060;
+      border-radius: 7px;
+      padding: 0.5rem 1rem;
+      font-weight: 900;
+      font-size: 1.1em;
+      margin-top: 1.1rem;
+      border: 2px solid #00e0fe11;
+    }
+    #chatbot-bubble {
+      position: fixed;
+      bottom: 26px;
+      right: 26px;
+      width: 64px;
+      height: 64px;
+      background: linear-gradient(135deg,#00e0fe 80%,#00b3c4 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 8px 32px #00e0fe70, 0 1.5px 9px #0a234266;
+      transition: background 0.22s, transform 0.12s;
       z-index: 1000;
+      animation: bounce 1.5s infinite alternate cubic-bezier(.65,-0.25,.5,1.25);
+      border: 2.5px solid #fff;
     }
-    #chatbot-bubble:hover { background: #00b3c4; }
-    #chatbot-bubble svg { width: 32px; height: 32px; fill: #fff; }
-    @media (max-width: 700px) {
-      nav ul { gap: 0.7rem; }
-      nav { gap: 1.5rem; min-height: 60px; }
-      nav .logo img { height: 72px; }
-      main.page-content { padding: 1.5rem 0.7rem 1rem 0.7rem; }
-      .video-container video { width: 98vw; height: 55vw; min-height: 240px; }
+    #chatbot-bubble:hover {
+      background: linear-gradient(135deg,#00b3c4 80%,#00e0fe 100%);
+      transform: scale(1.09) rotate(-6deg);
+      box-shadow: 0 12px 36px #00b3c470, 0 1.5px 9px #0a234266;
     }
-    @media (max-width: 440px) {
-      .video-container video { width: 99vw; height: 220px; }
+    #chatbot-bubble svg {
+      width: 36px; height: 36px; fill: #fff; transition: fill 0.14s;
+    }
+    #chatbot-bubble .sparkie-eye {
+      fill: #ffe800;
+      transition: fill 0.24s;
+      animation: sparkieblink 3.5s infinite;
+    }
+    #chatbot-bubble .sparkie-smile {
+      fill: #fff;
+    }
+    #chatbot-bubble .sparkie-bolt {
+      fill: #f2b61e;
+      filter: drop-shadow(0 0 4px #fff6a8bb);
+    }
+    #chatbot-bubble::after {
+      content: "Chat with Sparkie!";
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: -40px;
+      color: #00b3c4;
+      background: #fff;
+      font-size: 1.08rem;
+      font-weight: 900;
+      padding: 5px 14px;
+      border-radius: 22px;
+      box-shadow: 0 3px 18px #00e0fe22;
+      opacity: 0.93;
+      pointer-events: none;
+      transition: opacity 0.22s;
+      z-index: 1001;
+      letter-spacing: 0.02em;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      animation: poptext 1.2s infinite alternate cubic-bezier(.7,-0.13,.38,1.3);
+    }
+    @keyframes poptext {
+      from { opacity: 0.6; }
+      to { opacity: 0.96; }
+    }
+    @keyframes sparkieblink {
+      0%, 95%, 100% { fill: #ffe800; }
+      96% { fill: #fff; }
+    }
+    @keyframes bounce {
+      from { transform: translateY(0);}
+      to   { transform: translateY(-10px);}
+    }
+    @media (max-width: 600px) {
+      #chatbot-bubble::after { display:none; }
     }
   </style>
 </head>
+
+<!-- ============================= -->
+<!-- SECTION 3: BODY OPEN & NAVIGATION -->
+<!-- ============================= -->
+
 <body>
+
   <nav>
-    <div class="logo" onclick="location.href='index.html'">
+    <div class="nav-logo" onclick="location.href='index.html'">
       <img src="logo.png" alt="SocialStorm Logo" />
     </div>
-    <ul>
+    <ul class="nav-links">
       <li><a href="index.html">Home</a></li>
       <li><a href="video.html" aria-current="page">Create Video</a></li>
+      <li><a href="thumbnail.html">Thumbnails</a></li>
       <li><a href="pricing.html">Pricing</a></li>
       <li><a href="about.html">About</a></li>
       <li><a href="contact.html">Contact</a></li>
     </ul>
     <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
+    <button class="hamburger" id="hamburgerBtn" aria-label="Open menu">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <ul class="mobile-nav" id="mobileNav">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="video.html" aria-current="page">Create Video</a></li>
+      <li><a href="thumbnail.html">Thumbnails</a></li>
+      <li><a href="pricing.html">Pricing</a></li>
+      <li><a href="about.html">About</a></li>
+      <li><a href="contact.html">Contact</a></li>
+      <li><button class="btn-primary" onclick="location.href='video.html'">Get Started</button></li>
+    </ul>
   </nav>
 
   <main class="page-content">
+
     <section style="width:100%;">
       <h2>Generate Script</h2>
       <textarea id="ideaInput" placeholder="Enter your video idea…"></textarea>
@@ -272,9 +553,9 @@
       <textarea id="scriptTextarea" placeholder="Generated script will appear here…"></textarea>
       <div id="metaDataBox"></div>
     </section>
+
     <section style="width:100%;">
       <h2>Pick a Voice & Generate Video</h2>
-      <!-- Branding toggle for paid users -->
       <div id="brandingToggleRow" class="branding-toggle-row" style="display:none;">
         <label class="branding-label" for="removeBrandingSwitch">Remove SocialStorm watermark & outro</label>
         <label class="switch">
@@ -282,11 +563,11 @@
           <span class="slider"></span>
         </label>
       </div>
-      <!-- MUSIC TOGGLE (ALWAYS SHOWN) -->
-      <div class="branding-toggle-row" style="margin-bottom:10px;">
-        <label class="branding-label" for="musicSwitch">Include background music</label>
+      <!-- NEW: Background music toggle -->
+      <div id="musicToggleRow" class="branding-toggle-row">
+        <label class="branding-label" for="addMusicSwitch">Add background music</label>
         <label class="switch">
-          <input type="checkbox" id="musicSwitch" checked />
+          <input type="checkbox" id="addMusicSwitch" checked />
           <span class="slider"></span>
         </label>
       </div>
@@ -302,329 +583,507 @@
       </div>
       <div id="progressStatus"></div>
       <div class="video-container">
-        <video id="videoPlayer" controls crossorigin></video>
+        <video id="videoPlayer" controls playsinline preload="auto" crossorigin style="background:#000;"></video>
       </div>
       <button id="downloadBtn" class="btn" style="display:none;margin-top:8px;">Download Video</button>
+      <button id="shareBtn" class="btn" style="display:none;margin-left:8px;">Share Video</button>
     </section>
+
+    <!-- === Thumbnail Upsell Section === -->
+    <div id="thumbnail-upsell">
+      <h3>Boost Your Video with Custom Thumbnails!</h3>
+      <p>Get 10 stunning, high-converting thumbnails tailored for your video topic. Just $9.99 for 10 — or unlock unlimited thumbnails and premium perks with Pro for $19.99/month.</p>
+      <div class="thumb-price-options">
+        <div class="thumb-option">
+          <div>10 Custom Thumbnails</div>
+          <strong>$9.99 <span style="font-size:0.97em;color:#aaa;">one time</span></strong>
+          <button class="cta-thumb" onclick="window.location.href='thumbnail.html'">Buy Now</button>
+        </div>
+        <div class="thumb-option">
+          <div>Unlimited Thumbnails + Pro Features</div>
+          <strong>$19.99/mo</strong>
+          <button class="cta-thumb" onclick="window.location.href='pricing.html'">Go Pro</button>
+        </div>
+        <div class="thumb-included" id="thumbIncluded" style="display:none;">
+          <span>Included with your subscription!</span>
+        </div>
+      </div>
+      <p style="margin-top:.6rem;font-size:.97rem;color:#0093ae;">Pro plan includes unlimited thumbnails, instant video delivery, & early access features.</p>
+    </div>
   </main>
 
   <div id="chatbot-bubble" title="Chat with Sparkie!">
-    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><rect x="7" y="11" width="10" height="2" rx="1"/><circle cx="9" cy="9" r="1.2"/><circle cx="15" cy="9" r="1.2"/></svg>
+    <svg viewBox="0 0 64 64">
+      <circle cx="32" cy="32" r="30" fill="#00e0fe"/>
+      <ellipse class="sparkie-eye" cx="24" cy="27" rx="5" ry="6"/>
+      <ellipse class="sparkie-eye" cx="40" cy="27" rx="5" ry="6"/>
+      <ellipse class="sparkie-smile" cx="32" cy="41" rx="10" ry="4"/>
+      <polygon class="sparkie-bolt" points="30,18 34,18 32,11"/>
+    </svg>
   </div>
-  <script>
-    // --- User status (set these values according to your session logic) ---
-    const isPaidUser = true;      // Replace with your logic!
-    const isOverLimit = false;    // Replace with your real check!
 
-    window.addEventListener('DOMContentLoaded', () => {
-      loadVoices();
-      setupSparkie();
-      window.scrollTo(0,0);
-
-      // Show branding toggle for paid users only
-      document.getElementById('brandingToggleRow').style.display = isPaidUser ? "flex" : "none";
-
-      // --- Enable/disable video button on script box input
-      document.getElementById('scriptTextarea').addEventListener('input', updateGenerateVideoBtnState);
-
-      // Enable/disable on load
-      updateGenerateVideoBtnState();
-    });
-
-    function updateGenerateVideoBtnState() {
-      const scriptVal = document.getElementById('scriptTextarea').value.trim();
-      const btn = document.getElementById('generateVideoBtn');
-      btn.disabled = (!scriptVal || isOverLimit);
-    }
-
-    // --- Voice selection and preview logic (unchanged) ---
-    let voices = [];
-    let selectedVoice = null;
-
-    async function loadVoices() {
-      const sel = document.getElementById('voiceSelect');
-      sel.disabled = true;
-      sel.innerHTML = '<option>Loading…</option>';
-      try {
-        const resp = await fetch('/api/voices');
-        const data = await resp.json();
-        if (!data.success) throw new Error(data.error);
-        voices = data.voices;
-
-        sel.innerHTML = '';
-        let defaultIdx = 0;
-        voices.forEach((v, i) => {
-          const o = document.createElement('option');
-          o.value = v.id;
-          o.textContent = `${v.name} — ${v.description}`;
-          sel.appendChild(o);
-          if (v.name.toLowerCase() === 'andrew') defaultIdx = i;
-        });
-        sel.selectedIndex = defaultIdx;
-        selectedVoice = voices[defaultIdx];
-        document.getElementById('previewBtn').disabled = !selectedVoice.preview;
-      } catch (e) {
-        sel.innerHTML = '<option>Error loading voices</option>';
-        console.error(e);
-      } finally {
-        sel.disabled = false;
-      }
-    }
-
-    document.getElementById('voiceSelect').addEventListener('change', function(e) {
-      const idx = this.selectedIndex;
-      selectedVoice = voices[idx];
-      document.getElementById('previewBtn').disabled = !selectedVoice.preview;
-    });
-
-    document.getElementById('previewBtn').addEventListener('click', function() {
-      if (!selectedVoice || !selectedVoice.preview) return;
-      const audio = document.getElementById('voicePreviewAudio');
-      audio.src = selectedVoice.preview;
-      audio.play();
-    });
-
-    // --- Animate status for script generation ---
-    let genStatusTimer = null;
-
-    function startGenStatusAnimation() {
-      const status = document.getElementById('genStatus');
-      let dots = 1;
-      status.textContent = "Generating script .";
-      genStatusTimer = setInterval(() => {
-        dots = (dots % 3) + 1;
-        status.textContent = "Generating script " + ".".repeat(dots);
-      }, 480);
-    }
-
-    function stopGenStatusAnimation() {
-      const status = document.getElementById('genStatus');
-      clearInterval(genStatusTimer);
-      genStatusTimer = null;
-      status.textContent = "";
-    }
-
-    // --- Script and video generation ---
-    document.getElementById('generateScriptBtn').onclick = async () => {
-      const idea = document.getElementById('ideaInput').value.trim();
-      const out  = document.getElementById('output');
-      const metaBox = document.getElementById('metaDataBox');
-      if (!idea) return out.textContent = 'Enter an idea.';
-      out.textContent = '';
-      metaBox.innerHTML = '';
-      startGenStatusAnimation();
-      try {
-        const res  = await fetch('/api/generate-script', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify({ idea })
-        });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error);
-        document.getElementById('scriptTextarea').value = data.script;
-        out.textContent = '';
-        document.getElementById('generateVideoBtn').disabled = false;
-        updateGenerateVideoBtnState();
-        metaBox.innerHTML = `
-          <div class="meta-group">
-            <div class="meta-label">Title
-              <button class="copy-btn" title="Copy Title" data-copy="title"></button>
-            </div>
-            <div class="meta-value" id="meta-title">${escapeHtml(data.title)}</div>
-          </div>
-          <div class="meta-group">
-            <div class="meta-label">Description
-              <button class="copy-btn" title="Copy Description" data-copy="description"></button>
-            </div>
-            <div class="meta-value" id="meta-description">${escapeHtml(data.description)}</div>
-          </div>
-          <div class="meta-group">
-            <div class="meta-label">Tags
-              <button class="copy-btn" title="Copy Tags" data-copy="tags"></button>
-            </div>
-            <div class="meta-value" id="meta-tags">${escapeHtml(data.tags || data.hashtags)}</div>
-          </div>
-        `;
-        setupCopyButtons();
-      } catch (err) {
-        out.textContent = 'Error generating script.';
-        console.error(err);
-      } finally {
-        stopGenStatusAnimation();
-      }
-    };
-
-    function setupCopyButtons() {
-      document.querySelectorAll('.copy-btn').forEach(btn => {
-        btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="12" height="12" rx="2"/><path d="M8 2h6a2 2 0 0 1 2 2v6"/></svg>`;
-        btn.onclick = function() {
-          let val = '';
-          if (btn.dataset.copy === "title")       val = document.getElementById('meta-title').innerText;
-          if (btn.dataset.copy === "description") val = document.getElementById('meta-description').innerText;
-          if (btn.dataset.copy === "tags")        val = document.getElementById('meta-tags').innerText;
-          copyToClipboard(val, btn);
-        };
-      });
-    }
-    function copyToClipboard(text, btn) {
-      navigator.clipboard.writeText(text).then(() => {
-        btn.classList.add('copied');
-        btn.title = "Copied!";
-        setTimeout(() => { btn.classList.remove('copied'); btn.title = "Copy"; }, 1400);
-      });
-    }
-    function escapeHtml(text) {
-      if (!text) return "";
-      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-    }
-
-    let pollingInterval = null;
-    document.getElementById('generateVideoBtn').onclick = async () => {
-      const script = document.getElementById('scriptTextarea').value.trim();
-      const voice  = document.getElementById('voiceSelect').value;
-      const out    = document.getElementById('output');
-      const player = document.getElementById('videoPlayer');
-      const downloadBtn = document.getElementById('downloadBtn');
-      const progressBarWrap = document.getElementById('progressBarWrap');
-      const progressBar = document.getElementById('progressBar');
-      const progressStatus = document.getElementById('progressStatus');
-      if (!script) return out.textContent = 'Generate script first.';
-      if (!voice)  return out.textContent = 'Select a voice.';
-      out.textContent = '';
-      progressBarWrap.style.display = 'block';
-      progressBar.style.width = '0%';
-      progressBar.textContent = '0%';
-      progressStatus.textContent = 'Starting…';
-      player.style.display = 'none';
-      player.src = ''; // Clear video src
-      downloadBtn.style.display = 'none';
-
-      let videoKey = null;
-
-      try {
-        const payload = { script, voice };
-        if (isPaidUser) {
-          payload.paidUser = true;
-          payload.removeWatermark = document.getElementById('removeBrandingSwitch').checked;
-        }
-        // ==== MUSIC TOGGLE PAYLOAD ====
-        payload.backgroundMusic = document.getElementById('musicSwitch').checked;
-
-        const res  = await fetch('/api/generate-video', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!data.jobId) throw new Error('Failed to start video generation.');
-
-        let finished = false;
-        let errored = false;
-
-        pollingInterval = setInterval(async () => {
-          try {
-            const resp = await fetch(`/api/progress/${data.jobId}`);
-            const p = await resp.json();
-            progressBar.style.width = `${p.percent||0}%`;
-            progressBar.textContent = `${p.percent||0}%`;
-            progressStatus.textContent = p.status || '';
-            if (p.percent >= 100 && (p.key || (typeof p.status === "string" && p.status.toLowerCase().startsWith('failed')) || (typeof p.status === "string" && p.status.toLowerCase().startsWith('done')) )) {
-              clearInterval(pollingInterval);
-              pollingInterval = null;
-              finished = true;
-              videoKey = p.key;
-              if (videoKey) {
-                // Try to load the video
-                player.src = `/video/${videoKey}`;
-                player.load();
-                player.onloadeddata = () => {
-                  player.style.display = 'block';
-                  player.muted  = false;
-                  player.volume = 1.0;
-                  progressStatus.textContent = 'Click ▶︎ to play your video.';
-                  downloadBtn.style.display = 'inline-block';
-                  progressBar.style.width = '100%';
-                  progressBar.textContent = '100%';
-                  setTimeout(() => { progressBarWrap.style.display = 'none'; }, 2000);
-                };
-                player.onerror = () => {
-                  out.textContent = 'Done, but the video file could not be found. Try again, or check your backend storage/cleanup.';
-                  player.style.display = 'none';
-                  downloadBtn.style.display = 'none';
-                  progressBarWrap.style.display = 'none';
-                  progressStatus.textContent = '';
-                };
-              } else {
-                out.textContent = p.status || 'Generation failed.';
-                progressBarWrap.style.display = 'none';
-                player.style.display = 'none';
-                downloadBtn.style.display = 'none';
-              }
-            }
-          } catch(e) {
-            errored = true;
-            progressStatus.textContent = 'Lost connection...';
-            progressBarWrap.style.display = 'none';
-          }
-        }, 1200);
-
-      } catch (err) {
-        progressStatus.textContent = 'Error generating video.';
-        progressBarWrap.style.display = 'none';
-        player.style.display = 'none';
-        downloadBtn.style.display = 'none';
-        out.textContent = 'Video generation failed.';
-        console.error(err);
-      }
-    };
-
-    function makeFileNameFromIdea() {
-      let idea = document.getElementById('ideaInput').value.trim();
-      if (!idea) idea = "SocialStormAI-Video";
-      return idea.replace(/[^\w\s\-]/gi,'').replace(/\s+/g,'-').substring(0,32) + ".mp4";
-    }
-    document.getElementById('downloadBtn').onclick = async () => {
-      const player = document.getElementById('videoPlayer');
-      const out    = document.getElementById('output');
-      const downloadBtn = document.getElementById('downloadBtn');
-      try {
-        if (!player.src) throw new Error("No video to download.");
-        downloadBtn.disabled = true;
-        downloadBtn.textContent = "Preparing…";
-        const videoUrl = player.src;
-        const resp = await fetch(videoUrl);
-        if (!resp.ok) throw new Error("Download failed.");
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = makeFileNameFromIdea();
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(()=> {
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          downloadBtn.disabled = false;
-          downloadBtn.textContent = "Download Video";
-        }, 500);
-      } catch(e) {
-        out.textContent = "Couldn't download video.";
-        downloadBtn.disabled = false;
-        downloadBtn.textContent = "Download Video";
-        console.error(e);
-      }
-    };
-
-    // --- Sparkie bot logic unchanged ---
-    function setupSparkie() {
-      const bub   = document.getElementById('chatbot-bubble');
-      const win   = document.getElementById('sparkie-window');
-      if (!bub || !win) return; // Defensive
-      // You can add your chatbot logic here or just leave this for UI.
-    }
-  </script>
   <footer>
     &copy; 2025 SocialStorm AI. Built for creators who want to win.
   </footer>
-</body>
-</html>
+
+
+
+
+
+  <script>
+document.addEventListener('DOMContentLoaded', function() {
+  function log(...args) { try { console.log('[LOG]', ...args); } catch(_){} }
+  function logWarn(...args) { try { console.warn('[WARN]', ...args); } catch(_){} }
+  function logError(...args) { try { console.error('[ERROR]', ...args); } catch(_){} }
+
+  // Hamburger + Mobile Nav Logic
+  const hamburgerBtn = document.getElementById('hamburgerBtn');
+  const mobileNav = document.getElementById('mobileNav');
+  hamburgerBtn.addEventListener('click', () => {
+    hamburgerBtn.classList.toggle('active');
+    log('NAV', 'Hamburger clicked, toggling mobile menu.');
+    if (mobileNav.style.display === 'flex') {
+      mobileNav.style.display = 'none';
+    } else {
+      mobileNav.style.display = 'flex';
+    }
+  });
+
+  const isPaidUser = false;
+  const isOverLimit = false;
+  const isProUser = false;
+
+  log('DOM', 'DOMContentLoaded');
+  loadVoices();
+  setupSparkie();
+  window.scrollTo(0,0);
+  document.getElementById('brandingToggleRow').style.display = isPaidUser ? "flex" : "none";
+  document.getElementById('scriptTextarea').addEventListener('input', updateGenerateVideoBtnState);
+  updateGenerateVideoBtnState();
+
+  function updateGenerateVideoBtnState() {
+    const scriptVal = document.getElementById('scriptTextarea').value.trim();
+    const btn = document.getElementById('generateVideoBtn');
+    btn.disabled = (!scriptVal || isOverLimit);
+    log('UI', 'updateGenerateVideoBtnState', { scriptVal, isOverLimit, disabled: btn.disabled });
+  }
+
+  let voices = [];
+  let selectedVoice = null;
+
+  async function loadVoices() {
+    const sel = document.getElementById('voiceSelect');
+    sel.disabled = true;
+    sel.innerHTML = '<option>Loading…</option>';
+    log('VOICES', 'Loading voices...');
+    try {
+      const resp = await fetch('/api/voices');
+      const data = await resp.json();
+      if (!data.success) throw new Error(data.error);
+      voices = data.voices;
+
+      voices.sort((a, b) => {
+        if (a.tier === 'Free' && b.tier !== 'Free') return -1;
+        if (a.tier !== 'Free' && b.tier === 'Free') return 1;
+        return 0;
+      });
+
+      sel.innerHTML = '';
+      let defaultIdx = 0;
+      voices.forEach((v, i) => {
+        const o = document.createElement('option');
+        o.value = v.id;
+        o.textContent = `${v.name} — ${v.description}`;
+        if (v.disabled) {
+          o.disabled = true;
+          o.textContent += " (Pro Only)";
+        }
+        sel.appendChild(o);
+        if (v.name.toLowerCase() === 'andrew') defaultIdx = i;
+      });
+      sel.selectedIndex = defaultIdx;
+      selectedVoice = voices[defaultIdx];
+      document.getElementById('previewBtn').disabled = !selectedVoice.preview;
+      log('VOICES', 'Voices loaded', voices);
+    } catch (e) {
+      sel.innerHTML = '<option>Error loading voices</option>';
+      logError('VOICES', e);
+    } finally {
+      sel.disabled = false;
+    }
+  }
+
+  document.getElementById('voiceSelect').addEventListener('change', function(e) {
+    const idx = this.selectedIndex;
+    selectedVoice = voices[idx];
+    log('VOICES', 'Voice selected', selectedVoice);
+    document.getElementById('previewBtn').disabled = !selectedVoice.preview;
+  });
+
+  document.getElementById('previewBtn').addEventListener('click', function() {
+    if (!selectedVoice || !selectedVoice.preview) return;
+    const audio = document.getElementById('voicePreviewAudio');
+    audio.src = selectedVoice.preview;
+    audio.play();
+    log('VOICES', 'Preview played', selectedVoice);
+  });
+
+  let genStatusTimer = null;
+
+  function startGenStatusAnimation() {
+    const status = document.getElementById('genStatus');
+    let dots = 1;
+    status.textContent = "Generating script .";
+    log('SCRIPT', 'Status animation started');
+    genStatusTimer = setInterval(() => {
+      dots = (dots % 3) + 1;
+      status.textContent = "Generating script " + ".".repeat(dots);
+    }, 480);
+  }
+
+  function stopGenStatusAnimation() {
+    const status = document.getElementById('genStatus');
+    clearInterval(genStatusTimer);
+    genStatusTimer = null;
+    status.textContent = "";
+    log('SCRIPT', 'Status animation stopped');
+  }
+
+  document.getElementById('generateScriptBtn').onclick = async () => {
+    const idea = document.getElementById('ideaInput').value.trim();
+    const out  = document.getElementById('output');
+    const metaBox = document.getElementById('metaDataBox');
+    log('SCRIPT', 'Generate Script clicked', { idea });
+    if (!idea) {
+      out.textContent = 'Enter an idea.';
+      logWarn('SCRIPT', 'No idea entered');
+      return;
+    }
+    out.textContent = '';
+    metaBox.innerHTML = '';
+    startGenStatusAnimation();
+    try {
+      const res  = await fetch('/api/generate-script', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ idea })
+      });
+      const data = await res.json();
+      log('SCRIPT', 'Script generation API response', data);
+      if (!data.success) throw new Error(data.error);
+      document.getElementById('scriptTextarea').value = data.script;
+      out.textContent = '';
+      document.getElementById('generateVideoBtn').disabled = false;
+      updateGenerateVideoBtnState();
+      showMetaData(data.title, data.description, data.tags || data.hashtags);
+    } catch (err) {
+      out.textContent = 'Error generating script.';
+      logError('SCRIPT', err);
+    } finally {
+      stopGenStatusAnimation();
+    }
+  };
+
+  function showMetaData(title, description, tags) {
+    log('META', 'Show meta data', { title, description, tags });
+    const metaBox = document.getElementById('metaDataBox');
+    metaBox.innerHTML = `
+      <div class="meta-group">
+        <div class="meta-label">Title
+          <button class="copy-btn" title="Copy Title" data-copy="title"></button>
+        </div>
+        <div class="meta-value" id="meta-title">${escapeHtml(title)}</div>
+      </div>
+      <div class="meta-group">
+        <div class="meta-label">Description
+          <button class="copy-btn" title="Copy Description" data-copy="description"></button>
+        </div>
+        <div class="meta-value" id="meta-description">${escapeHtml(description)}</div>
+      </div>
+      <div class="meta-group">
+        <div class="meta-label">Tags
+          <button class="copy-btn" title="Copy Tags" data-copy="tags"></button>
+        </div>
+        <div class="meta-value" id="meta-tags">${escapeHtml(tags)}</div>
+      </div>
+    `;
+    setupCopyButtons();
+  }
+
+  function setupCopyButtons() {
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="12" height="12" rx="2"/><path d="M8 2h6a2 2 0 0 1 2 2v6"/></svg>`;
+      btn.onclick = function() {
+        let val = '';
+        if (btn.dataset.copy === "title")       val = document.getElementById('meta-title').innerText;
+        if (btn.dataset.copy === "description") val = document.getElementById('meta-description').innerText;
+        if (btn.dataset.copy === "tags")        val = document.getElementById('meta-tags').innerText;
+        log('META', 'Copy clicked', { field: btn.dataset.copy, val });
+        copyToClipboard(val, btn);
+      };
+    });
+  }
+  function copyToClipboard(text, btn) {
+    navigator.clipboard.writeText(text).then(() => {
+      btn.classList.add('copied');
+      btn.title = "Copied!";
+      log('META', 'Copied to clipboard', text);
+      setTimeout(() => { btn.classList.remove('copied'); btn.title = "Copy"; }, 1400);
+    });
+  }
+  function escapeHtml(text) {
+    if (!text) return "";
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+  }
+
+  // =============== PROGRESS BAR LOGIC ================
+  let pollingInterval = null;
+  let simInterval = null;
+  let simulatedPercent = 0;
+
+  document.getElementById('generateVideoBtn').onclick = async () => {
+    const script = document.getElementById('scriptTextarea').value.trim();
+    const voice  = document.getElementById('voiceSelect').value;
+    const out    = document.getElementById('output');
+    const player = document.getElementById('videoPlayer');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const shareBtn = document.getElementById('shareBtn');
+    const progressBarWrap = document.getElementById('progressBarWrap');
+    const progressBar = document.getElementById('progressBar');
+    const progressStatus = document.getElementById('progressStatus');
+    const metaBox = document.getElementById('metaDataBox');
+    log('VIDEO', 'Generate Video clicked', { script, voice });
+    if (!script) {
+      out.textContent = 'Generate script first.';
+      logWarn('VIDEO', 'No script for video');
+      return;
+    }
+    if (!voice)  {
+      out.textContent = 'Select a voice.';
+      logWarn('VIDEO', 'No voice selected');
+      return;
+    }
+    out.textContent = '';
+    progressBarWrap.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressBar.textContent = '0%';
+    progressStatus.textContent = 'Starting…';
+    player.style.display = 'none';
+    player.removeAttribute('src');
+    player.load();
+    downloadBtn.style.display = 'none';
+    shareBtn.style.display = 'none';
+
+    // ==== NEW: Always get/generate metadata for any user-typed script ====
+    try {
+      let metaRes = await fetch('/api/generate-metadata', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ script })
+      });
+      let metaData = await metaRes.json();
+      log('VIDEO', 'Fetched/generate-metadata', metaData);
+      if (metaData.success) {
+        showMetaData(metaData.title, metaData.description, metaData.tags || metaData.hashtags);
+      }
+    } catch (err) {
+      logWarn('VIDEO', 'Metadata fetch error:', err);
+    }
+
+    // ---- START SIMULATED PROGRESS ----
+    simulatedPercent = 0;
+    if (simInterval) clearInterval(simInterval);
+    simInterval = setInterval(() => {
+      if (simulatedPercent < 94) { // Don't hit 100
+        let bump = Math.random() * 1.25 + 0.15;
+        if (simulatedPercent > 70) bump = Math.random() * 0.5 + 0.07;
+        simulatedPercent += bump;
+        progressBar.style.width = `${simulatedPercent.toFixed(1)}%`;
+        progressBar.textContent = `${Math.round(simulatedPercent)}%`;
+      }
+    }, 900);
+
+    try {
+      const payload = { script, voice };
+      if (isPaidUser) {
+        payload.paidUser = true;
+        payload.removeWatermark = document.getElementById('removeBrandingSwitch').checked;
+      }
+      payload.addMusic = document.getElementById('addMusicSwitch').checked;
+
+      log('VIDEO', 'Sending /api/generate-video', payload);
+      const res  = await fetch('/api/generate-video', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      log('VIDEO', '/api/generate-video response', data);
+      if (!data.jobId) throw new Error('Failed to start video generation.');
+
+      let finished = false;
+      let videoKey = null;
+
+      pollingInterval = setInterval(async () => {
+        try {
+          const resp = await fetch(`/api/progress/${data.jobId}`);
+          const p = await resp.json();
+
+          // Update progress UI - use server percent if higher than simulated
+          let displayPercent = Math.max(simulatedPercent, p.percent || 0);
+          if (displayPercent >= 100) displayPercent = 100;
+          progressBar.style.width = `${displayPercent}%`;
+          progressBar.textContent = `${Math.round(displayPercent)}%`;
+          progressStatus.textContent = p.status || '';
+          log('VIDEO', 'Progress update', p);
+
+          // Update metadata live
+          if (p.viralTitle || p.viralDesc || p.viralTags) {
+            showMetaData(p.viralTitle, p.viralDesc, p.viralTags);
+          }
+
+          if (p.percent >= 100 && (p.key || (typeof p.status === "string" && p.status.toLowerCase().startsWith('failed')) || (typeof p.status === "string" && p.status.toLowerCase().startsWith('done')) )) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+            if (simInterval) clearInterval(simInterval);
+            simInterval = null;
+            finished = true;
+            if (p.key) {
+              log('VIDEO', 'Video finished, loading video', p.key);
+
+              player.pause();
+              player.removeAttribute('src');
+              player.load();
+              player.src = `/video/${p.key}`;
+              player.setAttribute('crossorigin', 'anonymous');
+              player.style.display = 'block';
+              setTimeout(() => {
+                player.load();
+                player.muted  = false;
+                player.volume = 1.0;
+                progressStatus.textContent = 'Click ▶︎ to play your video.';
+                downloadBtn.style.display = 'inline-block';
+                shareBtn.style.display = 'inline-block';
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                setTimeout(() => { progressBarWrap.style.display = 'none'; }, 2000);
+                showThumbUpsell();
+              }, 200);
+
+            } else {
+              out.textContent = p.status || 'Generation failed.';
+              progressBarWrap.style.display = 'none';
+              logWarn('VIDEO', 'Generation failed: ', p.status);
+            }
+          }
+        } catch(e) {
+          progressStatus.textContent = 'Lost connection...';
+          logError('VIDEO', 'Polling failed', e);
+        }
+      }, 1200);
+
+    } catch (err) {
+      if (simInterval) clearInterval(simInterval);
+      simInterval = null;
+      progressStatus.textContent = 'Error generating video.';
+      progressBarWrap.style.display = 'none';
+      logError('VIDEO', 'Error generating video', err);
+    }
+  };
+
+  function makeFileNameFromIdea() {
+    let idea = document.getElementById('ideaInput').value.trim();
+    if (!idea) idea = "SocialStormAI-Video";
+    return idea.replace(/[^\w\s\-]/gi,'').replace(/\s+/g,'-').substring(0,32) + ".mp4";
+  }
+
+  document.getElementById('downloadBtn').onclick = async () => {
+    const player = document.getElementById('videoPlayer');
+    const out    = document.getElementById('output');
+    const downloadBtn = document.getElementById('downloadBtn');
+    log('DOWNLOAD', 'Download clicked');
+    try {
+      downloadBtn.disabled = true;
+      downloadBtn.textContent = "Preparing…";
+      const videoUrl = player.src;
+      const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
+      if (isMobile && navigator.canShare && navigator.canShare({ files: [] })) {
+        try {
+          const resp = await fetch(videoUrl);
+          if (!resp.ok) throw new Error("Failed to fetch video for sharing.");
+          const blob = await resp.blob();
+          const fileName = makeFileNameFromIdea();
+          const file = new File([blob], fileName, { type: blob.type });
+          await navigator.share({
+            title: 'My SocialStormAI Video',
+            files: [file],
+            text: 'Check out this video I made with SocialStorm AI!',
+          });
+          downloadBtn.textContent = "Download Video";
+          downloadBtn.disabled = false;
+          log('DOWNLOAD', 'Mobile share success');
+          return;
+        } catch (shareErr) {
+          logWarn('DOWNLOAD', 'Web Share API failed, fallback to download.', shareErr);
+        }
+      }
+      const resp = await fetch(videoUrl);
+      if (!resp.ok) throw new Error("Download failed.");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = makeFileNameFromIdea();
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=> {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = "Download Video";
+        log('DOWNLOAD', 'Download complete');
+      }, 500);
+    } catch(e) {
+      out.textContent = "Couldn't download video.";
+      downloadBtn.disabled = false;
+      downloadBtn.textContent = "Download Video";
+      logError('DOWNLOAD', e);
+    }
+  };
+
+  document.getElementById('shareBtn').onclick = async () => {
+    const player = document.getElementById('videoPlayer');
+    const url = player.src;
+    const title = document.getElementById('meta-title')?.innerText || '';
+    const description = document.getElementById('meta-description')?.innerText || '';
+    const tags = document.getElementById('meta-tags')?.innerText || '';
+    log('SHARE', 'Share clicked', { url, title, description, tags });
+
+    let subject = encodeURIComponent(title || "My SocialStormAI Video");
+    let bodyText = encodeURIComponent(`${description}\n\nTags:\n${tags}\n\nWatch the video here:\n${url}`);
+
+    const mailtoLink = `mailto:?subject=${subject}&body=${bodyText}`;
+    window.location.href = mailtoLink;
+  };
+
+  function showThumbUpsell() {
+    if (isProUser) {
+      document.getElementById('thumbIncluded').style.display = 'block';
+      document.querySelectorAll('.thumb-option').forEach(opt => opt.style.display = 'none');
+    }
+    document.getElementById('thumbnail-upsell').style.display = 'flex';
+    setTimeout(() => {
+      document.getElementById('thumbnail-upsell').scrollIntoView({behavior:'smooth',block:'center'});
+    }, 450);
+    log('THUMBNAIL', 'Thumbnail upsell displayed');
+  }
+
+  function setupSparkie() {
+    const bub = document.getElementById('chatbot-bubble');
+    bub.onclick = function() {
+      alert("Sparkie: Hey! The chat feature is coming soon. For now, send feedback or ideas through the contact page. ⚡️");
+      log('SPARKIE', 'Chatbot bubble clicked');
+    }
+  }
+});
+</script>

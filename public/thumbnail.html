@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Get Viral Thumbnails – SocialStorm AI</title>
+  <style>
+    /* ==========================
+       SECTION 1: BASE STYLES & LAYOUT
+    =========================== */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #fff;
+      color: #0a2342;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+    }
+    a { text-decoration: none; color: inherit; }
+    nav {
+      position: sticky; top: 0; background: #10141a;
+      display: flex; justify-content: center; align-items: center;
+      padding: 1rem 2rem; z-index: 1000; gap: 4rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.14);
+      min-height: 112px;
+    }
+    nav .logo { position: absolute; left: 2rem; cursor: pointer; display: flex; align-items: center; }
+    nav .logo img { height: 200px; display: block; filter: brightness(100); }
+    nav ul { display: flex; gap: 2rem; }
+    nav ul li a {
+      color: #fff; font-weight: 700; font-size: 1.09rem; letter-spacing: 0.03em;
+      transition: color 0.2s;
+    }
+    nav ul li a:hover,
+    nav ul li[aria-current="page"] a {
+      color: #00e0fe;
+      text-shadow: 0 0 8px #00e0fe55;
+    }
+    nav .btn-primary {
+      position: absolute; right: 2rem;
+      background: #00e0fe; color: #111; font-weight: 900;
+      padding: 0.65rem 1.5rem; border: none; border-radius: 8px;
+      cursor: pointer; font-size: 1.13rem;
+      box-shadow: 0 4px 14px #00e0fe44;
+      transition: background 0.2s;
+      letter-spacing: 0.01em;
+    }
+    nav .btn-primary:hover { background: #00b3c4; }
+    main.page-content {
+      flex: 1 0 auto;
+      width: 100%;
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 2.5rem 2rem 2rem 2rem;
+      display: flex; flex-direction: column; align-items: center;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 22px #00e0fe10;
+    }
+    h1 {
+      font-size: 2.1rem; font-weight: 900; color: #0a2342;
+      margin-bottom: 1.1rem; letter-spacing: -1px;
+      text-align: center;
+    }
+    .desc {
+      font-size: 1.15rem; color: #355a78; margin-bottom: 1.7rem;
+      font-weight: 600; text-align: center; max-width: 520px;
+    }
+    .input-group { width: 100%; margin-bottom: 1.6rem; }
+    .input-label { font-weight: 700; margin-bottom: 6px; color: #0a2342; }
+    .input-field, .input-box {
+      width: 100%; padding: .8rem; font-size: 1.07rem;
+      border: 2px solid #00e0fe; border-radius: 8px; font-family: inherit;
+      margin-bottom: 0.7rem; background: #f7fbff; color: #0a2342;
+    }
+    .input-box { min-height: 46px; }
+    .btn {
+      background: #00e0fe; color: #10141a;
+      border: none; padding: .82rem 2.2rem;
+      border-radius: 8px; font-weight: 900; cursor: pointer;
+      font-size: 1.11rem; box-shadow: 0 6px 18px #00e0fe34;
+      margin-bottom: 0.5rem; transition: background 0.2s, color 0.2s;
+      letter-spacing: 0.01em;
+    }
+    .btn:hover { background: #00b3c4; color: #fff; }
+    /* ==========================
+       SECTION 2: THUMBNAIL GRID
+    =========================== */
+    #thumbGrid {
+      width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 1.6rem; margin: 2.2rem 0 2rem 0;
+      min-height: 140px;
+    }
+    .thumb-preview {
+      position: relative;
+      border-radius: 12px; box-shadow: 0 4px 18px #00e0fe13;
+      overflow: hidden; background: #222;
+      cursor: pointer;
+    }
+    .thumb-preview img {
+      width: 100%; height: 120px; object-fit: cover; display: block;
+      border-radius: 12px;
+      filter: blur(0.5px) brightness(0.85);
+      transition: filter 0.3s ease;
+    }
+    .thumb-preview:hover img {
+      filter: none;
+    }
+    .thumb-watermark {
+      position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: none; z-index: 3;
+      font-size: 1.7rem; font-weight: 900;
+      color: rgba(0,224,254,0.52); text-shadow: 2px 2px 12px #0008, 0 2px 10px #fff7;
+      text-align: center; transform: rotate(-21deg);
+      user-select: none;
+      /* HIDDEN BY DEFAULT (now handled in backend PNG) */
+      display: none;
+    }
+    /* ==========================
+       SECTION 3: UNLOCK & DOWNLOAD
+    =========================== */
+    #unlockDiv {
+      width: 100%; max-width: 400px; margin: 2.2rem auto 0 auto;
+      text-align: center; padding: 2.1rem 1.7rem 1.2rem;
+      background: #eaf7fb; border-radius: 14px;
+      box-shadow: 0 4px 18px #00e0fe17;
+    }
+    #unlockDiv .btn { font-size: 1.12rem; width: 100%; }
+    #downloadLinks { margin-top: 1.2rem; }
+    #downloadLinks a {
+      display: inline-block;
+      margin: 6px 6px 6px 0;
+      padding: 6px 10px;
+      background: #00e0fe;
+      color: #10141a;
+      font-weight: 900;
+      border-radius: 6px;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    #downloadLinks a:hover {
+      background: #00b3c4;
+      color: white;
+    }
+    /* ==========================
+       SECTION 4: MOBILE STYLES
+    =========================== */
+    @media (max-width: 700px) {
+      nav { gap: 1.5rem; min-height: 60px; }
+      nav .logo img { height: 72px; }
+      main.page-content { padding: 1.2rem 0.7rem 1rem 0.7rem; }
+      #thumbGrid { gap: 0.7rem; }
+      .thumb-preview img { height: 88px; }
+      #unlockDiv { padding: 1rem 0.5rem 0.7rem; }
+    }
+  </style>
+</head>
+<body>
+  <!-- ==========================
+       SECTION 5: NAVIGATION
+  =========================== -->
+  <nav>
+    <div class="logo" onclick="location.href='index.html'">
+      <img src="logo.png" alt="SocialStorm Logo" />
+    </div>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="video.html">Create Video</a></li>
+      <li><a href="thumbnails.html" aria-current="page">Thumbnails</a></li>
+      <li><a href="pricing.html">Pricing</a></li>
+      <li><a href="about.html">About</a></li>
+      <li><a href="contact.html">Contact</a></li>
+    </ul>
+    <button class="btn-primary" onclick="location.href='video.html'">Get Started</button>
+  </nav>
+
+  <!-- ==========================
+       SECTION 6: PAGE CONTENT
+  =========================== -->
+  <main class="page-content">
+    <h1>Get 10 Viral Thumbnails for Your Video</h1>
+    <div class="desc">
+      Instantly generate eye-catching YouTube & TikTok thumbnails. Enter your topic or video idea, or create custom text. <br />
+      <b>Preview your 10-pack, watermarked. Unlock for $9.99 — or unlimited packs for $19/month.</b>
+    </div>
+    <form id="thumbForm" autocomplete="off">
+      <div class="input-group">
+        <div class="input-label">Video Topic or Keyword</div>
+        <input type="text" id="topicInput" class="input-field" placeholder="e.g. Cute Cat Tricks, Car Hacks, Meditation Tips" required />
+      </div>
+      <div class="input-group">
+        <div class="input-label">Custom Caption <span style="font-weight:400">(Optional)</span></div>
+        <input type="text" id="captionInput" class="input-field" placeholder="Enter custom thumbnail text, or leave blank for viral captions" />
+      </div>
+      <button class="btn" type="submit">Generate My Thumbnails</button>
+    </form>
+
+    <div id="thumbGrid"></div>
+
+    <div id="unlockDiv" style="display:none;">
+      <div style="font-weight:800; font-size:1.1rem; color:#00b3c4; margin-bottom:8px;">
+        Unlock All 10 Thumbnails (No Watermark)
+      </div>
+      <button class="btn" id="unlockBtn">$9.99 – Unlock & Download</button>
+      <div id="downloadLinks" style="display:none;">
+        <div style="margin:16px 0 10px 0; font-size:1.1rem; color:#0086b3;">Download your thumbnail pack:</div>
+        <a id="zipLink" class="btn" href="#" download="SocialStorm-thumbnails.zip" style="margin-bottom:10px;">Download ZIP</a>
+        <div id="singleLinks"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ==========================
+       SECTION 7: FOOTER
+  =========================== -->
+  <footer>
+    &copy; 2025 SocialStorm AI. Built for creators who want to win.
+  </footer>
+
+  <!-- ==========================
+       SECTION 8: MAIN SCRIPT (THUMBNAIL LOGIC)
+  =========================== -->
+  <script>
+    const thumbForm = document.getElementById('thumbForm');
+    const thumbGrid = document.getElementById('thumbGrid');
+    const unlockDiv = document.getElementById('unlockDiv');
+    const downloadLinks = document.getElementById('downloadLinks');
+    const singleLinks = document.getElementById('singleLinks');
+    const unlockBtn = document.getElementById('unlockBtn');
+    const zipLink = document.getElementById('zipLink');
+
+    let currentPreviews = [];
+
+    thumbForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const topic = document.getElementById('topicInput').value.trim();
+      const caption = document.getElementById('captionInput').value.trim();
+
+      thumbGrid.innerHTML = '<div style="text-align:center;font-size:1.2rem;color:#00b3c4;">Generating thumbnails...</div>';
+      unlockDiv.style.display = 'none';
+      downloadLinks.style.display = 'none';
+      singleLinks.innerHTML = '';
+      zipLink.style.display = 'inline-block';
+      zipLink.href = '#';
+
+      currentPreviews = [];
+
+      try {
+        // We assume backend returns all thumbnails in one batch for now, but
+        // can be adapted later for incremental display with websockets or SSE.
+
+        const res = await fetch('/api/generate-thumbnails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic, caption }),
+        });
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.error || 'Failed to generate thumbnails.');
+
+        currentPreviews = data.previews || [];
+
+        // Clear grid first
+        thumbGrid.innerHTML = '';
+
+        // Show thumbnails one by one with small delay for effect
+        for (let i = 0; i < currentPreviews.length; i++) {
+          const preview = currentPreviews[i];
+          const div = document.createElement('div');
+          div.className = 'thumb-preview';
+          div.title = `Thumbnail ${i + 1}`;
+          const img = document.createElement('img');
+          img.src = preview.dataUrl;
+          img.alt = `Thumbnail ${i + 1}`;
+          div.appendChild(img);
+          thumbGrid.appendChild(div);
+
+          // Delay for visual effect (optional)
+          await new Promise(r => setTimeout(r, 300));
+        }
+
+        unlockDiv.style.display = 'block';
+
+        if (data.zip) {
+          zipLink.href = data.zip;
+          zipLink.style.display = 'inline-block';
+        } else {
+          zipLink.style.display = 'none';
+        }
+
+      } catch (err) {
+        thumbGrid.innerHTML = '<div style="color:#c00;font-size:1.1rem;">Error generating thumbnails. Please try again.</div>';
+        console.error(err);
+      }
+    });
+
+    unlockBtn.addEventListener('click', () => {
+      singleLinks.innerHTML = '';
+
+      currentPreviews.forEach((preview, idx) => {
+        const link = document.createElement('a');
+        link.href = preview.dataUrl;
+        link.download = `SocialStorm-thumbnail-${idx + 1}.png`;
+        link.textContent = `Download Thumbnail ${idx + 1}`;
+        link.className = 'btn';
+        link.style.margin = '4px 0';
+        singleLinks.appendChild(link);
+      });
+
+      downloadLinks.style.display = 'block';
+    });
+  </script>
+</body>
+</html>

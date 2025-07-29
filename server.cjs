@@ -485,7 +485,6 @@ async function muxVideoWithNarration(videoWithSilence, narrationPath, outPath, d
 async function standardizeVideo(inputPath, outputPath, refInfo) {
   return new Promise((resolve, reject) => {
     let fps = refInfo.avg_frame_rate;
-    // Defensive: handle fractional avg_frame_rate string like "30/1"
     if (typeof fps === 'string' && fps.includes('/')) {
       const [n, d] = fps.split('/').map(Number);
       fps = d ? (n / d) : 30;
@@ -497,7 +496,7 @@ async function standardizeVideo(inputPath, outputPath, refInfo) {
       .audioCodec('aac')
       .format('mp4')
       .outputOptions([
-        `-vf scale=${refInfo.width}:${refInfo.height},fps=${fps}`,
+        `-vf scale=576:1024,fps=${fps}`,
         '-pix_fmt yuv420p',
         '-ar 44100',
         '-b:a 128k',
@@ -562,6 +561,37 @@ async function downloadRemoteFileToLocal(url, outPath) {
   }
 }
 
+// --- Download remote photo to local disk (same as video) ---
+async function downloadPhotoToLocal(url, outPath) {
+  return downloadRemoteFileToLocal(url, outPath);
+}
+
+// --- Ken Burns pan effect: photo to 9:16 video left/right ---
+async function makeKenBurnsVideoFromPhoto(photoPath, outVideoPath, duration, panDirection = 'left') {
+  return new Promise((resolve, reject) => {
+    // Ensure exactly 9:16 output at 576x1024, pan direction alternates
+    // Pan left: start at x=0, end at x=max; Pan right: start at x=max, end at x=0
+    // You can adjust the pan amount below if your images aren't wide enough
+    const panExpr = panDirection === 'left'
+      ? "x='(iw-576)*t/${duration}'"
+      : "x='(iw-576)*(1-t/${duration})'";
+    const filter = `[0:v]scale=iw*max(1024/ih\\,576/iw):ih*max(1024/ih\\,576/iw),crop=576:1024,zoompan=z='1':${panExpr}:y=0:d=1,setsar=1,format=yuv420p,fps=30`;
+    ffmpeg()
+      .input(photoPath)
+      .inputOptions(['-loop 1'])
+      .outputOptions([
+        '-t', String(duration),
+        '-vf', filter,
+        '-pix_fmt', 'yuv420p',
+        '-y'
+      ])
+      .output(outVideoPath)
+      .on('end', () => resolve(outVideoPath))
+      .on('error', reject)
+      .run();
+  });
+}
+
 // --- Dummy visual subject extractor (replace with GPT logic if needed) ---
 async function extractVisualSubject(line, scriptTopic = '') {
   return line;
@@ -570,6 +600,15 @@ async function extractVisualSubject(line, scriptTopic = '') {
 // --- Pick music for mood (stub for now) ---
 function pickMusicForMood(mood = null) {
   // Your music selection logic here, or return null
+  return null;
+}
+
+// --- Helper: Find photo for scene (implement your logic here) ---
+// Should search Pexels, Pixabay, Unsplash, etc.
+async function findPhotoForScene(subject, usedPhotos, allSceneTexts, mainTopic) {
+  // Your real implementation here. This is a stub.
+  // Should always avoid photos in usedPhotos.
+  // Return { url, panDirection } if found, else null
   return null;
 }
 
@@ -644,11 +683,15 @@ app.post('/api/generate-video', (req, res) => {
       let line2Subject = scenes[1]?.text || '';
       let mainTopic = title || '';
       let sharedClipUrl = null;
+      let usedVideos = new Set();
+      let usedPhotos = new Set();
+      let panDir = 'left';
 
       // ---- Extract better main subject for scene 1/2 ----
       let sharedSubject = await extractVisualSubject(line2Subject, mainTopic);
       try {
         sharedClipUrl = await findClipForScene(sharedSubject, 1, scenes.map(s => s.text), mainTopic);
+        if (sharedClipUrl) usedVideos.add(sharedClipUrl);
         console.log(`[SCENE 1&2] Selected shared clip for hook/scene2: ${sharedClipUrl}`);
       } catch (err) {
         console.error(`[ERR] Could not select shared video clip for scenes 1 & 2`, err);
@@ -659,6 +702,8 @@ app.post('/api/generate-video', (req, res) => {
         const base = sceneId;
         const audioPath = path.resolve(workDir, `${base}-audio.mp3`);
         const rawVideoPath = path.resolve(workDir, `${base}-rawvideo.mp4`);
+        const rawPhotoPath = path.resolve(workDir, `${base}-rawphoto.jpg`);
+        const panVideoPath = path.resolve(workDir, `${base}-panned.mp4`);
         const trimmedVideoPath = path.resolve(workDir, `${base}-trimmed.mp4`);
         const videoWithSilence = path.resolve(workDir, `${base}-silence.mp4`);
         const sceneMp4 = path.resolve(workDir, `${base}.mp4`);
@@ -683,6 +728,8 @@ app.post('/api/generate-video', (req, res) => {
         }
 
         let clipUrl = null;
+        let isPhoto = false;
+        let photoUrl = null;
         if (i === 0 || i === 1) {
           clipUrl = sharedClipUrl;
         } else {
@@ -690,19 +737,26 @@ app.post('/api/generate-video', (req, res) => {
             const sceneSubject = await extractVisualSubject(sceneText, mainTopic);
             console.log(`[MATCH] Scene ${i + 1} subject: "${sceneSubject}"`);
             clipUrl = await findClipForScene(sceneSubject, i, scenes.map(s => s.text), mainTopic);
+            if (clipUrl && !usedVideos.has(clipUrl)) {
+              usedVideos.add(clipUrl);
+            } else {
+              clipUrl = null;
+            }
           } catch (err) {
             console.error(`[ERR] Clip matching failed for scene ${i + 1}`, err);
           }
         }
 
-        // --- CLOSEST MATCH LOGIC STARTS HERE ---
+        // --- CLOSEST MATCH LOGIC + PHOTO FALLBACK START ---
         if (!clipUrl) {
           // Fallback #1: Try using the main topic/title
           try {
             const mainSubject = mainTopic || (title ? title : "");
             if (mainSubject && mainSubject.length > 2) {
-              clipUrl = await findClipForScene(mainSubject, i, scenes.map(s => s.text), mainTopic);
-              if (clipUrl) {
+              let fallbackClip = await findClipForScene(mainSubject, i, scenes.map(s => s.text), mainTopic);
+              if (fallbackClip && !usedVideos.has(fallbackClip)) {
+                clipUrl = fallbackClip;
+                usedVideos.add(clipUrl);
                 console.warn(`[FALLBACK] No scene match for scene ${i+1}, used main topic/title: "${mainSubject}"`);
               }
             }
@@ -713,8 +767,10 @@ app.post('/api/generate-video', (req, res) => {
             for (let j = 0; j < scenes.length; j++) {
               if (j !== i) {
                 try {
-                  clipUrl = await findClipForScene(scenes[j].text, i, scenes.map(s => s.text), mainTopic);
-                  if (clipUrl) {
+                  let fallbackClip = await findClipForScene(scenes[j].text, i, scenes.map(s => s.text), mainTopic);
+                  if (fallbackClip && !usedVideos.has(fallbackClip)) {
+                    clipUrl = fallbackClip;
+                    usedVideos.add(clipUrl);
                     console.warn(`[FALLBACK] No match for scene ${i+1}, used another scene's text ("${scenes[j].text}")`);
                     break;
                   }
@@ -728,34 +784,81 @@ app.post('/api/generate-video', (req, res) => {
             const genericWords = ['nature', 'people', 'background', 'travel', 'city', 'fun', 'animals', 'inspiration'];
             for (const word of genericWords) {
               try {
-                clipUrl = await findClipForScene(word, i, scenes.map(s => s.text), mainTopic);
-                if (clipUrl) {
+                let fallbackClip = await findClipForScene(word, i, scenes.map(s => s.text), mainTopic);
+                if (fallbackClip && !usedVideos.has(fallbackClip)) {
+                  clipUrl = fallbackClip;
+                  usedVideos.add(clipUrl);
                   console.warn(`[FALLBACK] No match for scene ${i+1}, used generic keyword: "${word}"`);
                   break;
                 }
               } catch (e) {}
             }
           }
+        }
 
-          // If STILL nothing, abort with a very clear log (should never happen now)
-          if (!clipUrl) {
-            console.error(`[FATAL] ABSOLUTELY no match could be found for scene ${i+1}. This is a library/config problem!`);
-            progress[jobId] = { percent: 100, status: `Failed: No video found for scene ${i + 1}` };
-            cleanupJob(jobId); clearTimeout(watchdog); return;
+        // --- If STILL no video, try photo search (never use same photo twice) ---
+        if (!clipUrl) {
+          try {
+            let photo = await findPhotoForScene(sceneText, usedPhotos, scenes.map(s => s.text), mainTopic);
+            if (!photo) {
+              // Fallback photo by main topic
+              photo = await findPhotoForScene(mainTopic, usedPhotos, scenes.map(s => s.text), mainTopic);
+            }
+            if (!photo) {
+              // Fallback generic photo
+              const genericWords = ['nature', 'animal', 'travel', 'city', 'background', 'landmark'];
+              for (const word of genericWords) {
+                photo = await findPhotoForScene(word, usedPhotos, scenes.map(s => s.text), mainTopic);
+                if (photo) break;
+              }
+            }
+            if (photo && photo.url && !usedPhotos.has(photo.url)) {
+              photoUrl = photo.url;
+              panDir = panDir === 'left' ? 'right' : 'left'; // Alternate pan directions
+              usedPhotos.add(photo.url);
+              isPhoto = true;
+              console.warn(`[PHOTO] Using photo for scene ${i+1}: ${photoUrl} with ${panDir} pan`);
+            }
+          } catch (err) {
+            photoUrl = null;
+            isPhoto = false;
           }
         }
-        // --- CLOSEST MATCH LOGIC ENDS HERE ---
 
+        if (!clipUrl && !isPhoto) {
+          console.error(`[FATAL] ABSOLUTELY no match (video or photo) could be found for scene ${i+1}. This is a library/config problem!`);
+          progress[jobId] = { percent: 100, status: `Failed: No video or photo found for scene ${i + 1}` };
+          cleanupJob(jobId); clearTimeout(watchdog); return;
+        }
+        // --- CLOSEST MATCH LOGIC + PHOTO FALLBACK END ---
+
+        // Download video or photo, make pan effect if needed
         try {
-          console.log(`[VIDEO] Downloading video for scene ${i + 1}…`);
-          await downloadRemoteFileToLocal(clipUrl, rawVideoPath);
-          if (!fs.existsSync(rawVideoPath) || fs.statSync(rawVideoPath).size < 10240) {
-            throw new Error(`Video output missing or too small: ${rawVideoPath}`);
+          if (clipUrl) {
+            console.log(`[VIDEO] Downloading video for scene ${i + 1}…`);
+            await downloadRemoteFileToLocal(clipUrl, rawVideoPath);
+            if (!fs.existsSync(rawVideoPath) || fs.statSync(rawVideoPath).size < 10240) {
+              throw new Error(`Video output missing or too small: ${rawVideoPath}`);
+            }
+            console.log(`[VIDEO] Downloaded for scene ${i + 1}: ${rawVideoPath}`);
+          } else if (isPhoto && photoUrl) {
+            console.log(`[PHOTO] Downloading photo for scene ${i + 1}…`);
+            await downloadPhotoToLocal(photoUrl, rawPhotoPath);
+            if (!fs.existsSync(rawPhotoPath) || fs.statSync(rawPhotoPath).size < 1024) {
+              throw new Error(`Photo output missing or too small: ${rawPhotoPath}`);
+            }
+            console.log(`[PHOTO] Downloaded for scene ${i + 1}: ${rawPhotoPath}`);
+            let audioDuration = await getAudioDuration(audioPath);
+            await makeKenBurnsVideoFromPhoto(rawPhotoPath, panVideoPath, audioDuration + 1.0, panDir);
+            if (!fs.existsSync(panVideoPath) || fs.statSync(panVideoPath).size < 10240) {
+              throw new Error(`Ken Burns video missing or too small: ${panVideoPath}`);
+            }
+            fs.copyFileSync(panVideoPath, rawVideoPath);
+            console.log(`[PHOTO] Ken Burns pan video created for scene ${i + 1}: ${panVideoPath}`);
           }
-          console.log(`[VIDEO] Downloaded for scene ${i + 1}: ${rawVideoPath}`);
         } catch (err) {
-          console.error(`[ERR] Video download failed for scene ${i + 1}`, err);
-          progress[jobId] = { percent: 100, status: `Failed: Video download error (scene ${i + 1})` };
+          console.error(`[ERR] Video/photo download failed for scene ${i + 1}`, err);
+          progress[jobId] = { percent: 100, status: `Failed: Media download error (scene ${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
@@ -819,11 +922,10 @@ app.post('/api/generate-video', (req, res) => {
       try {
         refInfo = await getVideoInfo(sceneFiles[0]);
         const v = (refInfo.streams || []).find(s => s.codec_type === 'video');
-        refInfo.width = v.width;
-        refInfo.height = v.height;
+        refInfo.width = 576;
+        refInfo.height = 1024;
         refInfo.codec_name = v.codec_name;
         refInfo.pix_fmt = v.pix_fmt;
-        // Defensive: frame rate
         refInfo.avg_frame_rate = v.avg_frame_rate || 30;
       } catch (err) {
         console.error('[ERR] Could not get reference video info:', err);
@@ -968,8 +1070,8 @@ app.post('/api/generate-video', (req, res) => {
           outroNeedsPatch =
             !v ||
             !a ||
-            v.width !== refInfo.width ||
-            v.height !== refInfo.height ||
+            v.width !== 576 ||
+            v.height !== 1024 ||
             v.codec_name !== refInfo.codec_name ||
             v.pix_fmt !== refInfo.pix_fmt;
         } catch (err) {
@@ -1044,8 +1146,6 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
-
-
 
 
 

@@ -481,23 +481,32 @@ async function muxVideoWithNarration(videoWithSilence, narrationPath, outPath, d
   });
 }
 
-// --- Standardize video to match reference (codec, pix_fmt, size, audio) ---
+// --- Hard standardize video to match reference (MP4, codec, pix_fmt, fps, audio, container) ---
 async function standardizeVideo(inputPath, outputPath, refInfo) {
   return new Promise((resolve, reject) => {
-    let cmd = ffmpeg().input(inputPath);
-    cmd = cmd.outputOptions([
-      `-vf scale=${refInfo.width}:${refInfo.height}`,
-      '-c:v libx264',
-      '-pix_fmt yuv420p',
-      '-c:a aac',
-      '-ar 44100',
-      '-b:a 128k',
-      '-movflags +faststart',
-      '-y'
-    ]);
-    cmd.save(outputPath)
+    let fps = refInfo.avg_frame_rate;
+    // Defensive: handle fractional avg_frame_rate string like "30/1"
+    if (typeof fps === 'string' && fps.includes('/')) {
+      const [n, d] = fps.split('/').map(Number);
+      fps = d ? (n / d) : 30;
+    }
+    fps = fps || 30;
+    ffmpeg()
+      .input(inputPath)
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .format('mp4')
+      .outputOptions([
+        `-vf scale=${refInfo.width}:${refInfo.height},fps=${fps}`,
+        '-pix_fmt yuv420p',
+        '-ar 44100',
+        '-b:a 128k',
+        '-movflags +faststart',
+        '-y'
+      ])
       .on('end', () => resolve(outputPath))
-      .on('error', reject);
+      .on('error', reject)
+      .save(outputPath);
   });
 }
 
@@ -814,33 +823,23 @@ app.post('/api/generate-video', (req, res) => {
         refInfo.height = v.height;
         refInfo.codec_name = v.codec_name;
         refInfo.pix_fmt = v.pix_fmt;
+        // Defensive: frame rate
+        refInfo.avg_frame_rate = v.avg_frame_rate || 30;
       } catch (err) {
         console.error('[ERR] Could not get reference video info:', err);
         progress[jobId] = { percent: 100, status: 'Failed: Reference video info error' };
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // Standardize all scene files to match reference
+      // HARD RE-ENCODE: Standardize every scene file to bulletproof for concat
       for (let i = 0; i < sceneFiles.length; i++) {
         try {
-          const info = await getVideoInfo(sceneFiles[i]);
-          const v = (info.streams || []).find(s => s.codec_type === 'video');
-          const a = (info.streams || []).find(s => s.codec_type === 'audio');
-          const needsFix =
-            !v ||
-            v.codec_name !== refInfo.codec_name ||
-            v.width !== refInfo.width ||
-            v.height !== refInfo.height ||
-            v.pix_fmt !== refInfo.pix_fmt ||
-            !a;
-          if (needsFix) {
-            const fixedPath = sceneFiles[i].replace(/\.mp4$/, '-fixed.mp4');
-            await standardizeVideo(sceneFiles[i], fixedPath, refInfo);
-            fs.renameSync(fixedPath, sceneFiles[i]);
-            console.log(`[BULLETPROOF] Fixed scene ${i + 1} video: ${sceneFiles[i]}`);
-          }
+          const fixedPath = sceneFiles[i].replace(/\.mp4$/, '-fixed.mp4');
+          await standardizeVideo(sceneFiles[i], fixedPath, refInfo);
+          fs.renameSync(fixedPath, sceneFiles[i]);
+          console.log(`[BULLETPROOF] Hard-standardized scene ${i + 1} video: ${sceneFiles[i]}`);
         } catch (err) {
-          console.error(`[ERR] Bulletproof check failed for scene ${i + 1}`, err);
+          console.error(`[ERR] Bulletproof hard-encode failed for scene ${i + 1}`, err);
           progress[jobId] = { percent: 100, status: `Failed: Scene video validation error (${i + 1})` };
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
@@ -1045,6 +1044,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

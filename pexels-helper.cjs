@@ -239,7 +239,7 @@ async function downloadRemoteFileToLocal(url, outPath) {
   }
 }
 
-// --- Script splitter: splits raw script into array of { id, text } ---
+// --- Script splitter: splits raw script into array of { id, text } ----
 function splitScriptToScenes(script) {
   if (!script) return [];
   return script

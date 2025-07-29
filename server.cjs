@@ -404,28 +404,7 @@ const AWS = require('aws-sdk');
 const { v4: uuidv4 } = require('uuid');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
-// === DUMMY/EXAMPLE HELPERS & CONSTANTS (Replace with your real logic) ===
-const cleanupJob = (jobId) => { /* Clean temp files, progress, etc */ };
-const progress = {};
-// Example list of supported voices for Polly check (replace with your full list)
-const POLLY_VOICE_IDS = [
-  'Matthew', 'Joanna', 'Joey', 'Brian', 'Kimberly', 'Salli', 'Russell', 'Amy'
-];
-// Example voice object (replace with your real voices)
-const voices = [
-  { id: 'Matthew', provider: 'polly' },
-  { id: 'Joanna', provider: 'polly' },
-  // ...add your other voices here
-];
-// S3 Client for R2 uploads
-const s3Client = new S3Client({
-  endpoint: process.env.R2_ENDPOINT,
-  region: 'auto',
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-});
+
 
 // === Define splitScriptToScenes and findClipForScene if not already defined globally ===
 function splitScriptToScenes(script) {
@@ -1076,7 +1055,7 @@ app.post('/api/generate-video', (req, res) => {
 
 
 
-/* ===========================================================
+/* ============================================================
    SECTION 6: THUMBNAIL GENERATION ENDPOINT
    -----------------------------------------------------------
    - POST /api/generate-thumbnails

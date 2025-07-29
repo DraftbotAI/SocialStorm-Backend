@@ -3,8 +3,7 @@
    -----------------------------------------------------------
    - Finds the best-matching video clip for a scene.
    - Search order: R2 > Pexels > Pixabay (fallback)
-   - If no video: Searches Pexels/Pixelbay for photo, returns with marker.
-   - NEVER reuses photo or video in a single job.
+   - Improved visual subject extraction (no AI, just rules)
    - Handles all download/streaming and normalization.
    =========================================================== */
 
@@ -84,7 +83,7 @@ async function listAllFilesInR2(s3Client, prefix = '') {
   return files;
 }
 
-async function findClipInR2(subject, s3Client, usedMedia) {
+async function findClipInR2(subject, s3Client) {
   if (!s3Client) throw new Error('[R2] s3Client not provided!');
   try {
     const files = await listAllFilesInR2(s3Client, '');
@@ -95,7 +94,7 @@ async function findClipInR2(subject, s3Client, usedMedia) {
     let best = null;
     for (let file of files) {
       const normFile = normalize(file);
-      if (!usedMedia.has(file) && normFile.includes(normQuery)) {
+      if (normFile.includes(normQuery)) {
         best = file;
         break;
       }
@@ -105,18 +104,17 @@ async function findClipInR2(subject, s3Client, usedMedia) {
       const words = subject.split(/\s+/).map(normalize).filter(Boolean);
       for (let file of files) {
         const normFile = normalize(file);
-        if (!usedMedia.has(file) && words.every(w => normFile.includes(w))) {
+        if (words.every(w => normFile.includes(w))) {
           best = file;
           break;
         }
       }
     }
     if (best) {
-      usedMedia.add(best);
       console.log(`[R2] Found match: ${best}`);
       let url = R2_ENDPOINT.endsWith('/') ? R2_ENDPOINT : (R2_ENDPOINT + '/');
       url += `${R2_LIBRARY_BUCKET}/${best}`;
-      return { type: 'video', url };
+      return url; // Always returns a string
     }
     console.log('[R2] No match found for:', subject);
     return null;
@@ -126,29 +124,26 @@ async function findClipInR2(subject, s3Client, usedMedia) {
   }
 }
 
-// --- PEXELS VIDEO FALLBACK ---
-async function findClipInPexels(subject, usedMedia) {
+// --- PEXELS FALLBACK ---
+async function findClipInPexels(subject) {
   if (!PEXELS_API_KEY) {
     console.warn('[PEXELS] No API key set.');
     return null;
   }
   try {
     const query = encodeURIComponent(subject);
-    const url = `https://api.pexels.com/videos/search?query=${query}&per_page=8`;
+    const url = `https://api.pexels.com/videos/search?query=${query}&per_page=5`;
     const resp = await axios.get(url, { headers: { Authorization: PEXELS_API_KEY } });
     if (resp.data && resp.data.videos && resp.data.videos.length > 0) {
-      // Never return a used video (by original URL)
       const sorted = resp.data.videos.sort((a, b) => (b.width * b.height) - (a.width * a.height));
-      for (const vid of sorted) {
-        const fileLink = vid.video_files.find(f => f.quality === 'hd') || vid.video_files[0];
-        if (!usedMedia.has(fileLink.link)) {
-          usedMedia.add(fileLink.link);
-          console.log('[PEXELS] Clip found:', fileLink.link);
-          return { type: 'video', url: fileLink.link };
-        }
+      const bestClip = sorted[0];
+      const fileLink = bestClip.video_files.find(f => f.quality === 'hd') || bestClip.video_files[0];
+      if (fileLink && fileLink.link) {
+        console.log('[PEXELS] Clip found:', fileLink.link);
+        return fileLink.link; // ONLY the URL as a string
       }
     }
-    console.log('[PEXELS] No video match found for:', subject);
+    console.log('[PEXELS] No match found for:', subject);
     return null;
   } catch (err) {
     console.error('[PEXELS] Request failed:', err.response ? err.response.status : err);
@@ -156,27 +151,24 @@ async function findClipInPexels(subject, usedMedia) {
   }
 }
 
-// --- PIXABAY VIDEO FALLBACK ---
-async function findClipInPixabay(subject, usedMedia) {
+// --- PIXABAY FALLBACK ---
+async function findClipInPixabay(subject) {
   if (!PIXABAY_API_KEY) {
     console.warn('[PIXABAY] No API key set.');
     return null;
   }
   try {
     const query = encodeURIComponent(subject);
-    const url = `https://pixabay.com/api/videos/?key=${PIXABAY_API_KEY}&q=${query}&per_page=8`;
+    const url = `https://pixabay.com/api/videos/?key=${PIXABAY_API_KEY}&q=${query}&per_page=5`;
     const resp = await axios.get(url);
     if (resp.data && resp.data.hits && resp.data.hits.length > 0) {
-      for (const hit of resp.data.hits) {
-        const clipUrl = hit.videos.large.url;
-        if (!usedMedia.has(clipUrl)) {
-          usedMedia.add(clipUrl);
-          console.log('[PIXABAY] Clip found:', clipUrl);
-          return { type: 'video', url: clipUrl };
-        }
+      const best = resp.data.hits.sort((a, b) => (b.videos.large.width * b.videos.large.height) - (a.videos.large.width * a.videos.large.height))[0];
+      if (best && best.videos && best.videos.large && best.videos.large.url) {
+        console.log('[PIXABAY] Clip found:', best.videos.large.url);
+        return best.videos.large.url; // ONLY the URL as a string
       }
     }
-    console.log('[PIXABAY] No video match found for:', subject);
+    console.log('[PIXABAY] No match found for:', subject);
     return null;
   } catch (err) {
     console.error('[PIXABAY] Request failed:', err.response ? err.response.status : err);
@@ -184,88 +176,25 @@ async function findClipInPixabay(subject, usedMedia) {
   }
 }
 
-// --- PEXELS PHOTO FALLBACK ---
-async function findPhotoInPexels(subject, usedMedia) {
-  if (!PEXELS_API_KEY) return null;
-  try {
-    const query = encodeURIComponent(subject);
-    const url = `https://api.pexels.com/v1/search?query=${query}&per_page=8`;
-    const resp = await axios.get(url, { headers: { Authorization: PEXELS_API_KEY } });
-    if (resp.data && resp.data.photos && resp.data.photos.length > 0) {
-      for (const photo of resp.data.photos) {
-        if (!usedMedia.has(photo.src.large2x)) {
-          usedMedia.add(photo.src.large2x);
-          console.log('[PEXELS PHOTO] Found:', photo.src.large2x);
-          return { type: 'photo', url: photo.src.large2x };
-        }
-      }
-    }
-    console.log('[PEXELS PHOTO] No photo found for:', subject);
-    return null;
-  } catch (err) {
-    console.error('[PEXELS PHOTO] Request failed:', err.response ? err.response.status : err);
-    return null;
-  }
-}
-
-// --- PIXABAY PHOTO FALLBACK ---
-async function findPhotoInPixabay(subject, usedMedia) {
-  if (!PIXABAY_API_KEY) return null;
-  try {
-    const query = encodeURIComponent(subject);
-    const url = `https://pixabay.com/api/?key=${PIXABAY_API_KEY}&q=${query}&image_type=photo&per_page=8`;
-    const resp = await axios.get(url);
-    if (resp.data && resp.data.hits && resp.data.hits.length > 0) {
-      for (const hit of resp.data.hits) {
-        if (!usedMedia.has(hit.largeImageURL)) {
-          usedMedia.add(hit.largeImageURL);
-          console.log('[PIXABAY PHOTO] Found:', hit.largeImageURL);
-          return { type: 'photo', url: hit.largeImageURL };
-        }
-      }
-    }
-    console.log('[PIXABAY PHOTO] No photo found for:', subject);
-    return null;
-  } catch (err) {
-    console.error('[PIXABAY PHOTO] Request failed:', err.response ? err.response.status : err);
-    return null;
-  }
-}
-
-// --- MAIN MATCHER: R2 → PEXELS → PIXABAY → PHOTO FALLBACKS ---
-async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client, usedMedia = new Set()) {
+// --- MAIN MATCHER: R2 → PEXELS → PIXABAY ---
+async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client) {
   const subject = extractVisualSubject(sceneText, title || '');
   console.log(`[MATCH] Scene ${idx + 1} subject: "${subject}"`);
 
   // 1. Try R2 first
   if (s3Client) {
-    const r2 = await findClipInR2(subject, s3Client, usedMedia);
-    if (r2) return r2;
-  }
-  // 2. Try Pexels Video
-  const pexels = await findClipInPexels(subject, usedMedia);
-  if (pexels) return pexels;
-  // 3. Try Pixabay Video
-  const pixabay = await findClipInPixabay(subject, usedMedia);
-  if (pixabay) return pixabay;
-  // 4. Try Pexels Photo
-  const pexelsPhoto = await findPhotoInPexels(subject, usedMedia);
-  if (pexelsPhoto) return pexelsPhoto;
-  // 5. Try Pixabay Photo
-  const pixabayPhoto = await findPhotoInPixabay(subject, usedMedia);
-  if (pixabayPhoto) return pixabayPhoto;
-
-  // 6. Absolute last fallback: generic word photos (nature/people/etc), but NEVER repeat
-  const genericWords = ['nature', 'people', 'background', 'travel', 'city', 'fun', 'animals', 'inspiration'];
-  for (const word of genericWords) {
-    const p1 = await findPhotoInPexels(word, usedMedia);
-    if (p1) return p1;
-    const p2 = await findPhotoInPixabay(word, usedMedia);
-    if (p2) return p2;
+    const r2Url = await findClipInR2(subject, s3Client);
+    if (typeof r2Url === 'string' && r2Url.startsWith('http')) return r2Url;
   }
 
-  // 7. Still nothing: log and return null (rare)
-  console.error('[MATCH] ABSOLUTELY no media found for:', subject);
+  // 2. Try Pexels
+  const pexelsUrl = await findClipInPexels(subject);
+  if (typeof pexelsUrl === 'string' && pexelsUrl.startsWith('http')) return pexelsUrl;
+
+  // 3. Try Pixabay
+  const pixabayUrl = await findClipInPixabay(subject);
+  if (typeof pixabayUrl === 'string' && pixabayUrl.startsWith('http')) return pixabayUrl;
+
   return null;
 }
 

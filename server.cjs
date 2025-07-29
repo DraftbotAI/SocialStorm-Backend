@@ -395,6 +395,31 @@ Tags: secrets landmarks mystery history viral
 
 console.log('[INIT] Video generation endpoint initialized');
 
+// --- Helper: Download remote file to local disk (uses axios) ---
+const downloadRemoteFileToLocal = async (url, outPath) => {
+  const writer = fs.createWriteStream(outPath);
+  try {
+    const response = await axios({
+      url,
+      method: 'GET',
+      responseType: 'stream',
+      timeout: 90000,
+    });
+    response.data.pipe(writer);
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+    if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 2048) {
+      throw new Error(`Downloaded file missing or too small: ${outPath}`);
+    }
+    return outPath;
+  } catch (err) {
+    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    throw new Error(`Failed to download remote file: ${url} => ${err.message}`);
+  }
+};
+
 // Helper: Get audio duration in seconds using ffprobe
 const getAudioDuration = (audioPath) => {
   return new Promise((resolve, reject) => {
@@ -539,7 +564,6 @@ const pickMusicForMood = (mood = null) => {
 
 // --- Amazon Polly TTS ---
 async function generatePollyTTS(text, voiceId, outPath) {
-  // Real implementation
   const polly = new AWS.Polly();
   const params = {
     OutputFormat: 'mp3',
@@ -552,12 +576,12 @@ async function generatePollyTTS(text, voiceId, outPath) {
   console.log(`[POLLY] Generated TTS audio: ${outPath}`);
 }
 
-// --- Google TTS (stub, safe and clear error) ---
+// --- Google TTS (stub) ---
 async function generateGoogleTTS(text, voiceId, outPath) {
   throw new Error('Google TTS not implemented');
 }
 
-// --- ElevenLabs TTS (stub, safe and clear error) ---
+// --- ElevenLabs TTS (stub) ---
 async function generateElevenLabsTTS(text, voiceId, outPath) {
   throw new Error('ElevenLabs TTS not implemented');
 }

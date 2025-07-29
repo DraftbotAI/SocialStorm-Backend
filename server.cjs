@@ -397,13 +397,7 @@ Tags: secrets landmarks mystery history viral
 console.log('[INIT] Video generation endpoint initialized');
 
 
-function splitScriptToScenes(script) {
-  // Replace with your actual scene splitting logic!
-  return script
-    .split('\n')
-    .filter(line => line.trim())
-    .map((text, i) => ({ id: `scene${i+1}`, text: text.trim() }));
-}
+
 async function findClipForScene(subject, idx, allLines, mainTopic) {
   // Replace with your actual matching logic! Here, just return a placeholder video URL.
   return 'https://samplelib.com/mp4/sample-5s.mp4';

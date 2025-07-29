@@ -396,37 +396,12 @@ Tags: secrets landmarks mystery history viral
 
 console.log('[INIT] Video generation endpoint initialized');
 
-
-
-async function findClipForScene(subject, idx, allLines, mainTopic) {
-  // Replace with your actual matching logic! Here, just return a placeholder video URL.
-  return 'https://samplelib.com/mp4/sample-5s.mp4';
-}
-
-// --- Helper: Download remote file to local disk (uses axios) ---
-const downloadRemoteFileToLocal = async (url, outPath) => {
-  const writer = fs.createWriteStream(outPath);
-  try {
-    const response = await axios({
-      url,
-      method: 'GET',
-      responseType: 'stream',
-      timeout: 90000,
-    });
-    response.data.pipe(writer);
-    await new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
-    if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 2048) {
-      throw new Error(`Downloaded file missing or too small: ${outPath}`);
-    }
-    return outPath;
-  } catch (err) {
-    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
-    throw new Error(`Failed to download remote file: ${url} => ${err.message}`);
-  }
-};
+// -- Load helpers from pexels-helper.cjs ONLY (DO NOT REDECLARE!) --
+const {
+  splitScriptToScenes,
+  findClipForScene,
+  downloadRemoteFileToLocal
+} = require('./pexels-helper.cjs');
 
 // Helper: Get audio duration in seconds using ffprobe
 const getAudioDuration = (audioPath) => {
@@ -449,7 +424,6 @@ const getVideoInfo = (filePath) => {
 };
 
 // Helper: Standardize video (codec, pix_fmt, size, audio stream)
-// Not used for 9:16 since we normalize below, but left for legacy fallback.
 const standardizeVideo = async (inputPath, outputPath, refInfo) => {
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg().input(inputPath);
@@ -472,14 +446,11 @@ const standardizeVideo = async (inputPath, outputPath, refInfo) => {
 // === NEW: Normalize video to 9:16 w/ blurred background ===
 const normalizeTo9x16Blurred = async (inputPath, outputPath, targetW=1080, targetH=1920) => {
   return new Promise((resolve, reject) => {
-    // This filter: blurred background, input on top, both centered.
-    // Steps: 1) Create blurred background, 2) Overlay original, scaled to fit
     const vf = `
       [0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,boxblur=16:1,scale=${targetW}:${targetH}[bg];
       [0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease[fg];
       [bg][fg]overlay=(W-w)/2:(H-h)/2
-    `.replace(/\s+/g, ''); // ffmpeg hates newlines
-
+    `.replace(/\s+/g, '');
     ffmpeg(inputPath)
       .videoFilters(vf)
       .outputOptions(['-c:v libx264', '-pix_fmt yuv420p', '-c:a copy', '-y'])

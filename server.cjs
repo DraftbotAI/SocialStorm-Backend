@@ -686,10 +686,56 @@ app.post('/api/generate-video', (req, res) => {
           }
         }
 
+        // --- CLOSEST MATCH LOGIC STARTS HERE ---
         if (!clipUrl) {
-          progress[jobId] = { percent: 100, status: `Failed: No video found for scene ${i + 1}` };
-          cleanupJob(jobId); clearTimeout(watchdog); return;
+          // Fallback #1: Try using the main topic/title
+          try {
+            const mainSubject = mainTopic || (title ? title : "");
+            if (mainSubject && mainSubject.length > 2) {
+              clipUrl = await findClipForScene(mainSubject, i, scenes.map(s => s.text), mainTopic);
+              if (clipUrl) {
+                console.warn(`[FALLBACK] No scene match for scene ${i+1}, used main topic/title: "${mainSubject}"`);
+              }
+            }
+          } catch (e) {}
+
+          // Fallback #2: Try any other scene text as a broad search (choose the first successful)
+          if (!clipUrl) {
+            for (let j = 0; j < scenes.length; j++) {
+              if (j !== i) {
+                try {
+                  clipUrl = await findClipForScene(scenes[j].text, i, scenes.map(s => s.text), mainTopic);
+                  if (clipUrl) {
+                    console.warn(`[FALLBACK] No match for scene ${i+1}, used another scene's text ("${scenes[j].text}")`);
+                    break;
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+
+          // Fallback #3: Try generic words
+          if (!clipUrl) {
+            const genericWords = ['nature', 'people', 'background', 'travel', 'city', 'fun', 'animals', 'inspiration'];
+            for (const word of genericWords) {
+              try {
+                clipUrl = await findClipForScene(word, i, scenes.map(s => s.text), mainTopic);
+                if (clipUrl) {
+                  console.warn(`[FALLBACK] No match for scene ${i+1}, used generic keyword: "${word}"`);
+                  break;
+                }
+              } catch (e) {}
+            }
+          }
+
+          // If STILL nothing, abort with a very clear log (should never happen now)
+          if (!clipUrl) {
+            console.error(`[FATAL] ABSOLUTELY no match could be found for scene ${i+1}. This is a library/config problem!`);
+            progress[jobId] = { percent: 100, status: `Failed: No video found for scene ${i + 1}` };
+            cleanupJob(jobId); clearTimeout(watchdog); return;
+          }
         }
+        // --- CLOSEST MATCH LOGIC ENDS HERE ---
 
         try {
           console.log(`[VIDEO] Downloading video for scene ${i + 1}…`);
@@ -999,6 +1045,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

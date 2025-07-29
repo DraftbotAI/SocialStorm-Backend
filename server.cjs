@@ -396,14 +396,31 @@ Tags: secrets landmarks mystery history viral
 
 console.log('[INIT] Video generation endpoint initialized');
 
-// -- Load helpers from pexels-helper.cjs ONLY (DO NOT REDECLARE!) --
+// ---- Load helpers from pexels-helper.cjs ONLY (NO DOUBLE DECLARATIONS) ----
 const {
   splitScriptToScenes,
   findClipForScene,
   downloadRemoteFileToLocal
 } = require('./pexels-helper.cjs');
 
-// Helper: Get audio duration in seconds using ffprobe
+// Core dependencies (these should ONLY be loaded in Section 1 globally; DO NOT redeclare here if already global)
+const fs = require('fs');
+const path = require('path');
+const ffmpeg = require('fluent-ffmpeg');
+const { v4: uuidv4 } = require('uuid');
+const AWS = require('aws-sdk');
+const { PutObjectCommand } = require('@aws-sdk/client-s3');
+
+// -- External objects expected to be global --
+/*
+  - app (Express instance)
+  - s3Client (Cloudflare R2 client, properly configured)
+  - progress (progress state object)
+  - cleanupJob (job cleanup helper)
+  - voices (all available voices w/ provider key)
+  - POLLY_VOICE_IDS (array of valid Polly voice IDs)
+*/
+
 const getAudioDuration = (audioPath) => {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(audioPath, (err, metadata) => {
@@ -413,7 +430,6 @@ const getAudioDuration = (audioPath) => {
   });
 };
 
-// Helper: Get video info (codec, size, pix_fmt, streams, duration)
 const getVideoInfo = (filePath) => {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
@@ -423,7 +439,6 @@ const getVideoInfo = (filePath) => {
   });
 };
 
-// Helper: Standardize video (codec, pix_fmt, size, audio stream)
 const standardizeVideo = async (inputPath, outputPath, refInfo) => {
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg().input(inputPath);
@@ -443,8 +458,8 @@ const standardizeVideo = async (inputPath, outputPath, refInfo) => {
   });
 };
 
-// === NEW: Normalize video to 9:16 w/ blurred background ===
-const normalizeTo9x16Blurred = async (inputPath, outputPath, targetW=1080, targetH=1920) => {
+// === Normalize video to 9:16 w/ blurred background (TikTok format) ===
+const normalizeTo9x16Blurred = async (inputPath, outputPath, targetW = 1080, targetH = 1920) => {
   return new Promise((resolve, reject) => {
     const vf = `
       [0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,boxblur=16:1,scale=${targetW}:${targetH}[bg];
@@ -500,7 +515,6 @@ const trimVideo = (inPath, outPath, duration, seek = 0) => {
   });
 };
 
-// Helper: Add a silent AAC audio track (always remux video with silence)
 const addSilentAudioTrack = (inPath, outPath, duration) => {
   return new Promise((resolve, reject) => {
     ffmpeg()
@@ -520,7 +534,6 @@ const addSilentAudioTrack = (inPath, outPath, duration) => {
   });
 };
 
-// Helper: Replace video’s audio with narration (no mix, narration only)
 const muxVideoWithNarration = (videoWithSilence, narrationPath, outPath, duration) => {
   return new Promise((resolve, reject) => {
     ffmpeg()
@@ -547,7 +560,6 @@ const muxVideoWithNarration = (videoWithSilence, narrationPath, outPath, duratio
   });
 };
 
-// Helper: Select music file by mood (folder-based), returns full path or null
 const pickMusicForMood = (mood = null) => {
   try {
     const musicRoot = path.resolve(__dirname, 'public', 'assets', 'music_library');

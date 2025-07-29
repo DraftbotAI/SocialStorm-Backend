@@ -3,6 +3,7 @@
    -----------------------------------------------------------
    - Finds the best-matching video clip for a scene.
    - Search order: R2 > Pexels > Pixabay (fallback)
+   - If no video: gets an image, creates a slow pan video (L→R or R→L)
    - Improved visual subject extraction (no AI, just rules)
    - Handles all download/streaming and normalization.
    - **MAXIMUM LOGGING IN EVERY FUNCTION**
@@ -13,6 +14,8 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { v4: uuidv4 } = require('uuid');
+const { exec } = require('child_process');
 
 // ENV
 const R2_LIBRARY_BUCKET = process.env.R2_LIBRARY_BUCKET || 'socialstorm-library';
@@ -158,7 +161,7 @@ async function findClipInR2(subject, s3Client) {
   }
 }
 
-// --- PEXELS FALLBACK ---
+// --- PEXELS VIDEO FALLBACK ---
 async function findClipInPexels(subject) {
   console.log(`[PEXELS] findClipInPexels | subject="${subject}"`);
   if (!PEXELS_API_KEY) {
@@ -195,7 +198,7 @@ async function findClipInPexels(subject) {
   }
 }
 
-// --- PIXABAY FALLBACK ---
+// --- PIXABAY VIDEO FALLBACK ---
 async function findClipInPixabay(subject) {
   console.log(`[PIXABAY] findClipInPixabay | subject="${subject}"`);
   if (!PIXABAY_API_KEY) {
@@ -229,50 +232,100 @@ async function findClipInPixabay(subject) {
   }
 }
 
-// --- MAIN MATCHER: R2 → PEXELS → PIXABAY ---
-async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client) {
-  console.log(`[MATCH] findClipForScene called | idx=${idx} | sceneText="${sceneText}" | title="${title}"`);
-  if (allLines && allLines.length) console.log(`[MATCH] All lines for context:`, allLines);
-  const subject = extractVisualSubject(sceneText, title || '');
-  console.log(`[MATCH] Scene ${idx + 1} subject after extraction: "${subject}"`);
+// === STILL IMAGE FALLBACKS (PEXELS/PIXABAY) ===
+async function findImageInPexels(subject) {
+  console.log(`[PEXELS-IMG] Searching for still image | subject="${subject}"`);
+  if (!PEXELS_API_KEY) {
+    console.warn('[PEXELS-IMG] No API key set.');
+    return null;
+  }
+  try {
+    const query = encodeURIComponent(subject);
+    const url = `https://api.pexels.com/v1/search?query=${query}&per_page=5`;
+    console.log(`[PEXELS-IMG] Request: ${url}`);
+    const resp = await axios.get(url, { headers: { Authorization: PEXELS_API_KEY } });
+    if (resp.data && resp.data.photos && resp.data.photos.length > 0) {
+      const best = resp.data.photos[0];
+      console.log(`[PEXELS-IMG] Found image: ${best.src.original}`);
+      return best.src.original;
+    }
+    console.log(`[PEXELS-IMG] No images found for: "${subject}"`);
+    return null;
+  } catch (err) {
+    if (err.response) {
+      console.error(`[PEXELS-IMG] Request failed. Status: ${err.response.status}, Data:`, err.response.data);
+    } else {
+      console.error('[PEXELS-IMG] Request failed:', err);
+    }
+    return null;
+  }
+}
 
-  // 1. Try R2 first
-  if (s3Client) {
-    try {
-      const r2Url = await findClipInR2(subject, s3Client);
-      if (typeof r2Url === 'string' && r2Url.startsWith('http')) {
-        console.log(`[MATCH] Matched in R2: ${r2Url}`);
-        return r2Url;
+async function findImageInPixabay(subject) {
+  console.log(`[PIXABAY-IMG] Searching for still image | subject="${subject}"`);
+  if (!PIXABAY_API_KEY) {
+    console.warn('[PIXABAY-IMG] No API key set.');
+    return null;
+  }
+  try {
+    const query = encodeURIComponent(subject);
+    const url = `https://pixabay.com/api/?key=${PIXABAY_API_KEY}&q=${query}&image_type=photo&per_page=5`;
+    console.log(`[PIXABAY-IMG] Request: ${url}`);
+    const resp = await axios.get(url);
+    if (resp.data && resp.data.hits && resp.data.hits.length > 0) {
+      const best = resp.data.hits[0];
+      if (best && best.largeImageURL) {
+        console.log(`[PIXABAY-IMG] Found image: ${best.largeImageURL}`);
+        return best.largeImageURL;
       }
-    } catch (err) {
-      console.error('[MATCH] Error in findClipInR2:', err);
     }
-  }
-
-  // 2. Try Pexels
-  try {
-    const pexelsUrl = await findClipInPexels(subject);
-    if (typeof pexelsUrl === 'string' && pexelsUrl.startsWith('http')) {
-      console.log(`[MATCH] Matched in Pexels: ${pexelsUrl}`);
-      return pexelsUrl;
-    }
+    console.log(`[PIXABAY-IMG] No images found for: "${subject}"`);
+    return null;
   } catch (err) {
-    console.error('[MATCH] Error in findClipInPexels:', err);
-  }
-
-  // 3. Try Pixabay
-  try {
-    const pixabayUrl = await findClipInPixabay(subject);
-    if (typeof pixabayUrl === 'string' && pixabayUrl.startsWith('http')) {
-      console.log(`[MATCH] Matched in Pixabay: ${pixabayUrl}`);
-      return pixabayUrl;
+    if (err.response) {
+      console.error(`[PIXABAY-IMG] Request failed. Status: ${err.response.status}, Data:`, err.response.data);
+    } else {
+      console.error('[PIXABAY-IMG] Request failed:', err);
     }
-  } catch (err) {
-    console.error('[MATCH] Error in findClipInPixabay:', err);
+    return null;
   }
+}
 
-  console.warn(`[MATCH] No match found for scene "${sceneText}" (subject="${subject}") in any source.`);
-  return null;
+// --- Ken Burns Effect: Make Video From Image (FFmpeg) ---
+async function makeKenBurnsVideoFromImage(imgPath, outPath, duration = 5) {
+  // Randomize pan direction: 0 = left→right, 1 = right→left
+  const direction = Math.random() > 0.5 ? 'ltr' : 'rtl';
+  console.log(`[KENBURNS] Creating Ken Burns pan video (${direction}) | ${imgPath} → ${outPath} (${duration}s)`);
+
+  // Make sure image exists
+  if (!fs.existsSync(imgPath)) throw new Error('[KENBURNS] Image does not exist: ' + imgPath);
+
+  // Video size: 1080x1920 (vertical)
+  const width = 1080, height = 1920;
+  // Pan effect: Move image horizontally (slow, only once)
+  // - For LTR: start at x=0, end at x=(img_width - width)
+  // - For RTL: start at x=(img_width - width), end at x=0
+  // The FFmpeg filter will compute these values
+  const filter = direction === 'ltr'
+    ? `[0:v]scale=${width*1.4}:${height*1.4},crop=${width}:${height}:x='(iw-${width})*t/${duration}',setpts=PTS-STARTPTS[v]`
+    : `[0:v]scale=${width*1.4}:${height*1.4},crop=${width}:${height}:x='(iw-${width})-(iw-${width})*t/${duration}',setpts=PTS-STARTPTS[v]`;
+
+  const ffmpegCmd = `ffmpeg -y -loop 1 -i "${imgPath}" -filter_complex "${filter}" -map "[v]" -t ${duration} -r 30 -pix_fmt yuv420p -c:v libx264 "${outPath}"`;
+  console.log(`[KENBURNS] Running FFmpeg: ${ffmpegCmd}`);
+
+  return new Promise((resolve, reject) => {
+    exec(ffmpegCmd, (error, stdout, stderr) => {
+      if (error) {
+        console.error('[KENBURNS] FFmpeg error:', error, stderr);
+        return reject(error);
+      }
+      if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 4096) {
+        return reject(new Error('[KENBURNS] Output video not created or too small'));
+      }
+      console.log('[KENBURNS] Ken Burns pan video created:', outPath);
+      resolve(outPath);
+    });
+  });
 }
 
 // --- Download function: saves a remote file to disk with logging ---
@@ -317,6 +370,84 @@ async function downloadRemoteFileToLocal(url, outPath) {
     console.error('[DL] Download failed:', url, err);
     throw err;
   }
+}
+
+// --- MAIN MATCHER: R2 → PEXELS → PIXABAY → IMAGE → KenBurns ---
+async function findClipForScene(sceneText, idx, allLines = [], title = '', s3Client) {
+  console.log(`[MATCH] findClipForScene called | idx=${idx} | sceneText="${sceneText}" | title="${title}"`);
+  if (allLines && allLines.length) console.log(`[MATCH] All lines for context:`, allLines);
+  const subject = extractVisualSubject(sceneText, title || '');
+  console.log(`[MATCH] Scene ${idx + 1} subject after extraction: "${subject}"`);
+
+  // 1. Try R2 first
+  if (s3Client) {
+    try {
+      const r2Url = await findClipInR2(subject, s3Client);
+      if (typeof r2Url === 'string' && r2Url.startsWith('http')) {
+        console.log(`[MATCH] Matched in R2: ${r2Url}`);
+        return r2Url;
+      }
+    } catch (err) {
+      console.error('[MATCH] Error in findClipInR2:', err);
+    }
+  }
+
+  // 2. Try Pexels Video
+  try {
+    const pexelsUrl = await findClipInPexels(subject);
+    if (typeof pexelsUrl === 'string' && pexelsUrl.startsWith('http')) {
+      console.log(`[MATCH] Matched in Pexels: ${pexelsUrl}`);
+      return pexelsUrl;
+    }
+  } catch (err) {
+    console.error('[MATCH] Error in findClipInPexels:', err);
+  }
+
+  // 3. Try Pixabay Video
+  try {
+    const pixabayUrl = await findClipInPixabay(subject);
+    if (typeof pixabayUrl === 'string' && pixabayUrl.startsWith('http')) {
+      console.log(`[MATCH] Matched in Pixabay: ${pixabayUrl}`);
+      return pixabayUrl;
+    }
+  } catch (err) {
+    console.error('[MATCH] Error in findClipInPixabay:', err);
+  }
+
+  // 4. Try Pexels/Pixabay Image → Ken Burns
+  let imageUrl = null;
+  try {
+    imageUrl = await findImageInPexels(subject);
+    if (!imageUrl) {
+      imageUrl = await findImageInPixabay(subject);
+    }
+  } catch (err) {
+    console.error('[MATCH] Error finding fallback image:', err);
+  }
+
+  if (imageUrl) {
+    try {
+      const tmpDir = path.join(__dirname, 'tmp');
+      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
+      const imgName = `kenburns-${uuidv4()}.jpg`;
+      const imgPath = path.join(tmpDir, imgName);
+      await downloadRemoteFileToLocal(imageUrl, imgPath);
+
+      const outVidName = `kenburns-${uuidv4()}.mp4`;
+      const outVidPath = path.join(tmpDir, outVidName);
+
+      await makeKenBurnsVideoFromImage(imgPath, outVidPath, 5 + Math.floor(Math.random() * 2)); // 5–6s pan
+
+      console.log(`[MATCH] Ken Burns fallback video created: ${outVidPath}`);
+      return outVidPath;
+    } catch (err) {
+      console.error('[MATCH] Ken Burns fallback failed:', err);
+    }
+  }
+
+  // FINAL: If nothing, just return null (should never happen with images available!)
+  console.warn(`[MATCH] No match found for scene "${sceneText}" (subject="${subject}") in any source.`);
+  return null;
 }
 
 // --- Script splitter: splits raw script into array of { id, text } ----

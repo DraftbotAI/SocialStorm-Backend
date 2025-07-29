@@ -395,6 +395,51 @@ Tags: secrets landmarks mystery history viral
 
 console.log('[INIT] Video generation endpoint initialized');
 
+// ==== ALL NEEDED IMPORTS (ensure these are declared globally if using split files) ====
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const ffmpeg = require('fluent-ffmpeg');
+const AWS = require('aws-sdk');
+const { v4: uuidv4 } = require('uuid');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
+// === DUMMY/EXAMPLE HELPERS & CONSTANTS (Replace with your real logic) ===
+const cleanupJob = (jobId) => { /* Clean temp files, progress, etc */ };
+const progress = {};
+// Example list of supported voices for Polly check (replace with your full list)
+const POLLY_VOICE_IDS = [
+  'Matthew', 'Joanna', 'Joey', 'Brian', 'Kimberly', 'Salli', 'Russell', 'Amy'
+];
+// Example voice object (replace with your real voices)
+const voices = [
+  { id: 'Matthew', provider: 'polly' },
+  { id: 'Joanna', provider: 'polly' },
+  // ...add your other voices here
+];
+// S3 Client for R2 uploads
+const s3Client = new S3Client({
+  endpoint: process.env.R2_ENDPOINT,
+  region: 'auto',
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
+});
+
+// === Define splitScriptToScenes and findClipForScene if not already defined globally ===
+function splitScriptToScenes(script) {
+  // Replace with your actual scene splitting logic!
+  return script
+    .split('\n')
+    .filter(line => line.trim())
+    .map((text, i) => ({ id: `scene${i+1}`, text: text.trim() }));
+}
+async function findClipForScene(subject, idx, allLines, mainTopic) {
+  // Replace with your actual matching logic! Here, just return a placeholder video URL.
+  return 'https://samplelib.com/mp4/sample-5s.mp4';
+}
+
 // --- Helper: Download remote file to local disk (uses axios) ---
 const downloadRemoteFileToLocal = async (url, outPath) => {
   const writer = fs.createWriteStream(outPath);
@@ -1027,6 +1072,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 

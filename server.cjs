@@ -132,22 +132,6 @@ function cleanupJob(jobId) {
   }
 }
 
-// ---- EXPORT any needed shared objects for later sections ----
-module.exports = {
-  app,
-  progress,
-  s3Client,
-  R2_LIBRARY_BUCKET,
-  R2_VIDEOS_BUCKET,
-  R2_ENDPOINT,
-  JOBS_DIR,
-  splitScriptToScenes,
-  findClipForScene,
-  cleanupJob,
-  openai
-};
-
-
 /* ===========================================================
    SECTION 2: BASIC ROUTES & STATIC FILE SERVING
    -----------------------------------------------------------
@@ -185,7 +169,6 @@ app.get('/api/progress/:jobId', (req, res) => {
     res.json({ percent: 100, status: 'Done (or not found)' });
   }
 });
-
 
 /* ===========================================================
    SECTION 3: VOICES ENDPOINTS (POLLY FIRST)
@@ -242,16 +225,11 @@ app.get('/api/voices', (req, res) => {
   res.json({ success: true, voices });
 });
 
-// ==== EXPORT POLLY VOICE IDS FOR VALIDATION ELSEWHERE ====
-module.exports = {
-  voices,
-  POLLY_VOICE_IDS
-};
-
-
 /* ===========================================================
    SECTION 4: /api/generate-script ENDPOINT
    =========================================================== */
+
+// ... (Section 4 and the rest of your code continue unmodified below this line...)
 
 console.log('[INFO] Registering /api/generate-script endpoint...');
 
@@ -384,7 +362,6 @@ Tags: secrets landmarks mystery history viral
 });
 
 
-
 /* ===========================================================
    SECTION 5: VIDEO GENERATION ENDPOINT
    -----------------------------------------------------------
@@ -394,197 +371,6 @@ Tags: secrets landmarks mystery history viral
    =========================================================== */
 
 console.log('[INIT] Video generation endpoint initialized');
-
-// ==== ALL NEEDED IMPORTS (ensure these are declared globally if using split files) ====
-const fs = require('fs');
-const path = require('path');
-const axios = require('axios');
-const ffmpeg = require('fluent-ffmpeg');
-const AWS = require('aws-sdk');
-const { v4: uuidv4 } = require('uuid');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-
-
-
-// === Define splitScriptToScenes and findClipForScene if not already defined globally ===
-function splitScriptToScenes(script) {
-  // Replace with your actual scene splitting logic!
-  return script
-    .split('\n')
-    .filter(line => line.trim())
-    .map((text, i) => ({ id: `scene${i+1}`, text: text.trim() }));
-}
-async function findClipForScene(subject, idx, allLines, mainTopic) {
-  // Replace with your actual matching logic! Here, just return a placeholder video URL.
-  return 'https://samplelib.com/mp4/sample-5s.mp4';
-}
-
-// --- Helper: Download remote file to local disk (uses axios) ---
-const downloadRemoteFileToLocal = async (url, outPath) => {
-  const writer = fs.createWriteStream(outPath);
-  try {
-    const response = await axios({
-      url,
-      method: 'GET',
-      responseType: 'stream',
-      timeout: 90000,
-    });
-    response.data.pipe(writer);
-    await new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
-    if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 2048) {
-      throw new Error(`Downloaded file missing or too small: ${outPath}`);
-    }
-    return outPath;
-  } catch (err) {
-    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
-    throw new Error(`Failed to download remote file: ${url} => ${err.message}`);
-  }
-};
-
-// Helper: Get audio duration in seconds using ffprobe
-const getAudioDuration = (audioPath) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(audioPath, (err, metadata) => {
-      if (err) return reject(err);
-      resolve(metadata.format.duration);
-    });
-  });
-};
-
-// Helper: Get video info (codec, size, pix_fmt, streams, duration)
-const getVideoInfo = (filePath) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, metadata) => {
-      if (err) return reject(err);
-      resolve(metadata);
-    });
-  });
-};
-
-// Helper: Standardize video (codec, pix_fmt, size, audio stream)
-const standardizeVideo = async (inputPath, outputPath, refInfo) => {
-  return new Promise((resolve, reject) => {
-    let cmd = ffmpeg().input(inputPath);
-    cmd = cmd.outputOptions([
-      `-vf scale=${refInfo.width}:${refInfo.height}`,
-      '-c:v libx264',
-      '-pix_fmt yuv420p',
-      '-c:a aac',
-      '-ar 44100',
-      '-b:a 128k',
-      '-movflags +faststart',
-      '-y'
-    ]);
-    cmd.save(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', reject);
-  });
-};
-
-// Helper: Trim video to [duration] seconds (NO -af anullsrc, just trims and copies audio)
-const trimVideo = (inPath, outPath, duration, seek = 0) => {
-  return new Promise((resolve, reject) => {
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    const ffmpegArgs = [
-      '-ss', String(seek),
-      '-i', path.resolve(inPath),
-      '-t', String(duration),
-      '-c:v', 'libx264',
-      '-an',
-      '-avoid_negative_ts', 'make_zero',
-      '-y',
-      path.resolve(outPath)
-    ];
-    console.log(`[FFMPEG][TRIM] ffmpeg ${ffmpegArgs.join(' ')}`);
-    const ff = require('child_process').spawn('ffmpeg', ffmpegArgs);
-    ff.stderr.on('data', d => process.stderr.write(d));
-    ff.on('exit', (code) => {
-      if (code === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-        resolve(outPath);
-      } else {
-        reject(new Error(`FFmpeg trim failed, exit code ${code}`));
-      }
-    });
-  });
-};
-
-// Helper: Add a silent AAC audio track (always remux video with silence)
-const addSilentAudioTrack = (inPath, outPath, duration) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(inPath)
-      .input('anullsrc=channel_layout=stereo:sample_rate=44100')
-      .inputOptions(['-f lavfi'])
-      .outputOptions([
-        '-t', String(duration),
-        '-c:v copy',
-        '-c:a aac',
-        '-shortest',
-        '-y'
-      ])
-      .save(outPath)
-      .on('end', () => resolve(outPath))
-      .on('error', reject);
-  });
-};
-
-// Helper: Replace video’s audio with narration (no mix, narration only)
-const muxVideoWithNarration = (videoWithSilence, narrationPath, outPath, duration) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(videoWithSilence)
-      .input(narrationPath)
-      .outputOptions([
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-shortest',
-        '-t', String(duration),
-        '-y'
-      ])
-      .save(outPath)
-      .on('end', () => {
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-          resolve(outPath);
-        } else {
-          reject(new Error('muxVideoWithNarration produced no output'));
-        }
-      })
-      .on('error', reject);
-  });
-};
-
-// Helper: Select music file by mood (folder-based), returns full path or null
-const pickMusicForMood = (mood = null) => {
-  try {
-    const musicRoot = path.resolve(__dirname, 'public', 'assets', 'music_library');
-    if (!mood) {
-      console.warn('[MUSIC] No mood provided, skipping music selection.');
-      return null;
-    }
-    const moodFolder = path.join(musicRoot, mood);
-    if (!fs.existsSync(moodFolder) || !fs.statSync(moodFolder).isDirectory()) {
-      console.warn(`[MUSIC] Mood folder does not exist: ${moodFolder}`);
-      return null;
-    }
-    const candidates = fs.readdirSync(moodFolder).filter(f => f.endsWith('.mp3'));
-    if (!candidates.length) {
-      console.warn(`[MUSIC] No mp3 files found in mood folder: ${moodFolder}`);
-      return null;
-    }
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    const chosenPath = path.join(moodFolder, pick);
-    console.log(`[MUSIC] Picked "${pick}" for mood "${mood}" from: ${moodFolder}`);
-    return chosenPath;
-  } catch (err) {
-    console.error('[MUSIC] Error picking mood-based music:', err);
-    return null;
-  }
-};
 
 // --- Amazon Polly TTS ---
 async function generatePollyTTS(text, voiceId, outPath) {
@@ -821,6 +607,7 @@ app.post('/api/generate-video', (req, res) => {
         console.log(`[SCENE] Finished processing scene ${i + 1}/${scenes.length}.`);
       }
 
+      // ...concat, upload, and remaining logic continues here...
       // === BULLETPROOF: Validate and standardize all scenes before concat ===
       let refInfo = null;
       try {
@@ -1053,8 +840,6 @@ app.post('/api/generate-video', (req, res) => {
 });
 
 
-
-
 /* ============================================================
    SECTION 6: THUMBNAIL GENERATION ENDPOINT
    -----------------------------------------------------------
@@ -1139,6 +924,7 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 
     // Make ZIP (for unlock/download)
     console.log('[ZIP] Creating ZIP of thumbnails...');
+    const JSZip = require('jszip');
     const zip = new JSZip();
     for (let i = 0; i < previews.length; i++) {
       // Remove watermark for zip
@@ -1180,8 +966,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
     res.json({ success: false, error: "Failed to generate thumbnails." });
   }
 });
-
-
 
 
 /* ===========================================================

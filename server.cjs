@@ -340,13 +340,11 @@ Tags: secrets landmarks mystery history viral
 
 /* ===========================================================
    SECTION 5: VIDEO GENERATION ENDPOINT
+   -----------------------------------------------------------
+   - POST /api/generate-video
+   - Handles script, voice, branding, outro, background music
+   - Bulletproof file/dir safety; MAX logging in every step
    =========================================================== */
-// === DO NOT import any helpers here again! Only reference what was loaded in Section 1 ===
-
-// ---- Helper function definitions and TTS logic remain the same as in your provided code ----
-// (You already have the correct ones at the top from the previous code I sent.)
-// If you have utility functions (getAudioDuration, trimVideo, etc.) from earlier, do NOT redeclare them here. Just use them.
-
 
 console.log('[INIT] Video generation endpoint initialized');
 
@@ -354,6 +352,46 @@ console.log('[INIT] Video generation endpoint initialized');
 async function extractVisualSubject(line, scriptTopic = '') {
   return line;
 }
+
+// --- Amazon Polly TTS ONLY (no Google TTS here) ---
+async function generatePollyTTS(text, voiceId, outPath) {
+  try {
+    console.log(`[POLLY] Synthesizing speech: "${text}" [voice: ${voiceId}] → ${outPath}`);
+    const polly = new AWS.Polly();
+    const params = {
+      OutputFormat: 'mp3',
+      Text: text,
+      VoiceId: voiceId,
+      Engine: 'neural'
+    };
+    const data = await polly.synthesizeSpeech(params).promise();
+    fs.writeFileSync(outPath, data.AudioStream);
+    console.log(`[POLLY] Audio written: ${outPath}`);
+  } catch (err) {
+    console.error(`[ERR][POLLY] TTS failed for voice ${voiceId} text: "${text}"`, err);
+    throw err;
+  }
+}
+
+// --- ElevenLabs TTS stub (can be filled in later) ---
+async function generateElevenLabsTTS(text, voiceId, outPath) {
+  throw new Error('ElevenLabs TTS not implemented');
+}
+
+// --- Single entry point for scene TTS (NO GOOGLE TTS) ---
+async function generateSceneAudio(sceneText, voiceId, outPath, provider) {
+  if (!provider) throw new Error("No TTS provider specified");
+  if (!sceneText || !voiceId || !outPath) throw new Error("Missing input for generateSceneAudio");
+  if (provider.toLowerCase() === 'polly') {
+    await generatePollyTTS(sceneText, voiceId, outPath);
+  } else if (provider.toLowerCase() === 'elevenlabs') {
+    await generateElevenLabsTTS(sceneText, voiceId, outPath);
+  } else {
+    throw new Error(`Unknown TTS provider: ${provider}`);
+  }
+}
+
+// ===================== MAIN ENDPOINT =====================
 
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
@@ -789,6 +827,7 @@ app.post('/api/generate-video', (req, res) => {
     }
   })();
 });
+
 
 
 /* ===========================================================

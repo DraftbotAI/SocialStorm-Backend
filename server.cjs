@@ -47,7 +47,6 @@ const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY;
 
-// ---- S3Client for Cloudflare R2 ----
 const s3Client = new S3Client({
   region: 'auto',
   endpoint: R2_ENDPOINT,
@@ -61,12 +60,9 @@ console.log('[INFO] R2_LIBRARY_BUCKET:', R2_LIBRARY_BUCKET);
 console.log('[INFO] R2_VIDEOS_BUCKET:', R2_VIDEOS_BUCKET);
 console.log('[INFO] R2_ENDPOINT:', R2_ENDPOINT);
 
-// === JOBS DIR DEFINITION (for temp/progress management) ===
 const JOBS_DIR = path.join(__dirname, 'jobs');
-
 console.log('[INFO] Dependencies loaded.');
 
-// === ENV CHECK ===
 const requiredEnvVars = [
   'AWS_ACCESS_KEY_ID',
   'AWS_SECRET_ACCESS_KEY',
@@ -85,8 +81,6 @@ if (missingEnv.length > 0) {
 }
 console.log('[INFO] All required environment variables are present.');
 
-// ==== AWS CONFIG ====
-// (Still needed for Polly TTS, must explicitly use 'us-east-1')
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -94,37 +88,33 @@ AWS.config.update({
 });
 console.log('[INFO] AWS SDK configured for Polly, region:', process.env.AWS_REGION);
 
-// ==== EXPRESS INIT ====
 const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '12mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// ==== JOB PROGRESS MAP ====
 const progress = {};
 console.log('[INFO] Progress tracker initialized.');
 
-// ==== LOAD HELPERS ====
-// ✅ Uses pexels-helper.cjs with only the available functions
+// === LOAD HELPERS ONCE, IN SECTION 1 ===
 const {
   splitScriptToScenes,
-  findClipForScene
+  findClipForScene,
+  downloadRemoteFileToLocal
 } = require('./pexels-helper.cjs');
 
 console.log('[INFO] Helper functions loaded.');
 
-// ==== SAFE CLEANUP FUNCTION ====
-// Now deletes temp job folder in /renders after each job.
+// SAFE CLEANUP FUNCTION
 function cleanupJob(jobId) {
   try {
     if (progress[jobId]) {
       delete progress[jobId];
     }
-    // Clean up job temp folder in /renders
     const jobDir = path.join(__dirname, 'renders', jobId);
     if (fs.existsSync(jobDir)) {
-      fsExtra.removeSync(jobDir); // Recursively deletes all files/folders for this job
+      fsExtra.removeSync(jobDir);
       console.log(`[CLEANUP] Removed temp folder: ${jobDir}`);
     }
   } catch (err) {
@@ -132,27 +122,8 @@ function cleanupJob(jobId) {
   }
 }
 
-// ---- EXPORT any needed shared objects for later sections ----
-module.exports = {
-  app,
-  progress,
-  s3Client,
-  R2_LIBRARY_BUCKET,
-  R2_VIDEOS_BUCKET,
-  R2_ENDPOINT,
-  JOBS_DIR,
-  splitScriptToScenes,
-  findClipForScene,
-  cleanupJob,
-  openai
-};
-
-
 /* ===========================================================
    SECTION 2: BASIC ROUTES & STATIC FILE SERVING
-   -----------------------------------------------------------
-   - Serve frontend files (HTML, assets)
-   - Health check + root status
    =========================================================== */
 
 console.log('[INFO] Setting up static file routes...');
@@ -161,19 +132,16 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 app.use(express.static(PUBLIC_DIR));
 console.log('[INFO] Static file directory mounted:', PUBLIC_DIR);
 
-// === ROOT SERVES FRONTEND ===
 app.get('/', (req, res) => {
   console.log('[REQ] GET /');
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
-// === HEALTH CHECK ===
 app.get('/api/status', (req, res) => {
   console.log('[REQ] GET /api/status');
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// === PROGRESS CHECK ===
 app.get('/api/progress/:jobId', (req, res) => {
   const { jobId } = req.params;
   console.log(`[REQ] GET /api/progress/${jobId}`);
@@ -186,17 +154,12 @@ app.get('/api/progress/:jobId', (req, res) => {
   }
 });
 
-
 /* ===========================================================
-   SECTION 3: VOICES ENDPOINTS (POLLY FIRST)
-   -----------------------------------------------------------
-   - Returns all available voices with metadata
-   - Polly voices first, then ElevenLabs
+   SECTION 3: VOICES ENDPOINTS
    =========================================================== */
 
 console.log('[INFO] Registering /api/voices endpoint...');
 
-// ===== POLLY FREE TIER VOICES (NOW FIRST) =====
 const voices = [
   { id: "Matthew", name: "Matthew (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
   { id: "Joey", name: "Joey (US Male)", description: "Amazon Polly, Male, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "male", disabled: false },
@@ -207,7 +170,6 @@ const voices = [
   { id: "Amy", name: "Amy (British Female)", description: "Amazon Polly, Female, British English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
   { id: "Salli", name: "Salli (US Female)", description: "Amazon Polly, Female, US English (Neural) - Free with AWS Free Tier", provider: "polly", tier: "Free", gender: "female", disabled: false },
 
-  // ===== ELEVENLABS PRO VOICES =====
   { id: "ZthjuvLPty3kTMaNKVKb", name: "Mike (Pro)", description: "ElevenLabs, Deep US Male", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
   { id: "6F5Zhi321D3Oq7v1oNT4", name: "Jackson (Pro)", description: "ElevenLabs, Movie Style Narration", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
   { id: "p2ueywPKFXYa6hdYfSIJ", name: "Tyler (Pro)", description: "ElevenLabs, US Male Friendly", provider: "elevenlabs", tier: "Pro", gender: "male", disabled: false },
@@ -225,8 +187,6 @@ const voices = [
   { id: "RBknfnzK8KHNwv44gIrh", name: "James Whitmore (ASMR Pro)", description: "Gentle Whisper ASMR", provider: "elevenlabs", tier: "ASMR", gender: "male", disabled: false },
   { id: "GL7nH05mDrxcH1JPJK5T", name: "Aimee (ASMR Gentle)", description: "ASMR Gentle Whisper", provider: "elevenlabs", tier: "ASMR", gender: "female", disabled: false }
 ];
-
-// ==== Polly Voice List for Validation ====
 const POLLY_VOICE_IDS = voices.filter(v => v.provider === "polly").map(v => v.id);
 
 app.get('/api/voices', (req, res) => {
@@ -241,12 +201,6 @@ app.get('/api/voices', (req, res) => {
   console.log(`[INFO] Returning ${count} voices → Free: ${byTier.Free}, Pro: ${byTier.Pro}, ASMR: ${byTier.ASMR}`);
   res.json({ success: true, voices });
 });
-
-// ==== EXPORT POLLY VOICE IDS FOR VALIDATION ELSEWHERE ====
-module.exports = {
-  voices,
-  POLLY_VOICE_IDS
-};
 
 
 /* ===========================================================
@@ -384,254 +338,22 @@ Tags: secrets landmarks mystery history viral
 });
 
 
-
 /* ===========================================================
    SECTION 5: VIDEO GENERATION ENDPOINT
-   -----------------------------------------------------------
-   - POST /api/generate-video
-   - Handles script, voice, branding, outro, background music
-   - Bulletproof file/dir safety; logs every step (MAX logging)
-   - All videos forced to 9:16 with blurred background (TikTok-ready)
    =========================================================== */
+// === DO NOT import any helpers here again! Only reference what was loaded in Section 1 ===
+
+// ---- Helper function definitions and TTS logic remain the same as in your provided code ----
+// (You already have the correct ones at the top from the previous code I sent.)
+// If you have utility functions (getAudioDuration, trimVideo, etc.) from earlier, do NOT redeclare them here. Just use them.
+
 
 console.log('[INIT] Video generation endpoint initialized');
-
-// ---- Load helpers from pexels-helper.cjs ONLY (NO DOUBLE DECLARATIONS) ----
-const {
-  splitScriptToScenes,
-  findClipForScene,
-  downloadRemoteFileToLocal
-} = require('./pexels-helper.cjs');
-
-// Core dependencies (these should ONLY be loaded in Section 1 globally; DO NOT redeclare here if already global)
-const fs = require('fs');
-const path = require('path');
-const ffmpeg = require('fluent-ffmpeg');
-const { v4: uuidv4 } = require('uuid');
-const AWS = require('aws-sdk');
-const { PutObjectCommand } = require('@aws-sdk/client-s3');
-
-// -- External objects expected to be global --
-/*
-  - app (Express instance)
-  - s3Client (Cloudflare R2 client, properly configured)
-  - progress (progress state object)
-  - cleanupJob (job cleanup helper)
-  - voices (all available voices w/ provider key)
-  - POLLY_VOICE_IDS (array of valid Polly voice IDs)
-*/
-
-const getAudioDuration = (audioPath) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(audioPath, (err, metadata) => {
-      if (err) return reject(err);
-      resolve(metadata.format.duration);
-    });
-  });
-};
-
-const getVideoInfo = (filePath) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, metadata) => {
-      if (err) return reject(err);
-      resolve(metadata);
-    });
-  });
-};
-
-const standardizeVideo = async (inputPath, outputPath, refInfo) => {
-  return new Promise((resolve, reject) => {
-    let cmd = ffmpeg().input(inputPath);
-    cmd = cmd.outputOptions([
-      `-vf scale=${refInfo.width}:${refInfo.height}`,
-      '-c:v libx264',
-      '-pix_fmt yuv420p',
-      '-c:a aac',
-      '-ar 44100',
-      '-b:a 128k',
-      '-movflags +faststart',
-      '-y'
-    ]);
-    cmd.save(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', reject);
-  });
-};
-
-// === Normalize video to 9:16 w/ blurred background (TikTok format) ===
-const normalizeTo9x16Blurred = async (inputPath, outputPath, targetW = 1080, targetH = 1920) => {
-  return new Promise((resolve, reject) => {
-    const vf = `
-      [0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,boxblur=16:1,scale=${targetW}:${targetH}[bg];
-      [0:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease[fg];
-      [bg][fg]overlay=(W-w)/2:(H-h)/2
-    `.replace(/\s+/g, '');
-    ffmpeg(inputPath)
-      .videoFilters(vf)
-      .outputOptions(['-c:v libx264', '-pix_fmt yuv420p', '-c:a copy', '-y'])
-      .on('start', cmd => {
-        console.log(`[NORMALIZE] FFmpeg cmd for 9:16 w/blur: ${cmd}`);
-      })
-      .on('error', (err) => {
-        console.error(`[ERR][NORMALIZE] Failed to normalize video to 9:16 blurred: ${inputPath} → ${outputPath}`, err);
-        reject(err);
-      })
-      .on('end', () => {
-        if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
-          console.log(`[NORMALIZE] Video normalized to 9:16 w/blur: ${outputPath}`);
-          resolve(outputPath);
-        } else {
-          reject(new Error(`Normalized 9:16 video missing or too small: ${outputPath}`));
-        }
-      })
-      .save(outputPath);
-  });
-};
-
-// Helper: Trim video to [duration] seconds (NO -af anullsrc, just trims and copies audio)
-const trimVideo = (inPath, outPath, duration, seek = 0) => {
-  return new Promise((resolve, reject) => {
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    const ffmpegArgs = [
-      '-ss', String(seek),
-      '-i', path.resolve(inPath),
-      '-t', String(duration),
-      '-c:v', 'libx264',
-      '-an',
-      '-avoid_negative_ts', 'make_zero',
-      '-y',
-      path.resolve(outPath)
-    ];
-    console.log(`[FFMPEG][TRIM] ffmpeg ${ffmpegArgs.join(' ')}`);
-    const ff = require('child_process').spawn('ffmpeg', ffmpegArgs);
-    ff.stderr.on('data', d => process.stderr.write(d));
-    ff.on('exit', (code) => {
-      if (code === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-        resolve(outPath);
-      } else {
-        reject(new Error(`FFmpeg trim failed, exit code ${code}`));
-      }
-    });
-  });
-};
-
-const addSilentAudioTrack = (inPath, outPath, duration) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(inPath)
-      .input('anullsrc=channel_layout=stereo:sample_rate=44100')
-      .inputOptions(['-f lavfi'])
-      .outputOptions([
-        '-t', String(duration),
-        '-c:v copy',
-        '-c:a aac',
-        '-shortest',
-        '-y'
-      ])
-      .save(outPath)
-      .on('end', () => resolve(outPath))
-      .on('error', reject);
-  });
-};
-
-const muxVideoWithNarration = (videoWithSilence, narrationPath, outPath, duration) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(videoWithSilence)
-      .input(narrationPath)
-      .outputOptions([
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-shortest',
-        '-t', String(duration),
-        '-y'
-      ])
-      .save(outPath)
-      .on('end', () => {
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-          resolve(outPath);
-        } else {
-          reject(new Error('muxVideoWithNarration produced no output'));
-        }
-      })
-      .on('error', reject);
-  });
-};
-
-const pickMusicForMood = (mood = null) => {
-  try {
-    const musicRoot = path.resolve(__dirname, 'public', 'assets', 'music_library');
-    if (!mood) {
-      console.warn('[MUSIC] No mood provided, skipping music selection.');
-      return null;
-    }
-    const moodFolder = path.join(musicRoot, mood);
-    if (!fs.existsSync(moodFolder) || !fs.statSync(moodFolder).isDirectory()) {
-      console.warn(`[MUSIC] Mood folder does not exist: ${moodFolder}`);
-      return null;
-    }
-    const candidates = fs.readdirSync(moodFolder).filter(f => f.endsWith('.mp3'));
-    if (!candidates.length) {
-      console.warn(`[MUSIC] No mp3 files found in mood folder: ${moodFolder}`);
-      return null;
-    }
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    const chosenPath = path.join(moodFolder, pick);
-    console.log(`[MUSIC] Picked "${pick}" for mood "${mood}" from: ${moodFolder}`);
-    return chosenPath;
-  } catch (err) {
-    console.error('[MUSIC] Error picking mood-based music:', err);
-    return null;
-  }
-};
-
-// --- Amazon Polly TTS ---
-async function generatePollyTTS(text, voiceId, outPath) {
-  const polly = new AWS.Polly();
-  const params = {
-    OutputFormat: 'mp3',
-    Text: text,
-    VoiceId: voiceId,
-    Engine: 'neural'
-  };
-  const data = await polly.synthesizeSpeech(params).promise();
-  fs.writeFileSync(outPath, data.AudioStream);
-  console.log(`[POLLY] Generated TTS audio: ${outPath}`);
-}
-
-// --- Google TTS (stub) ---
-async function generateGoogleTTS(text, voiceId, outPath) {
-  throw new Error('Google TTS not implemented');
-}
-
-// --- ElevenLabs TTS (stub) ---
-async function generateElevenLabsTTS(text, voiceId, outPath) {
-  throw new Error('ElevenLabs TTS not implemented');
-}
-
-// --- Generate scene audio for all TTS providers ---
-async function generateSceneAudio(sceneText, voiceId, outPath, provider) {
-  if (!provider) throw new Error("No TTS provider specified");
-  if (!sceneText || !voiceId || !outPath) throw new Error("Missing input for generateSceneAudio");
-  if (provider.toLowerCase() === 'google') {
-    await generateGoogleTTS(sceneText, voiceId, outPath);
-  } else if (provider.toLowerCase() === 'polly') {
-    await generatePollyTTS(sceneText, voiceId, outPath);
-  } else if (provider.toLowerCase() === 'elevenlabs') {
-    await generateElevenLabsTTS(sceneText, voiceId, outPath);
-  } else {
-    throw new Error(`Unknown TTS provider: ${provider}`);
-  }
-}
 
 // --- PATCHED: Dummy extractVisualSubject so backend cannot crash ---
 async function extractVisualSubject(line, scriptTopic = '') {
   return line;
 }
-
-// ===================== MAIN ENDPOINT =====================
 
 app.post('/api/generate-video', (req, res) => {
   console.log('[REQ] POST /api/generate-video');
@@ -804,7 +526,6 @@ app.post('/api/generate-video', (req, res) => {
           cleanupJob(jobId); clearTimeout(watchdog); return;
         }
 
-        // ==== 9:16 BLURRED BACKGROUND NORMALIZATION ====
         try {
           console.log(`[NORMALIZE] Normalizing video for scene ${i + 1} to 1080x1920 with blurred background…`);
           await normalizeTo9x16Blurred(trimmedVideoPath, normalizedVideoPath, 1080, 1920);
@@ -860,7 +581,6 @@ app.post('/api/generate-video', (req, res) => {
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // Standardize all scene files to match reference (should always pass after 9:16 norm)
       for (let i = 0; i < sceneFiles.length; i++) {
         try {
           const info = await getVideoInfo(sceneFiles[i]);
@@ -886,7 +606,6 @@ app.post('/api/generate-video', (req, res) => {
         }
       }
 
-      // === CONCATENATE SCENES ===
       const listFile = path.resolve(workDir, 'list.txt');
       fs.writeFileSync(
         listFile,
@@ -917,7 +636,6 @@ app.post('/api/generate-video', (req, res) => {
         cleanupJob(jobId); clearTimeout(watchdog); return;
       }
 
-      // ==== [AUDIO PATCH] Ensure concat.mp4 has audio ====
       let concatInputFile = concatFile;
       let audioStreamExists = false;
       try {
@@ -952,7 +670,6 @@ app.post('/api/generate-video', (req, res) => {
         concatInputFile = concatWithAudioPath;
       }
 
-      // === [OPTIONAL] Mix music over concatInputFile ===
       let concatWithMusicFile = concatInputFile;
       let musicUsed = false;
       let selectedMusicPath = null;
@@ -981,11 +698,8 @@ app.post('/api/generate-video', (req, res) => {
         }
       }
 
-      // === [BULLETPROOF OUTRO APPEND] ===
       const finalPath = path.resolve(workDir, 'final.mp4');
       const outroPath = path.resolve(__dirname, 'public', 'assets', 'outro.mp4');
-
-      // Ensure outro has audio and video, and matches resolution/codec
       const outroExists = fs.existsSync(outroPath);
       let doAddOutro = outroExists && !(paidUser && removeOutro);
 
@@ -1077,19 +791,17 @@ app.post('/api/generate-video', (req, res) => {
 });
 
 
-
-
-
 /* ===========================================================
    SECTION 6: THUMBNAIL GENERATION ENDPOINT
    -----------------------------------------------------------
    - POST /api/generate-thumbnails
    - Uses Canvas to generate 10 viral thumbnails
    - Handles custom caption, topic, ZIP packing, watermarking
-   - Bulletproof error handling, no skips
+   - Bulletproof error handling, MAX logging
    =========================================================== */
 
 const { createCanvas, loadImage, registerFont } = require('canvas');
+const JSZip = require('jszip');
 
 const fontPath = path.join(__dirname, 'frontend', 'assets', 'fonts', 'LuckiestGuy-Regular.ttf');
 if (fs.existsSync(fontPath)) {
@@ -1113,16 +825,13 @@ app.post('/api/generate-thumbnails', async (req, res) => {
     const baseThumbsDir = path.join(__dirname, 'frontend', 'assets', 'thumbnail_templates');
     console.log('[DIR] Loading template dir:', baseThumbsDir);
 
-    // Simple: pick 10 random template backgrounds (PNG/SVG)
     const allTemplates = fs.readdirSync(baseThumbsDir)
       .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
       .map(f => path.join(baseThumbsDir, f));
     console.log('[DIR] Found', allTemplates.length, 'thumbnail template files.');
-    // Bulletproof: skip dirs, only files
     const templateFiles = allTemplates.filter(f => fs.statSync(f).isFile());
     console.log('[DIR] Usable template files:', templateFiles.length);
 
-    // If <10 available, repeat
     let picks = [];
     for (let i = 0; i < 10; i++) {
       picks.push(templateFiles[i % templateFiles.length]);
@@ -1141,7 +850,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
         ctx.fillStyle = '#10141a';
         ctx.fillRect(0, 0, 480, 270);
       }
-      // Text
       ctx.font = `bold 48px 'LuckiestGuy', Arial, sans-serif`;
       ctx.fillStyle = '#fff';
       ctx.textAlign = 'center';
@@ -1149,7 +857,6 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       ctx.shadowBlur = 12;
       ctx.fillText(label, 240, 148, 420);
 
-      // Watermark (for preview)
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 0.32;
       ctx.font = 'bold 34px Arial, sans-serif';
@@ -1162,11 +869,9 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       console.log(`[PREVIEW] Generated preview ${i + 1}/10`);
     }
 
-    // Make ZIP (for unlock/download)
     console.log('[ZIP] Creating ZIP of thumbnails...');
     const zip = new JSZip();
     for (let i = 0; i < previews.length; i++) {
-      // Remove watermark for zip
       const canvas = createCanvas(480, 270);
       const ctx = canvas.getContext('2d');
       if (fs.existsSync(picks[i])) {
@@ -1187,13 +892,11 @@ app.post('/api/generate-thumbnails', async (req, res) => {
       console.log(`[ZIP] Added thumbnail ${i + 1}/10 to ZIP`);
     }
     const zipBuf = await zip.generateAsync({ type: 'nodebuffer' });
-    // Store ZIP to temp dir for download
     const zipName = `thumbs_${uuidv4()}.zip`;
     const zipPath = path.join(JOBS_DIR, zipName);
     fs.writeFileSync(zipPath, zipBuf);
     console.log('[ZIP] Wrote ZIP to', zipPath);
 
-    // Provide previews as dataUrl, and link to download ZIP for "unlock"
     res.json({
       success: true,
       previews,
@@ -1207,13 +910,11 @@ app.post('/api/generate-thumbnails', async (req, res) => {
 });
 
 
-
-
 /* ===========================================================
    SECTION 7: VIDEO STREAM ENDPOINT
    -----------------------------------------------------------
    - Serve videos directly from /public/video (local disk)
-   - Bulletproof path checking, logs every hit
+   - Bulletproof path checking, MAX logging
    =========================================================== */
 
 app.get('/video/:key', (req, res) => {
@@ -1235,19 +936,18 @@ app.get('/video/:key', (req, res) => {
 
     console.log(`[SERVE] Sending video: ${videoPath}`);
 
-    // Set headers for browser download and caching
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Disposition', `inline; filename="${key}"`);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'public, max-age=604800, immutable'); // 7 days
 
-    // Stream the video with support for partial content (seek/skip)
     const range = req.headers.range;
     if (range) {
       const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
       const start = parseInt(startStr, 10);
       const end = endStr ? parseInt(endStr, 10) : stats.size - 1;
       if (isNaN(start) || isNaN(end) || start > end) {
+        console.warn('[SERVE] Bad range request:', range);
         return res.status(416).send('Requested range not satisfiable');
       }
       const chunkSize = (end - start) + 1;
@@ -1258,12 +958,14 @@ app.get('/video/:key', (req, res) => {
         'Content-Type': 'video/mp4'
       });
       fs.createReadStream(videoPath, { start, end }).pipe(res);
+      console.log(`[SERVE] Partial video sent: ${key} [${start}-${end}]`);
     } else {
       res.writeHead(200, {
         'Content-Length': stats.size,
         'Content-Type': 'video/mp4'
       });
       fs.createReadStream(videoPath).pipe(res);
+      console.log(`[SERVE] Full video sent: ${key}`);
     }
   });
 });
@@ -1273,8 +975,8 @@ app.get('/video/:key', (req, res) => {
    SECTION 8: CONTACT FORM ENDPOINT
    -----------------------------------------------------------
    - POST /api/contact
-   - Accepts form message, sends to admin email or logs
-   - GOD-TIER LOGGING: logs all inputs, results, errors
+   - Accepts form message, logs all inputs/results/errors
+   - MAXIMUM logging, bulletproof error handling
    =========================================================== */
 
 app.post('/api/contact', async (req, res) => {
@@ -1286,9 +988,9 @@ app.post('/api/contact', async (req, res) => {
       console.warn('[WARN] Missing contact form fields.');
       return res.json({ success: false, error: "Please fill out all fields." });
     }
-    // Normally: send email via SendGrid/Mailgun/etc. Here, just log.
     console.log(`[CONTACT] Message received from: ${name} <${email}>  Message: ${message}`);
     res.json({ success: true, status: "Message received!" });
+    console.log('[CONTACT] Success response sent.');
   } catch (err) {
     console.error('[ERROR] /api/contact:', err);
     res.json({ success: false, error: "Failed to send message." });
@@ -1301,7 +1003,7 @@ app.post('/api/contact', async (req, res) => {
    -----------------------------------------------------------
    - 404 catchall
    - Start server on chosen port
-   - GOD-TIER LOGGING: logs server startup and bad routes
+   - MAXIMUM logging: logs server startup and bad routes
    =========================================================== */
 
 app.use((req, res) => {
@@ -1313,3 +1015,4 @@ const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🟢 SocialStormAI backend running on port ${PORT}`);
 });
+
